@@ -1,6 +1,6 @@
 {
   "name": "vinted-favoris",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Extension Chrome (Manifest V3) pour enregistrer des articles Vinted en local et les retrouver dans un panneau latéral.",
