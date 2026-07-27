@@ -13,6 +13,11 @@
  *   Détail — un <script type="application/ld+json"> schema.org expose tout ;
  *   les data-testid `item-*` servent de repli.
  */
+import { errorText } from '../shared/errors.ts';
+import type { ExtensionMessage } from '../shared/messages.ts';
+import { parsePriceString } from '../shared/price.ts';
+import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
+
 (() => {
   'use strict';
 
@@ -20,29 +25,39 @@
   const BTN_FLAG = 'vfInjected'; // dataset posé sur les cartes déjà traitées
 
   /** Cache local du contenu du storage : { [id]: item }. */
-  let saved = {};
+  let saved: ItemMap = {};
 
   /** Télémétrie de debug, remontée par le diagnostic du panneau latéral. */
-  const debug = { clicks: 0, writes: 0, enriched: 0, enrichFailed: 0, lastError: null };
+  const debug = {
+    clicks: 0,
+    writes: 0,
+    enriched: 0,
+    enrichFailed: 0,
+    lastError: null as string | null,
+  };
 
   // ---------------------------------------------------------------------------
   // Storage
   // ---------------------------------------------------------------------------
 
-  async function loadSaved() {
-    const res = await chrome.storage.local.get(STORAGE_KEY);
-    saved = res[STORAGE_KEY] || {};
+  /** `chrome.storage.local.get` n'est pas typé : la conversion est concentrée ici. */
+  async function readItems(): Promise<ItemMap> {
+    const res: { savedItems?: ItemMap } = await chrome.storage.local.get(STORAGE_KEY);
+    return res[STORAGE_KEY] || {};
+  }
+
+  async function loadSaved(): Promise<void> {
+    saved = await readItems();
   }
 
   /**
    * Ajoute ou retire un article. On relit le storage juste avant d'écrire
    * pour ne pas écraser ce qu'un autre onglet Vinted aurait enregistré.
    *
-   * @returns {'added'|'removed'} ce que le clic a fait
+   * @returns ce que le clic a fait
    */
-  async function toggleItem(item) {
-    const res = await chrome.storage.local.get(STORAGE_KEY);
-    const current = res[STORAGE_KEY] || {};
+  async function toggleItem(item: SavedItem): Promise<'added' | 'removed'> {
+    const current = await readItems();
 
     if (current[item.id]) {
       delete current[item.id];
@@ -63,22 +78,22 @@
    * revanche une valeur (aucun favori), d'où le test explicite plutôt qu'un
    * simple test de véracité.
    */
-  function mergeDetail(base, detail) {
-    const merged = { ...base };
+  function mergeDetail(base: SavedItem, detail: Partial<SavedItem>): SavedItem {
+    const merged: Record<string, unknown> = { ...base };
 
     for (const [key, value] of Object.entries(detail)) {
       if (value === null || value === undefined || value === '') continue;
       merged[key] = value;
     }
 
-    return merged;
+    return merged as SavedItem;
   }
 
   // ---------------------------------------------------------------------------
   // Extraction — champs communs
   // ---------------------------------------------------------------------------
 
-  const text = (el) => (el ? el.textContent.trim() : '');
+  const text = (el: Element | null): string => el?.textContent?.trim() ?? '';
 
   /**
    * Vocabulaire des états Vinted. Sert à reconnaître un état quand rien ne dit
@@ -86,26 +101,8 @@
    */
   const CONDITION_WORDS = /neuf\s+(avec|sans)|(tr[eè]s\s+)?bon\s+[ée]tat|satisfaisant/i;
 
-  /**
-   * Prix affiché → nombre : "1 234,56 €" donne 1234.56.
-   *
-   * On lit le premier nombre de la chaîne plutôt que de la nettoyer globalement :
-   * Vinted suffixe le prix ("3,85 € Protection acheteurs incluse"), et la
-   * ponctuation du suffixe fausserait un nettoyage caractère par caractère.
-   * Espaces fines et insécables des milliers comprises.
-   *
-   * Ce parseur est volontairement dupliqué dans `sidepanel/sorting.js`, qui doit
-   * encore savoir lire les articles enregistrés avant l'ajout de `priceValue` :
-   * content script (IIFE) et panneau (modules ES) ne peuvent pas partager de code.
-   */
-  function parsePriceValue(raw) {
-    const match = String(raw || '').match(/(\d[\d\s\u00a0\u202f]*)(?:[.,](\d{1,2}))?/);
-    if (!match) return null;
-
-    const whole = match[1].replace(/[\s\u00a0\u202f]/g, '');
-    const value = Number.parseFloat(`${whole}.${match[2] || '0'}`);
-    return Number.isFinite(value) ? value : null;
-  }
+  /** Voir `shared/price.ts` — le parseur est commun au panneau et à l'extraction. */
+  const parsePriceValue = parsePriceString;
 
   /**
    * Nombre de favoris affiché sur un bouton « cœur » Vinted, carte ou fiche.
@@ -118,22 +115,22 @@
    * articles similaires, dont les boutons `--favourite` ne concernent pas
    * l'article courant.
    *
-   * @returns {number|null} null si le bouton est absent ou pas encore hydraté —
+   * @returns null si le bouton est absent ou pas encore hydraté —
    *   surtout pas 0, qui trierait l'article comme réellement sans favori.
    */
-  function readFavouriteButton(scope, selector) {
+  function readFavouriteButton(scope: ParentNode, selector: string): number | null {
     const btn = scope.querySelector(selector);
     if (!btn) return null;
 
     const counter = btn.querySelector('[data-testid="favourite-count-text"]');
     if (counter) {
-      const digits = counter.textContent.replace(/[^\d]/g, '');
+      const digits = (counter.textContent ?? '').replace(/[^\d]/g, '');
       if (digits) return Number.parseInt(digits, 10);
     }
 
     const label = btn.getAttribute('aria-label') || '';
     const fromLabel = label.match(/(\d+)/);
-    if (fromLabel) return Number.parseInt(fromLabel[1], 10);
+    if (fromLabel?.[1]) return Number.parseInt(fromLabel[1], 10);
 
     // Libellé présent mais sans nombre ("Ajouter aux favoris" tout court) :
     // le bouton est rendu, personne n'a mis l'article en favori.
@@ -162,29 +159,28 @@
    * l'enregistrement serait faux sans que rien ne le signale. Le gain mesuré
    * (18 ms pour 96 cartes, sous jsdom donc majoré) ne vaut pas ce risque.
    *
-   * @param {Document} doc page courante, ou fiche récupérée par fetch
-   * @returns {{id: string, name: string, path: string[], url: string}|null}
+   * @param doc page courante, ou fiche récupérée par fetch
    */
-  function readBreadcrumbCategory(doc) {
+  function readBreadcrumbCategory(doc: Document): Omit<ItemCategory, 'exact'> | null {
     const list =
-      doc.querySelector('ul.breadcrumbs') ||
-      (doc.querySelector('a[itemprop="url"][href*="/catalog/"]') || {}).parentElement;
+      doc.querySelector('ul.breadcrumbs') ??
+      doc.querySelector('a[itemprop="url"][href*="/catalog/"]')?.parentElement;
 
     const links = list
       ? [...list.querySelectorAll('a[href*="/catalog/"]')].filter(
-          (a) => !a.getAttribute('href').includes('/brand/')
+          (a) => !(a.getAttribute('href') ?? '').includes('/brand/')
         )
       : [];
 
-    if (!links.length) return null;
+    const leaf = links.at(-1);
+    if (!leaf) return null;
 
-    const leaf = links[links.length - 1];
-    const href = leaf.getAttribute('href').split('?')[0];
+    const href = (leaf.getAttribute('href') ?? '').split('?')[0] ?? '';
 
     return {
-      id: (href.match(/\/catalog\/(\d+)/) || [])[1] || null,
+      id: href.match(/\/catalog\/(\d+)/)?.[1] ?? null,
       name: text(leaf),
-      path: links.map(text).filter(Boolean),
+      path: links.map((link) => text(link)).filter(Boolean),
       url: `https://www.vinted.fr${href}`,
     };
   }
@@ -204,7 +200,7 @@
    * `catalog_id`. Le contexte de navigation est donc la seule source disponible
    * sans requête supplémentaire. Voir docs/limitations.md.
    */
-  function categoryOf(doc, exact) {
+  function categoryOf(doc: Document, exact: boolean): ItemCategory | null {
     const category = readBreadcrumbCategory(doc);
     return category ? { ...category, exact } : null;
   }
@@ -229,7 +225,7 @@
    * séparateur connu — le titre lui-même peut contenir des virgules, d'où la
    * coupe sur ", marque:" et non sur ",".
    */
-  function parseTitleFromLabel(label) {
+  function parseTitleFromLabel(label: string): string {
     if (!label) return '';
     const cut = label.search(LABEL_FIELDS);
     return (cut === -1 ? label : label.slice(0, cut)).trim();
@@ -239,9 +235,9 @@
    * Lit un attribut nommé du libellé d'accessibilité ("état: Très bon état").
    * Aucune des valeurs concernées ne contient de virgule.
    */
-  function parseLabelField(label, names) {
+  function parseLabelField(label: string, names: string): string {
     const match = String(label || '').match(new RegExp(`,\\s*(?:${names})\\s*:\\s*([^,]+)`, 'i'));
-    return match ? match[1].trim() : '';
+    return match?.[1]?.trim() ?? '';
   }
 
   /**
@@ -252,31 +248,33 @@
    * la première partie pour la taille y enregistrait "Très bon état" comme
    * taille, et laissait l'état vide — deux tris faussés d'un coup.
    */
-  function parseSubtitle(subtitle) {
+  function parseSubtitle(subtitle: string): { size: string; condition: string } {
     const parts = String(subtitle || '')
       .split('·')
       .map((s) => s.trim())
       .filter(Boolean);
 
-    if (parts.length >= 2) return { size: parts[0], condition: parts[1] };
-    if (!parts.length) return { size: '', condition: '' };
+    if (parts.length >= 2) return { size: parts[0]!, condition: parts[1]! };
 
-    return CONDITION_WORDS.test(parts[0])
-      ? { size: '', condition: parts[0] }
-      : { size: parts[0], condition: '' };
+    const only = parts[0];
+    if (!only) return { size: '', condition: '' };
+
+    return CONDITION_WORDS.test(only)
+      ? { size: '', condition: only }
+      : { size: only, condition: '' };
   }
 
   /** Repli ultime : reconstruit un titre lisible depuis le slug de l'URL. */
-  function titleFromUrl(url) {
-    const m = url && url.match(/\/items\/\d+-([^?#/]+)/);
-    if (!m) return '';
+  function titleFromUrl(url: string): string {
+    const m = url ? url.match(/\/items\/\d+-([^?#/]+)/) : null;
+    if (!m?.[1]) return '';
     const words = m[1].replace(/-/g, ' ').trim();
     return words.charAt(0).toUpperCase() + words.slice(1);
   }
 
-  function extractIdFromUrl(url) {
-    const m = url && url.match(/\/items\/(\d+)/);
-    return m ? m[1] : null;
+  function extractIdFromUrl(url: string): string | null {
+    const m = url ? url.match(/\/items\/(\d+)/) : null;
+    return m?.[1] ?? null;
   }
 
   /**
@@ -292,30 +290,28 @@
    * (`{plugin}-plugin-empty-state`, `{plugin}-items`) ne matche pas, et la carte
    * est ignorée plutôt qu'extraite à vide.
    */
-  function cardId(testid) {
+  function cardId(testid: string | undefined): string | null {
     const match = String(testid || '').match(/-(\d+)$/);
-    return match ? match[1] : null;
+    return match?.[1] ?? null;
   }
 
-  /**
-   * @param {HTMLElement} box conteneur de carte, ex. [data-testid="product-item-id-{ID}"]
-   * @returns {object|null}
-   */
-  function extractFromCard(box) {
+  /** @param box conteneur de carte, ex. [data-testid="product-item-id-{ID}"] */
+  function extractFromCard(box: HTMLElement): SavedItem | null {
     const id = cardId(box.dataset.testid);
     if (!id) return null;
 
     const link =
-      box.querySelector('[data-testid$="--overlay-link"]') ||
-      box.querySelector('a[href*="/items/"]');
+      box.querySelector<HTMLAnchorElement>('[data-testid$="--overlay-link"]') ||
+      box.querySelector<HTMLAnchorElement>('a[href*="/items/"]');
     const img =
-      box.querySelector('[data-testid$="--image--img"]') || box.querySelector('img');
+      box.querySelector<HTMLImageElement>('[data-testid$="--image--img"]') ||
+      box.querySelector('img');
 
     // L'URL du catalogue traîne un ?referrer= dont on n'a pas besoin.
     const rawUrl = link ? link.href : '';
-    const url = rawUrl ? rawUrl.split('?')[0] : `https://www.vinted.fr/items/${id}`;
+    const url = rawUrl ? (rawUrl.split('?')[0] ?? rawUrl) : `https://www.vinted.fr/items/${id}`;
 
-    const label = (link && link.title) || (img && img.alt) || '';
+    const label = link?.title || img?.alt || '';
     const title = parseTitleFromLabel(label) || titleFromUrl(url) || `Article ${id}`;
 
     // Le libellé d'accessibilité nomme ses attributs ("état: X, taille: Y") là où
@@ -355,7 +351,7 @@
   // ---------------------------------------------------------------------------
 
   /** Formate un prix numérique à la française : 1 → "1,00 €". */
-  function formatPrice(value, currency) {
+  function formatPrice(value: number, currency: string | undefined): string {
     try {
       return new Intl.NumberFormat('fr-FR', {
         style: 'currency',
@@ -366,12 +362,25 @@
     }
   }
 
+  /**
+   * Forme du JSON-LD de Vinted, réduite à ce qu'on en lit. Tous les champs sont
+   * optionnels : c'est du contenu tiers, rien ne garantit sa structure.
+   */
+  type ProductJsonLd = {
+    '@type'?: string;
+    name?: string;
+    brand?: { name?: string };
+    category?: string;
+    image?: string;
+    offers?: { price?: number | string; priceCurrency?: string; url?: string };
+  };
+
   /** Lit le JSON-LD schema.org de la page détail. Source la plus stable. */
-  function readJsonLd(doc) {
+  function readJsonLd(doc: Document): ProductJsonLd | null {
     const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
     for (const script of scripts) {
       try {
-        const data = JSON.parse(script.textContent);
+        const data = JSON.parse(script.textContent ?? '') as ProductJsonLd | null;
         if (data && data['@type'] === 'Product') return data;
       } catch {
         // Bloc JSON-LD non parsable : on passe au suivant.
@@ -393,14 +402,16 @@
    *
    * Le clone reste hors du document : aucune mutation, donc aucun scan déclenché.
    */
-  function detailAttribute(doc, name, prop) {
+  function detailAttribute(doc: Document, name: string, prop: string): string {
     const row = doc.querySelector(`[data-testid="item-attributes-${name}"]`);
     if (!row) return '';
 
     const value = row.querySelector(`[itemprop="${prop}"]`) || row.lastElementChild || row;
-    const clone = value.cloneNode(true);
-    clone.querySelectorAll('button').forEach((btn) => btn.remove());
-    return clone.textContent.trim();
+    const clone = value.cloneNode(true) as Element;
+    clone.querySelectorAll('button').forEach((btn) => {
+      btn.remove();
+    });
+    return clone.textContent?.trim() ?? '';
   }
 
   /**
@@ -420,9 +431,8 @@
    * le même contenu, et une valeur mémorisée finit toujours par être servie au
    * mauvais article.
    *
-   * @returns {number|null}
    */
-  function favouriteCountFromHydration(doc, id) {
+  function favouriteCountFromHydration(doc: Document, id: string): number | null {
     const pattern = new RegExp(
       `\\\\?"item_id\\\\?":\\s*${id}\\b[^}]{0,300}?\\\\?"favourite_count\\\\?":\\s*(\\d+)`
     );
@@ -432,7 +442,7 @@
       if (!source || source.indexOf('favourite_count') === -1) continue;
 
       const match = source.match(pattern);
-      if (match) return Number.parseInt(match[1], 10);
+      if (match?.[1]) return Number.parseInt(match[1], 10);
     }
 
     return null;
@@ -447,14 +457,14 @@
    * ancres ; une carte ne fournit plus qu'un affichage immédiat, remplacé dès
    * que la fiche répond. Voir `enrichFromDetail()`.
    *
-   * @param {Document} [doc] par défaut la page courante
-   * @param {string} [pageUrl] URL de cette fiche, par défaut celle de la page
+   * @param doc par défaut la page courante
+   * @param pageUrl URL de cette fiche, par défaut celle de la page
    */
-  function extractFromDetail(doc = document, pageUrl = location.href) {
+  function extractFromDetail(doc: Document = document, pageUrl = location.href): SavedItem | null {
     const id = extractIdFromUrl(pageUrl);
     if (!id) return null;
 
-    const path = pageUrl.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
+    const path = pageUrl.replace(/^https?:\/\/[^/]+/, '').split('?')[0] ?? '';
     const url = `https://www.vinted.fr${path}`;
     const ld = readJsonLd(doc);
 
@@ -478,13 +488,16 @@
     if (ld) {
       const offer = ld.offers || {};
       // Le JSON-LD donne un nombre brut (1) ; on le rend comme le catalogue ("1,00 €").
-      const price = offer.price != null ? formatPrice(offer.price, offer.priceCurrency) : '';
+      const price =
+        typeof offer.price === 'number'
+          ? formatPrice(offer.price, offer.priceCurrency)
+          : String(offer.price ?? '');
 
       return {
         id,
         url: offer.url || url,
         title: ld.name || titleFromUrl(url) || `Article ${id}`,
-        brand: (ld.brand && ld.brand.name) || '',
+        brand: ld.brand?.name || '',
         size,
         condition,
         price,
@@ -503,7 +516,7 @@
     }
 
     // Repli sans JSON-LD : on retombe sur les data-testid de la page.
-    const img = doc.querySelector('[data-testid="item-photo-1--img"]');
+    const img = doc.querySelector<HTMLImageElement>('[data-testid="item-photo-1--img"]');
     const price = text(doc.querySelector('[data-testid="item-price"]'));
 
     return {
@@ -540,8 +553,11 @@
    */
   const ENRICH_TIMEOUT_MS = 15000;
 
+  /** Un article dont il reste à lire la fiche. */
+  type EnrichJob = { id: string; url: string };
+
   /** Articles en attente d'enrichissement, traités un par un. */
-  const enrichQueue = [];
+  const enrichQueue: EnrichJob[] = [];
   let enrichRunning = false;
 
   /**
@@ -550,10 +566,11 @@
    *                     données de sa carte
    *   pending absent  → article complet, ou fiche définitivement illisible
    */
-  function queueEnrich(id, url) {
+  function queueEnrich(id: string, url: string): void {
     if (enrichQueue.some((job) => job.id === id)) return;
     enrichQueue.push({ id, url });
-    if (!enrichRunning) runEnrichQueue();
+    // Volontairement non attendu : le clic ne doit pas patienter sur la requête.
+    if (!enrichRunning) void runEnrichQueue();
   }
 
   /**
@@ -561,15 +578,15 @@
    * dix requêtes de 2 Mo en parallèle. L'utilisateur ne les attend pas — chaque
    * article est déjà affiché avec les données de sa carte.
    */
-  async function runEnrichQueue() {
+  async function runEnrichQueue(): Promise<void> {
     enrichRunning = true;
 
-    while (enrichQueue.length) {
-      const job = enrichQueue.shift();
+    let job: EnrichJob | undefined;
+    while ((job = enrichQueue.shift())) {
       try {
         await enrichFromDetail(job.id, job.url);
       } catch (err) {
-        debug.lastError = `enrichissement ${job.id} : ${(err && err.message) || err}`;
+        debug.lastError = `enrichissement ${job.id} : ${errorText(err)}`;
         debug.enrichFailed += 1;
         await finishEnrich(job.id, null);
       }
@@ -578,7 +595,7 @@
     enrichRunning = false;
   }
 
-  async function enrichFromDetail(id, url) {
+  async function enrichFromDetail(id: string, url: string): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ENRICH_TIMEOUT_MS);
 
@@ -612,9 +629,8 @@
    * et **n'écrit rien si l'article n'y est plus** : l'utilisateur a pu le retirer
    * pendant la requête, le ressusciter serait pire que de perdre l'enrichissement.
    */
-  async function finishEnrich(id, detail) {
-    const res = await chrome.storage.local.get(STORAGE_KEY);
-    const current = res[STORAGE_KEY] || {};
+  async function finishEnrich(id: string, detail: SavedItem | null): Promise<void> {
+    const current = await readItems();
     const existing = current[id];
     if (!existing) return;
 
@@ -634,7 +650,7 @@
   const ICON_FILLED =
     '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
 
-  function paintButton(btn, isSaved) {
+  function paintButton(btn: HTMLButtonElement, isSaved: boolean): void {
     // Idempotent, et c'est vital : réécrire innerHTML déclenche le MutationObserver,
     // qui relance un scan, qui repeint… Sans cette garde, la page part en boucle
     // à chaque frame et le bouton devient incliquable (ses enfants sont détruits
@@ -660,16 +676,13 @@
     btn.setAttribute('aria-label', btn.title);
   }
 
-  /**
-   * @param {string} className
-   * @param {() => object|null} getItem recalcule l'article au moment du clic
-   */
-  function createButton(className, getItem) {
+  /** @param getItem recalcule l'article au moment du clic */
+  function createButton(className: string, getItem: () => SavedItem | null): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = className;
 
-    const activate = async (event) => {
+    const activate = async (event: Event): Promise<void> => {
       // Sur une carte, le bouton est posé au-dessus du lien overlay :
       // sans ça, le clic navigue vers l'article.
       event.preventDefault();
@@ -692,14 +705,14 @@
 
         // Repeint immédiatement : si le storage échoue silencieusement ou si
         // onChanged ne se déclenche pas, l'utilisateur voit quand même l'état.
-        saved = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY] || {};
+        saved = await readItems();
         repaintAll();
 
         if (fromCard && action === 'added') queueEnrich(item.id, item.url);
       } catch (err) {
         // Cas classique : extension rechargée sans recharger l'onglet
         // ("Extension context invalidated") — le clic échoue en silence.
-        debug.lastError = String((err && err.message) || err);
+        debug.lastError = errorText(err);
         console.error('[Vinted Favoris] clic échoué :', err);
       }
     };
@@ -709,7 +722,10 @@
     // sélection de texte démarre sur le libellé, quand le pointeur glisse un peu,
     // ou quand la cible du mousedown a disparu avant le mouseup. "pointerdown"
     // est inconditionnel.
-    btn.addEventListener('pointerdown', activate);
+    // `void` : l'écouteur ne doit rien renvoyer, et personne n'attend l'écriture.
+    btn.addEventListener('pointerdown', (event) => {
+      void activate(event);
+    });
 
     // Le "click" qui suit ce même geste doit être neutralisé sans re-déclencher.
     // MouseEvent.detail vaut 0 pour un click synthétisé par le clavier (Entrée /
@@ -717,13 +733,14 @@
     btn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (event.detail === 0) activate(event);
+      // Volontairement non attendu : rien ne dépend de la fin de l'écriture ici.
+      if (event.detail === 0) void activate(event);
     });
 
     return btn;
   }
 
-  function injectCardButton(box) {
+  function injectCardButton(box: HTMLElement): void {
     if (box.dataset[BTN_FLAG]) return;
 
     const item = extractFromCard(box);
@@ -731,8 +748,8 @@
 
     // Le bouton doit être ancré dans un parent positionné.
     const host =
-      box.querySelector('.new-item-box__image-container') ||
-      (box.querySelector('img') && box.querySelector('img').closest('div')) ||
+      box.querySelector<HTMLElement>('.new-item-box__image-container') ||
+      box.querySelector('img')?.closest<HTMLElement>('div') ||
       box;
     if (getComputedStyle(host).position === 'static') {
       host.style.position = 'relative';
@@ -746,8 +763,8 @@
     host.appendChild(btn);
   }
 
-  function injectDetailButton() {
-    const existing = document.querySelector('.vf-detail-btn');
+  function injectDetailButton(): void {
+    const existing = document.querySelector<HTMLButtonElement>('.vf-detail-btn');
 
     if (!isDetailPage()) {
       if (existing) existing.remove();
@@ -757,7 +774,7 @@
     // Bouton déjà en place sur le même article : rien à ré-extraire.
     // Le scan tourne à chaque mutation de la SPA, donc ce raccourci compte.
     if (existing && existing.dataset.vfPath === location.pathname) {
-      paintButton(existing, Boolean(saved[existing.dataset.vfId]));
+      paintButton(existing, Boolean(existing.dataset.vfId && saved[existing.dataset.vfId]));
       return;
     }
 
@@ -781,9 +798,9 @@
   }
 
   /** Resynchronise l'état visuel de tous les boutons déjà en place. */
-  function repaintAll() {
-    document.querySelectorAll('.vf-card-btn, .vf-detail-btn').forEach((btn) => {
-      paintButton(btn, Boolean(saved[btn.dataset.vfId]));
+  function repaintAll(): void {
+    document.querySelectorAll<HTMLButtonElement>('.vf-card-btn, .vf-detail-btn').forEach((btn) => {
+      paintButton(btn, Boolean(btn.dataset.vfId && saved[btn.dataset.vfId]));
     });
   }
 
@@ -814,15 +831,17 @@
    * squelette et charge les articles par requête à l'approche du bloc. C'est le
    * MutationObserver qui les voit arriver, jamais le scan initial.
    */
-  function blockCards() {
-    const cards = [];
+  function blockCards(): HTMLElement[] {
+    const cards: HTMLElement[] = [];
 
-    for (const block of document.querySelectorAll('[data-testid$="-plugin"]')) {
+    for (const block of document.querySelectorAll<HTMLElement>('[data-testid$="-plugin"]')) {
       const match = BLOCK_TESTID.exec(block.dataset.testid || '');
       if (!match) continue;
 
       cards.push(
-        ...block.querySelectorAll(`[data-testid^="${match[1]}-"]:not([data-testid*="--"])`)
+        ...block.querySelectorAll<HTMLElement>(
+          `[data-testid^="${match[1]}-"]:not([data-testid*="--"])`
+        )
       );
     }
 
@@ -830,12 +849,14 @@
   }
 
   /** Toutes les cartes produit de la page, quel que soit le contexte. */
-  function cardBoxes() {
-    return [...document.querySelectorAll(CATALOG_CARDS), ...blockCards()];
+  function cardBoxes(): HTMLElement[] {
+    return [...document.querySelectorAll<HTMLElement>(CATALOG_CARDS), ...blockCards()];
   }
 
-  function scan() {
-    cardBoxes().forEach(injectCardButton);
+  function scan(): void {
+    cardBoxes().forEach((box) => {
+      injectCardButton(box);
+    });
     injectDetailButton();
   }
 
@@ -867,24 +888,54 @@
   // Diagnostic (déclenché depuis le panneau latéral)
   // ---------------------------------------------------------------------------
 
-  function diagnose() {
-    const boxes = cardBoxes();
-    const items = boxes.map(extractFromCard).filter(Boolean);
-    const TEXT_FIELDS = ['title', 'brand', 'price', 'imageUrl', 'size', 'condition'];
-    // Champs de tri numériques : 0 est une valeur, pas une absence.
-    const NUMBER_FIELDS = ['priceValue', 'favouriteCount'];
+  /**
+   * Rapport lu par le panneau (`docs/diagnostic.md`). Les champs propres à la
+   * fiche article ne sont renseignés que sur une fiche, d'où les optionnels.
+   */
+  type DiagnoseReport = {
+    url: string;
+    isDetailPage: boolean;
+    cardsFound: number;
+    cardsParsed: number;
+    cardButtons: number;
+    missing: Record<string, number>;
+    categorie: Omit<ItemCategory, 'exact'> | string;
+    savedCount: number;
+    debug: typeof debug;
+    sample: SavedItem | null;
 
-    const missing = {};
+    blocsArticles?: string[];
+    blockCardsFound?: number;
+    detailJsonLd?: boolean;
+    detailExtraction?: SavedItem | null;
+    detailButton?: string;
+    detailButtonBox?: Record<string, string | number>;
+    clickablePoints?: string;
+    BLOQUÉ_PAR?: Record<string, number>;
+    inViewport?: boolean;
+  };
+
+  function diagnose(): DiagnoseReport {
+    const boxes = cardBoxes();
+    const items = boxes
+      .map((box) => extractFromCard(box))
+      .filter((item): item is SavedItem => item !== null);
+
+    const TEXT_FIELDS = ['title', 'brand', 'price', 'imageUrl', 'size', 'condition'] as const;
+    // Champs de tri numériques : 0 est une valeur, pas une absence.
+    const NUMBER_FIELDS = ['priceValue', 'favouriteCount'] as const;
+
+    const missing: Record<string, number> = {};
     [...TEXT_FIELDS, ...NUMBER_FIELDS].forEach((field) => {
       missing[field] = 0;
     });
 
     items.forEach((item) => {
       TEXT_FIELDS.forEach((field) => {
-        if (!item[field]) missing[field] += 1;
+        if (!item[field]) missing[field] = (missing[field] ?? 0) + 1;
       });
       NUMBER_FIELDS.forEach((field) => {
-        if (typeof item[field] !== 'number') missing[field] += 1;
+        if (typeof item[field] !== 'number') missing[field] = (missing[field] ?? 0) + 1;
       });
     });
 
@@ -893,7 +944,7 @@
     // n'apprendrait rien — on montre la valeur.
     const category = readBreadcrumbCategory(document);
 
-    const report = {
+    const report: DiagnoseReport = {
       url: location.href,
       isDetailPage: isDetailPage(),
       cardsFound: boxes.length,
@@ -911,12 +962,12 @@
     // Les blocs d'articles de la fiche se chargent après le rendu : un compte à
     // zéro alors qu'ils sont visibles à l'écran dit que leur préfixe de testid a
     // changé, pas que la page est vide. Voir blockCards().
-    report.blocsArticles = [...document.querySelectorAll('[data-testid$="-plugin"]')]
+    report.blocsArticles = [...document.querySelectorAll<HTMLElement>('[data-testid$="-plugin"]')]
       .map((el) => el.dataset.testid)
-      .filter((id) => BLOCK_TESTID.test(id));
+      .filter((id): id is string => id !== undefined && BLOCK_TESTID.test(id));
     report.blockCardsFound = blockCards().length;
 
-    const btn = document.querySelector('.vf-detail-btn');
+    const btn = document.querySelector<HTMLButtonElement>('.vf-detail-btn');
     report.detailJsonLd = Boolean(readJsonLd(document));
     report.detailExtraction = extractFromDetail();
     report.detailButton = !btn ? 'ABSENT' : 'présent';
@@ -939,7 +990,7 @@
       // On sonde 9 points : un recouvrement partiel ne se voit pas au centre seul,
       // et se manifeste par un bouton qui ne répond que « à certains endroits ».
       if (typeof document.elementFromPoint === 'function') {
-        const blockers = {};
+        const blockers: Record<string, number> = {};
         let free = 0;
 
         for (const fy of [0.15, 0.5, 0.85]) {
@@ -949,8 +1000,9 @@
               free += 1;
               continue;
             }
+            const testid = hit instanceof HTMLElement ? hit.dataset.testid : undefined;
             const name = hit
-              ? `${hit.tagName.toLowerCase()}${hit.dataset && hit.dataset.testid ? `[${hit.dataset.testid}]` : `.${String(hit.className).split(' ')[0]}`}`
+              ? `${hit.tagName.toLowerCase()}${testid ? `[${testid}]` : `.${String(hit.className).split(' ')[0]}`}`
               : 'hors viewport';
             blockers[name] = (blockers[name] || 0) + 1;
           }
@@ -970,8 +1022,9 @@
     return report;
   }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message && message.type === 'VF_DIAGNOSE') {
+  chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+    const message = raw as ExtensionMessage | null;
+    if (message?.type === 'VF_DIAGNOSE') {
       sendResponse(diagnose());
     }
     return false;
@@ -982,12 +1035,13 @@
   // ---------------------------------------------------------------------------
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes[STORAGE_KEY]) return;
-    saved = changes[STORAGE_KEY].newValue || {};
+    const change = changes[STORAGE_KEY];
+    if (area !== 'local' || !change) return;
+    saved = (change.newValue as ItemMap | undefined) || {};
     repaintAll();
   });
 
-  loadSaved().then(() => {
+  void loadSaved().then(() => {
     scan();
 
     // Second garde-fou contre la boucle : on ignore les mutations que nos propres
@@ -995,7 +1049,7 @@
     const observer = new MutationObserver((mutations) => {
       const fromVinted = mutations.some((m) => {
         const target = m.target;
-        if (!target || target.nodeType !== Node.ELEMENT_NODE) return true;
+        if (!(target instanceof Element)) return true;
         return !target.closest('.vf-card-btn, .vf-detail-btn');
       });
       if (fromVinted) scheduleScan();

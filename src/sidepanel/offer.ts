@@ -10,7 +10,10 @@
  * puis lui transmet prix et message.
  */
 
-import { parsePrice } from './sorting.js';
+import { errorText } from '../shared/errors.ts';
+import type { OfferPong, StepResult } from '../shared/messages.ts';
+import type { SavedItem } from '../shared/types.ts';
+import { parsePrice } from './sorting.ts';
 
 // --- Composition du message --------------------------------------------------
 
@@ -26,28 +29,31 @@ const OPENINGS = [
   'Bonjour, votre {title} correspond exactement à ce que je cherche',
 ];
 
-const HOOKS = {
+/** Registre de ton, choisi selon l'effort demandé au vendeur. */
+type Band = 'small' | 'medium' | 'large';
+
+const HOOKS: Record<Band, readonly string[]> = {
   small: [
     ", et l'annonce est très bien faite.",
     ', les photos donnent vraiment envie.',
     ", c'est exactement la pièce qu'il me manquait.",
   ],
   medium: [
-    ', et son état a l\'air impeccable sur les photos.',
-    ", je le cherchais depuis un moment dans cette taille.",
+    ", et son état a l'air impeccable sur les photos.",
+    ', je le cherchais depuis un moment dans cette taille.',
     ', la coupe et la couleur sont parfaites pour moi.',
   ],
   large: [
-    ", même si mon budget du moment est un peu serré.",
+    ', même si mon budget du moment est un peu serré.',
     ', je le garde en favori depuis quelques jours.',
-    ", il me tente beaucoup mais je dois surveiller mes dépenses.",
+    ', il me tente beaucoup mais je dois surveiller mes dépenses.',
   ],
 };
 
-const PITCHES = {
+const PITCHES: Record<Band, readonly string[]> = {
   small: [
     "Est-ce que {price} vous conviendrait ? J'achète dans la foulée si c'est bon pour vous.",
-    'Seriez-vous d\'accord pour {price} ? Je valide immédiatement dans ce cas.',
+    "Seriez-vous d'accord pour {price} ? Je valide immédiatement dans ce cas.",
     'Je vous propose {price}, réglés tout de suite si vous acceptez.',
   ],
   medium: [
@@ -56,7 +62,7 @@ const PITCHES = {
     'Je me permets de proposer {price} : achat réglé dans la minute si cela vous va.',
   ],
   large: [
-    'Je me permets de tenter {price} — je comprends tout à fait si c\'est trop bas, dites-moi simplement ce qui vous irait.',
+    "Je me permets de tenter {price} — je comprends tout à fait si c'est trop bas, dites-moi simplement ce qui vous irait.",
     "Auriez-vous la possibilité de descendre à {price} ? Si c'est trop, n'hésitez pas à me faire une contre-proposition.",
     'Est-ce que {price} serait jouable de votre côté ? Je suis preneur(se) immédiatement, et ouvert(e) à un compromis sinon.',
   ],
@@ -64,46 +70,44 @@ const PITCHES = {
 
 const CLOSINGS = [
   'Bonne journée et merci !',
-  'Merci d\'avance pour votre retour, bonne journée !',
-  'Quoi qu\'il en soit, merci pour votre réponse. Belle journée !',
+  "Merci d'avance pour votre retour, bonne journée !",
+  "Quoi qu'il en soit, merci pour votre réponse. Belle journée !",
 ];
 
-const pick = (list) => list[Math.floor(Math.random() * list.length)];
+/** `list` n'est jamais vide (constantes ci-dessus) ; le repli garde le type sûr. */
+const pick = (list: readonly string[]): string =>
+  list[Math.floor(Math.random() * list.length)] ?? '';
 
 /** Trois registres selon l'effort demandé au vendeur. */
-function bandFor(discountPercent) {
+function bandFor(discountPercent: number): Band {
   if (discountPercent <= 10) return 'small';
   if (discountPercent <= 25) return 'medium';
   return 'large';
 }
 
-export function formatEuro(value) {
+export function formatEuro(value: number): string {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value);
 }
 
-/**
- * @param {object} item article ciblé
- * @param {number} offerPrice prix proposé, en euros
- * @returns {string} message prêt à envoyer, ~4 lignes
- */
 /**
  * Le titre Vinted est souvent bavard ("Jean Levi's 501 bleu délavé taille 32
  * coupe droite vintage") : on coupe au dernier mot entier avant la limite.
  * La majuscule initiale tombe pour s'insérer après « votre », sauf sur les
  * marques écrites en capitales (COS, NIKE) qu'on laisse intactes.
  */
-function shortTitle(rawTitle) {
+function shortTitle(rawTitle: string): string {
   const title = (rawTitle || 'article').trim();
 
-  const cut =
-    title.length <= 48
-      ? title
-      : `${title.slice(0, 45).replace(/\s+\S*$/, '')}…`;
+  const cut = title.length <= 48 ? title : `${title.slice(0, 45).replace(/\s+\S*$/, '')}…`;
 
   return /^[A-ZÀ-Ý]{2,}/.test(cut) ? cut : cut.charAt(0).toLowerCase() + cut.slice(1);
 }
 
-export function composeMessage(item, offerPrice) {
+/**
+ * Message de négociation prêt à envoyer, ~4 lignes.
+ * @param offerPrice prix proposé, en euros
+ */
+export function composeMessage(item: SavedItem, offerPrice: number): string {
   const original = parsePrice(item);
   const discount =
     original && original > 0 ? Math.round(((original - offerPrice) / original) * 100) : 15;
@@ -118,7 +122,7 @@ export function composeMessage(item, offerPrice) {
 }
 
 /** Prix suggéré : remise appliquée puis arrondie à l'euro inférieur. */
-export function suggestPrice(item, discountPercent) {
+export function suggestPrice(item: SavedItem, discountPercent: number): number | null {
   const original = parsePrice(item);
   if (!original) return null;
   return Math.max(1, Math.floor(original * (1 - discountPercent / 100)));
@@ -138,39 +142,47 @@ const SETTLE_MS = 800;
 const CHANNEL_LOST =
   /message channel closed|Receiving end does not exist|context invalidated|No tab with id|Could not establish connection/i;
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
-function sendToTab(tabId, message) {
+function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
   return chrome.tabs.sendMessage(tabId, message);
 }
 
-/** Onglet déjà ouvert sur cette fiche article, sinon nouvel onglet. */
-async function openItemTab(item) {
+/**
+ * Onglet déjà ouvert sur cette fiche article, sinon nouvel onglet.
+ *
+ * Un onglet fraîchement créé peut n'avoir aucun `id` (Chrome le refuse dans de
+ * rares cas, fenêtre en cours de fermeture) : sans identifiant, rien à piloter.
+ */
+async function openItemTab(item: SavedItem): Promise<number | null> {
   const tabs = await chrome.tabs.query({ url: 'https://www.vinted.fr/items/*' });
-  const existing = tabs.find((tab) => tab.url && tab.url.includes(`/items/${item.id}`));
+  const existing = tabs.find((tab) => tab.url?.includes(`/items/${item.id}`));
 
-  if (existing) {
+  if (existing?.id !== undefined) {
     await chrome.tabs.update(existing.id, { active: true });
     return existing.id;
   }
 
   const created = await chrome.tabs.create({ url: item.url, active: true });
-  return created.id;
+  return created.id ?? null;
 }
 
 /**
  * Attend que l'agent réponde depuis une page stabilisée.
  * Sert aussi bien au premier chargement qu'après la navigation déclenchée par
  * l'envoi de l'offre.
- * @returns {Promise<object|null>} la réponse au ping, ou null au bout du délai
+ * @returns la réponse au ping, ou null au bout du délai
  */
-async function waitForAgent(tabId, timeout = AGENT_TIMEOUT_MS) {
+async function waitForAgent(tabId: number, timeout = AGENT_TIMEOUT_MS): Promise<OfferPong | null> {
   const deadline = Date.now() + timeout;
 
   while (Date.now() < deadline) {
     try {
-      const pong = await sendToTab(tabId, { type: 'VF_OFFER_PING' });
-      if (pong && pong.ready && pong.readyState === 'complete') return pong;
+      const pong = await sendToTab<OfferPong | undefined>(tabId, { type: 'VF_OFFER_PING' });
+      if (pong?.ready && pong.readyState === 'complete') return pong;
     } catch {
       // Content script pas encore injecté, ou page en cours de navigation.
     }
@@ -181,7 +193,7 @@ async function waitForAgent(tabId, timeout = AGENT_TIMEOUT_MS) {
 }
 
 /** L'offre est partie ; seul le message a échoué. On ne masque ni l'un ni l'autre. */
-const offerOnly = (offer, note) => ({
+const offerOnly = (offer: StepResult, note: string): StepResult => ({
   ok: true,
   step: 'offre',
   detail: `${offer.detail} En revanche, le message n'est pas parti : ${note}`,
@@ -196,10 +208,20 @@ const offerOnly = (offer, note) => ({
  * conversation, ce qui détruit le content script avant sa réponse. Le panneau
  * attend donc que l'onglet se stabilise entre les deux.
  *
- * @returns {Promise<{ok: boolean, step: string, detail?: string, messagePending?: boolean}>}
  */
-export async function submitOffer(item, { price, message, sendMessage }) {
+export async function submitOffer(
+  item: SavedItem,
+  { price, message, sendMessage }: { price: number; message: string; sendMessage: boolean }
+): Promise<StepResult> {
   const tabId = await openItemTab(item);
+
+  if (tabId === null) {
+    return {
+      ok: false,
+      step: 'ouverture',
+      detail: "Impossible d'ouvrir l'onglet de l'article.",
+    };
+  }
 
   if (!(await waitForAgent(tabId))) {
     return {
@@ -209,11 +231,15 @@ export async function submitOffer(item, { price, message, sendMessage }) {
     };
   }
 
-  let offer;
+  let offer: StepResult;
   try {
-    offer = await sendToTab(tabId, { type: 'VF_MAKE_OFFER', itemId: item.id, price });
+    offer = await sendToTab<StepResult>(tabId, {
+      type: 'VF_MAKE_OFFER',
+      itemId: item.id,
+      price,
+    });
   } catch (err) {
-    const detail = String((err && err.message) || err);
+    const detail = errorText(err);
     if (!CHANNEL_LOST.test(detail)) {
       return { ok: false, step: 'communication', detail };
     }
@@ -230,12 +256,16 @@ export async function submitOffer(item, { price, message, sendMessage }) {
   }
 
   try {
-    const sent = await sendToTab(tabId, { type: 'VF_SEND_MESSAGE', itemId: item.id, message });
-    if (sent && sent.ok) {
+    const sent = await sendToTab<StepResult | undefined>(tabId, {
+      type: 'VF_SEND_MESSAGE',
+      itemId: item.id,
+      message,
+    });
+    if (sent?.ok) {
       return { ok: true, step: 'offre + message', detail: `${offer.detail} ${sent.detail}` };
     }
-    return offerOnly(offer, (sent && sent.detail) || 'raison inconnue.');
+    return offerOnly(offer, sent?.detail || 'raison inconnue.');
   } catch (err) {
-    return offerOnly(offer, String((err && err.message) || err));
+    return offerOnly(offer, errorText(err));
   }
 }

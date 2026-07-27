@@ -6,7 +6,8 @@
  * uniquement les bons états.
  */
 
-import { parsePrice } from './sorting.js';
+import type { SavedItem } from '../shared/types.ts';
+import { parsePrice } from './sorting.ts';
 
 /**
  * Identifiants d'état du catalogue, relevés sur `/api/v2/statuses` (vinted.fr).
@@ -18,14 +19,20 @@ export const STATUS_IDS = {
   'Très bon état': 2,
   'Bon état': 3,
   Satisfaisant: 4,
-};
+} as const;
+
+export type StatusLabel = keyof typeof STATUS_IDS;
 
 /**
  * États retenus pour une recherche de similaires. Volontairement fixes, quel que
  * soit l'état de l'article d'origine : on cherche une bonne affaire, pas son
  * équivalent abîmé.
  */
-export const SIMILAR_STATUSES = ['Neuf avec étiquette', 'Neuf sans étiquette', 'Très bon état'];
+export const SIMILAR_STATUSES: readonly StatusLabel[] = [
+  'Neuf avec étiquette',
+  'Neuf sans étiquette',
+  'Très bon état',
+];
 
 /**
  * Écarts appliqués au prix enregistré, dissociés : une remise de plus de 100 %
@@ -39,9 +46,9 @@ const CATALOG_URL = 'https://www.vinted.fr/catalog';
 /**
  * Ajoute le filtre de marque : par identifiant si l'article en porte un, sinon
  * en recherche textuelle. Vinted n'accepte pas de nom dans `brand_ids[]`.
- * @returns {boolean} vrai si un filtre a pu être posé
+ * @returns vrai si un filtre a pu être posé
  */
-function appendBrand(params, item, words) {
+function appendBrand(params: URLSearchParams, item: SavedItem, words: string[]): boolean {
   if (item.brandId) {
     params.append('brand_ids[]', String(item.brandId));
     return true;
@@ -56,16 +63,17 @@ function appendBrand(params, item, words) {
 /**
  * Ajoute le filtre de catégorie, seulement si elle décrit l'article lui-même.
  * `exact: false` signale la catégorie de la page parcourue, pas celle du produit.
- * @returns {boolean} vrai si un filtre a pu être posé
+ * @returns vrai si un filtre a pu être posé
  */
-function appendCategory(params, item) {
+function appendCategory(params: URLSearchParams, item: SavedItem): boolean {
   if (!item.category || !item.category.exact || !item.category.id) return false;
   params.append('catalog[]', String(item.category.id));
   return true;
 }
 
 /** Vinted attend `status_ids[]` en clair ; URLSearchParams encode les crochets. */
-const buildUrl = (params) => `${CATALOG_URL}?${params.toString().replace(/%5B%5D/g, '[]')}`;
+const buildUrl = (params: URLSearchParams): string =>
+  `${CATALOG_URL}?${params.toString().replace(/%5B%5D/g, '[]')}`;
 
 /**
  * URL du catalogue filtré sur la marque d'un article, dans sa catégorie.
@@ -76,12 +84,12 @@ const buildUrl = (params) => `${CATALOG_URL}?${params.toString().replace(/%5B%5D
  * Sans catégorie exploitable, la recherche porte sur la marque seule — ce qui
  * reste utile, là où une catégorie approximative fausserait tout.
  *
- * @param {object} item favori enregistré
- * @returns {string|null} URL de catalogue, ou null si la marque est inconnue
+ * @param item favori enregistré
+ * @returns URL de catalogue, ou null si la marque est inconnue
  */
-export function brandSearchUrl(item) {
+export function brandSearchUrl(item: SavedItem): string | null {
   const params = new URLSearchParams();
-  const words = [];
+  const words: string[] = [];
 
   appendCategory(params, item);
   if (!appendBrand(params, item, words)) return null;
@@ -99,12 +107,12 @@ export function brandSearchUrl(item) {
  * recherche textuelle, qui reste approximative : « 42 » remonte aussi bien une
  * pointure qu'un tour de taille.
  *
- * @param {object} item favori enregistré
- * @returns {string} URL de catalogue Vinted
+ * @param item favori enregistré
+ * @returns URL de catalogue Vinted
  */
-export function similarSearchUrl(item) {
+export function similarSearchUrl(item: SavedItem): string {
   const params = new URLSearchParams();
-  const words = [];
+  const words: string[] = [];
 
   // La catégorie resserre beaucoup la recherche : « 42 » ne remonte plus à la fois
   // des pointures et des tours de taille.

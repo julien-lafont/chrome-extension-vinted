@@ -14,6 +14,34 @@ const SCROLL_ZONE = 48; // px depuis le bord de la liste où le défilement auto
 const SCROLL_SPEED = 12; // px par frame, à pleine vitesse
 const MOVE_THRESHOLD = 4; // px en deçà desquels la saisie reste un clic, pas un glisser
 
+/** Ce que `pickSlot` a besoin de connaître d'un voisin : un DOMRect en fournit plus. */
+export type SlotBox = { top: number; height: number };
+
+export type DragHandlers = {
+  /** Le mode de tri autorise-t-il déjà l'ordre manuel. */
+  canDrag: () => boolean;
+  /** Appelé au premier mouvement, si le tri doit basculer en manuel. */
+  onStart: () => void;
+  /** Nouvel ordre affiché. */
+  onDrop: (ids: string[]) => void;
+  onDropToCollection: (itemId: string, collectionId: string) => void;
+  /** Saisie relâchée sans mouvement : c'était un clic. */
+  onCancel: () => void;
+};
+
+/** État d'un glisser en cours. `null` hors glisser. */
+type DragState = {
+  el: HTMLElement;
+  ghost: HTMLElement;
+  handle: HTMLElement;
+  pointerId: number;
+  grabOffsetY: number;
+  startY: number;
+  lastY: number;
+  moved: boolean;
+  dropTab: HTMLElement | null;
+};
+
 /**
  * Emplacement où déposer la carte saisie, parmi les `n + 1` positions possibles
  * entre `n` voisins.
@@ -26,27 +54,32 @@ const MOVE_THRESHOLD = 4; // px en deçà desquels la saisie reste un clic, pas 
  * Raisonner par emplacement, et non par « voisin à dépasser », gère aussi les
  * cartes de hauteurs inégales — un titre peut tenir sur une ou deux lignes.
  *
- * @param {number} center centre vertical de la carte saisie, en coordonnées écran
- * @param {number} height hauteur du fantôme, donc de la carte saisie
- * @param {number} ghostIndex emplacement actuellement occupé par le fantôme (0..n)
- * @param {{top: number, height: number}[]} boxes voisins, dans l'ordre d'affichage
- * @returns {number} index de l'emplacement retenu (0..n)
+ * @param center centre vertical de la carte saisie, en coordonnées écran
+ * @param height hauteur du fantôme, donc de la carte saisie
+ * @param ghostIndex emplacement actuellement occupé par le fantôme (0..n)
+ * @param boxes voisins, dans l'ordre d'affichage
+ * @returns index de l'emplacement retenu (0..n)
  */
-export function pickSlot(center, height, ghostIndex, boxes) {
-  if (!boxes.length) return 0;
+export function pickSlot(
+  center: number,
+  height: number,
+  ghostIndex: number,
+  boxes: readonly SlotBox[]
+): number {
+  // Dernier emplacement : sous le dernier voisin.
+  const last = boxes.at(-1);
+  if (!last) return 0;
 
   // Centre qu'aurait la carte déposée à chaque emplacement. Les voisins situés
   // après le fantôme remonteraient de sa hauteur s'il disparaissait.
   const slots = boxes.map((box, i) => box.top - (i >= ghostIndex ? height : 0) + height / 2);
 
-  // Dernier emplacement : sous le dernier voisin.
-  const last = boxes[boxes.length - 1];
   const lastShift = boxes.length - 1 >= ghostIndex ? height : 0;
   slots.push(last.top - lastShift + last.height + height / 2);
 
   let best = 0;
   for (let i = 1; i < slots.length; i += 1) {
-    if (Math.abs(center - slots[i]) < Math.abs(center - slots[best])) best = i;
+    if (Math.abs(center - slots[i]!) < Math.abs(center - slots[best]!)) best = i;
   }
   return best;
 }
@@ -55,24 +88,18 @@ export function pickSlot(center, height, ghostIndex, boxes) {
  * Un article lâché sur un onglet de collection (`[data-drop-collection]`) y est
  * déplacé au lieu d'être réordonné : c'est le geste le plus direct pour classer.
  *
- * @param {HTMLElement} listEl conteneur des `.item[data-id]`
- * @param {object} handlers
- * @param {() => boolean} handlers.canDrag le mode de tri autorise-t-il déjà l'ordre manuel
- * @param {() => void} handlers.onStart au premier mouvement, si le tri doit basculer en manuel
- * @param {(ids: string[]) => void} handlers.onDrop nouvel ordre affiché
- * @param {(itemId: string, collectionId: string) => void} handlers.onDropToCollection
- * @param {() => void} handlers.onCancel saisie relâchée sans mouvement
+ * @param listEl conteneur des `.item[data-id]`
  */
 export function enableDragAndDrop(
-  listEl,
-  { canDrag, onStart, onDrop, onDropToCollection, onCancel }
-) {
-  let drag = null;
+  listEl: HTMLElement,
+  { canDrag, onStart, onDrop, onDropToCollection, onCancel }: DragHandlers
+): void {
+  let drag: DragState | null = null;
   let scrollRaf = 0;
   let scrollDelta = 0;
 
-  function itemsInDom() {
-    return [...listEl.querySelectorAll('.item')];
+  function itemsInDom(): HTMLElement[] {
+    return [...listEl.querySelectorAll<HTMLElement>('.item')];
   }
 
   function stopAutoScroll() {
@@ -93,7 +120,7 @@ export function enableDragAndDrop(
     scrollRaf = requestAnimationFrame(tickAutoScroll);
   }
 
-  function updateAutoScroll(clientY) {
+  function updateAutoScroll(clientY: number): void {
     const rect = listEl.getBoundingClientRect();
     const fromTop = clientY - rect.top;
     const fromBottom = rect.bottom - clientY;
@@ -102,9 +129,9 @@ export function enableDragAndDrop(
     if (fromTop < -8 || fromBottom < -8) {
       scrollDelta = 0;
     } else if (fromTop < SCROLL_ZONE) {
-      scrollDelta = -Math.ceil((Math.min(1, (SCROLL_ZONE - fromTop) / SCROLL_ZONE)) * SCROLL_SPEED);
+      scrollDelta = -Math.ceil(Math.min(1, (SCROLL_ZONE - fromTop) / SCROLL_ZONE) * SCROLL_SPEED);
     } else if (fromBottom < SCROLL_ZONE) {
-      scrollDelta = Math.ceil((Math.min(1, (SCROLL_ZONE - fromBottom) / SCROLL_ZONE)) * SCROLL_SPEED);
+      scrollDelta = Math.ceil(Math.min(1, (SCROLL_ZONE - fromBottom) / SCROLL_ZONE) * SCROLL_SPEED);
     } else {
       scrollDelta = 0;
     }
@@ -117,26 +144,28 @@ export function enableDragAndDrop(
    * Onglet de collection sous le pointeur. L'élément saisi étant en
    * `pointer-events: none`, elementFromPoint voit bien ce qu'il y a dessous.
    */
-  function collectionUnder(clientX, clientY) {
+  function collectionUnder(clientX: number, clientY: number): HTMLElement | null {
     const el = document.elementFromPoint(clientX, clientY);
-    const tab = el && el.closest ? el.closest('[data-drop-collection]') : null;
-    return tab || null;
+    return el?.closest<HTMLElement>('[data-drop-collection]') ?? null;
   }
 
-  function setDropTarget(tab) {
-    if (drag.dropTab === tab) return;
+  function setDropTarget(tab: HTMLElement | null): void {
+    if (!drag || drag.dropTab === tab) return;
     if (drag.dropTab) drag.dropTab.classList.remove('drop-target');
     if (tab) tab.classList.add('drop-target');
     drag.dropTab = tab;
   }
 
   /** Déplace le fantôme à l'emplacement visé par la carte saisie. */
-  function reposition(clientY) {
+  function reposition(clientY: number): void {
+    if (!drag) return;
     const { el, ghost, grabOffsetY } = drag;
     const top = clientY - grabOffsetY;
     el.style.top = `${top}px`;
 
-    const nodes = [...listEl.querySelectorAll('.item, .item-ghost')].filter((n) => n !== el);
+    const nodes = [...listEl.querySelectorAll<HTMLElement>('.item, .item-ghost')].filter(
+      (n) => n !== el
+    );
     // Le rang du fantôme parmi les nœuds vaut aussi l'emplacement qu'il occupe.
     const ghostIndex = nodes.indexOf(ghost);
     const siblings = nodes.filter((n) => n !== ghost);
@@ -148,14 +177,15 @@ export function enableDragAndDrop(
 
     if (best === ghostIndex) return;
 
-    if (best === siblings.length) {
+    const target = siblings[best];
+    if (best === siblings.length || !target) {
       listEl.append(ghost);
     } else {
-      listEl.insertBefore(ghost, siblings[best]);
+      listEl.insertBefore(ghost, target);
     }
   }
 
-  function onPointerMove(event) {
+  function onPointerMove(event: PointerEvent): void {
     if (!drag) return;
     event.preventDefault();
 
@@ -173,7 +203,7 @@ export function enableDragAndDrop(
     updateAutoScroll(event.clientY);
   }
 
-  function finish() {
+  function finish(): void {
     if (!drag) return;
 
     const { el, ghost, handle, pointerId, dropTab, moved } = drag;
@@ -199,7 +229,11 @@ export function enableDragAndDrop(
     handle.removeEventListener('pointercancel', finish);
 
     const itemId = el.dataset.id;
-    const ids = itemsInDom().map((node) => node.dataset.id);
+    // `.item` porte toujours un data-id (posé au rendu) ; les nœuds sans id
+    // seraient de toute façon inexploitables pour enregistrer un ordre.
+    const ids = itemsInDom()
+      .map((node) => node.dataset.id)
+      .filter((id): id is string => id !== undefined);
     drag = null;
 
     // Simple clic sur la poignée : rien n'a bougé, rien à enregistrer.
@@ -208,18 +242,20 @@ export function enableDragAndDrop(
       return;
     }
 
-    if (dropTab) {
-      onDropToCollection(itemId, dropTab.dataset.dropCollection);
+    const target = dropTab?.dataset.dropCollection;
+    if (itemId && target) {
+      onDropToCollection(itemId, target);
     } else {
       onDrop(ids);
     }
   }
 
-  listEl.addEventListener('pointerdown', (event) => {
-    const handle = event.target.closest('.item-drag');
+  listEl.addEventListener('pointerdown', (event: PointerEvent) => {
+    const handle =
+      event.target instanceof Element ? event.target.closest<HTMLElement>('.item-drag') : null;
     if (!handle || event.button !== 0) return;
 
-    const el = handle.closest('.item');
+    const el = handle.closest<HTMLElement>('.item');
     if (!el) return;
 
     event.preventDefault();

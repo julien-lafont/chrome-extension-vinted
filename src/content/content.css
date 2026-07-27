@@ -18,14 +18,20 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   color: #4b5563;
   cursor: pointer;
-  transition: transform 0.12s ease, background-color 0.12s ease, color 0.12s ease;
-  -webkit-user-select: none;
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease;
   user-select: none;
 }
 
+/* Pas de transform ici non plus — voir .vf-detail-btn:hover plus bas. Ce bouton
+   a porté un `transform: scale(1.1)` bien après que le bouton de la fiche en ait
+   été débarrassé : le survol ne change plus que des propriétés de peinture. */
 .vf-card-btn:hover {
-  transform: scale(1.1);
   background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  color: #111827;
 }
 
 /* Tous les enfants sont transparents aux événements : le clic cible toujours
@@ -51,6 +57,7 @@
 .vf-detail-btn {
   position: fixed;
   right: 24px;
+
   /* Au-dessus de la barre d'action sticky de Vinted ("Acheter" / "Faire une
      offre"), qui recouvrait partiellement le bouton en bottom: 24px : une
      moitié cliquable, l'autre non. */
@@ -70,11 +77,13 @@
   line-height: 1;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
   cursor: pointer;
-  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
+
   /* Sans ça, presser sur le libellé arme une sélection de texte : un déplacement
      de 1-2 px pendant le clic la déclenche et le "click" n'est jamais émis.
      Le clic marchait sur l'icône (non sélectionnable) mais pas sur le texte. */
-  -webkit-user-select: none;
   user-select: none;
 }
 

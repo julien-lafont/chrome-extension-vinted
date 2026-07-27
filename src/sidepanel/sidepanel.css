@@ -1,11 +1,11 @@
 :root {
-  --bg: #ffffff;
+  --bg: #fff;
   --fg: #111827;
   --muted: #6b7280;
   --border: #e5e7eb;
   --surface: #f9fafb;
   --accent: #09b1ba;
-  --accent-fg: #ffffff;
+  --accent-fg: #fff;
   --danger: #b91c1c;
   --shadow: 0 8px 24px rgba(17, 24, 39, 0.18);
 }
@@ -35,7 +35,12 @@ body {
   height: 100vh;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font:
+    14px/1.45 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
 }
 
 body.vf-grabbing {
@@ -48,7 +53,10 @@ body.vf-grabbing {
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
+
+  /* `clip` est déprécié ; `clip-path` fait le même travail et reste lu par les
+     lecteurs d'écran, ce qui est tout l'objet de cette classe. */
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
@@ -366,8 +374,9 @@ h1 {
 .item-brand {
   color: inherit;
   text-decoration: underline dotted;
+
   /* Dérivé du texte plutôt que fixe : lisible dans les deux thèmes. */
-  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+  text-decoration-color: color-mix(in srgb, currentcolor 55%, transparent);
   text-underline-offset: 2px;
 }
 
@@ -375,7 +384,7 @@ h1 {
 .item-brand:focus-visible {
   color: var(--accent);
   text-decoration: underline solid;
-  text-decoration-color: currentColor;
+  text-decoration-color: currentcolor;
 }
 
 /*
@@ -394,6 +403,7 @@ h1 {
   100% {
     opacity: 0.45;
   }
+
   50% {
     opacity: 1;
   }
@@ -768,5 +778,9 @@ h1 {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   white-space: pre-wrap;
-  word-break: break-word;
+
+  /* `word-break: break-word` est déprécié ; `overflow-wrap` est son équivalent
+     normalisé — il coupe les longues chaînes du rapport de diagnostic (URLs,
+     sélecteurs) sans casser les mots courts. */
+  overflow-wrap: anywhere;
 }

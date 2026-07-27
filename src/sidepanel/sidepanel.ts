@@ -21,7 +21,7 @@ import {
   moveItemToCollection,
   commitCustomOrder,
   removeItem,
-} from './store.js';
+} from './store.ts';
 
 import {
   SORT_MODES,
@@ -31,28 +31,48 @@ import {
   mergeVisibleOrder,
   countMissing,
   parsePrice,
-} from './sorting.js';
+} from './sorting.ts';
 
-import { enableDragAndDrop } from './dnd.js';
-import { similarSearchUrl, brandSearchUrl } from './search.js';
-import { composeMessage, suggestPrice, submitOffer, formatEuro } from './offer.js';
+import { enableDragAndDrop } from './dnd.ts';
+import { similarSearchUrl, brandSearchUrl } from './search.ts';
+import { composeMessage, suggestPrice, submitOffer, formatEuro } from './offer.ts';
 
-const listEl = document.getElementById('list');
-const countEl = document.getElementById('count');
-const searchEl = document.getElementById('search');
-const reportEl = document.getElementById('report');
-const collectionsEl = document.getElementById('collections');
-const sortEl = document.getElementById('sort');
-const sortDirEl = document.getElementById('sort-dir');
-const sortDirLabelEl = document.getElementById('sort-dir-label');
-const hintEl = document.getElementById('hint');
-const menuEl = document.getElementById('move-menu');
-const template = document.getElementById('item-template');
+import type { CollectionMap, Collection, SavedItem, Settings, SortMode } from '../shared/types.ts';
+
+/**
+ * Élément du panneau dont l'absence serait un bug de `sidepanel.html`, pas un cas
+ * à gérer : sans ses conteneurs, le panneau n'a rien à afficher. Échouer ici, avec
+ * l'identifiant fautif, vaut mieux que propager des `null` jusqu'au premier accès.
+ */
+function required<T extends HTMLElement>(id: string): T {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`sidepanel.html : élément #${id} introuvable`);
+  return el as T;
+}
+
+/** Même intention que `required`, pour un descendant d'un nœud déjà obtenu. */
+function within<T extends Element>(root: ParentNode, selector: string): T {
+  const el = root.querySelector<T>(selector);
+  if (!el) throw new Error(`sidepanel.html : ${selector} introuvable`);
+  return el;
+}
+
+const listEl = required('list');
+const countEl = required('count');
+const searchEl = required<HTMLInputElement>('search');
+const reportEl = required('report');
+const collectionsEl = required('collections');
+const sortEl = required<HTMLSelectElement>('sort');
+const sortDirEl = required<HTMLButtonElement>('sort-dir');
+const sortDirLabelEl = required('sort-dir-label');
+const hintEl = required('hint');
+const menuEl = required('move-menu');
+const template = required<HTMLTemplateElement>('item-template');
 
 /** État courant, rechargé intégralement à chaque écriture du storage. */
-let items = [];
-let collections = {};
-let settings = {};
+let items: SavedItem[] = [];
+let collections: CollectionMap = {};
+let settings: Settings;
 let filter = '';
 
 /** Un rendu pendant un glisser détruirait l'élément saisi : on le diffère. */
@@ -61,10 +81,10 @@ let renderPending = false;
 
 /** Message transitoire affiché sous la barre de tri, prioritaire sur les indices. */
 let notice = '';
-let noticeTimer = 0;
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Affiche un message le temps d'être lu. Survit aux rendus, contrairement au DOM. */
-function flash(message) {
+function flash(message: string): void {
   notice = message;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
@@ -76,7 +96,7 @@ function flash(message) {
 
 // --- Chargement ---------------------------------------------------------------
 
-async function reload() {
+async function reload(): Promise<void> {
   const data = await readAll();
   items = data.items;
   collections = data.collections;
@@ -88,12 +108,12 @@ const activeCollection = () =>
   collections[settings.activeCollectionId] || collections[DEFAULT_COLLECTION_ID];
 
 /** Articles de la collection active, avant tri et avant filtre de recherche. */
-function itemsOfActiveCollection() {
+function itemsOfActiveCollection(): SavedItem[] {
   const activeId = settings.activeCollectionId;
   return items.filter((item) => collectionOf(item, collections) === activeId);
 }
 
-function matches(item) {
+function matches(item: SavedItem): boolean {
   if (!filter) return true;
   return [item.title, item.brand, item.size, item.condition, item.price]
     .filter(Boolean)
@@ -104,10 +124,10 @@ function matches(item) {
 
 // --- Rendu : collections ------------------------------------------------------
 
-function renderCollections() {
+function renderCollections(): void {
   collectionsEl.textContent = '';
 
-  const counts = new Map();
+  const counts = new Map<string, number>();
   for (const item of items) {
     const id = collectionOf(item, collections);
     counts.set(id, (counts.get(id) || 0) + 1);
@@ -137,9 +157,11 @@ function renderCollections() {
     count.textContent = String(size);
 
     select.append(name, count);
-    select.addEventListener('click', async () => {
-      settings = await saveSettings({ activeCollectionId: collection.id });
-      render();
+    select.addEventListener('click', () => {
+      void saveSettings({ activeCollectionId: collection.id }).then((next) => {
+        settings = next;
+        render();
+      });
     });
 
     tab.append(select);
@@ -152,7 +174,9 @@ function renderCollections() {
       remove.textContent = '×';
       remove.title = `Supprimer la collection « ${collection.name} »`;
       remove.setAttribute('aria-label', remove.title);
-      remove.addEventListener('click', () => removeCollection(collection));
+      remove.addEventListener('click', () => {
+        void removeCollection(collection);
+      });
       tab.append(remove);
     }
 
@@ -175,7 +199,7 @@ function renderCollections() {
 
 // --- Rendu : barre de tri -----------------------------------------------------
 
-function renderSortbar(visibleItems) {
+function renderSortbar(visibleItems: SavedItem[]): void {
   if (!sortEl.options.length) {
     for (const mode of SORT_MODES) {
       const option = document.createElement('option');
@@ -191,7 +215,7 @@ function renderSortbar(visibleItems) {
   const isCustom = settings.sortMode === 'custom';
   sortDirEl.hidden = isCustom;
   if (!isCustom) {
-    const labels = DIR_LABELS[settings.sortMode] || { asc: 'Croissant', desc: 'Décroissant' };
+    const labels = DIR_LABELS[settings.sortMode] ?? { asc: 'Croissant', desc: 'Décroissant' };
     sortDirLabelEl.textContent = labels[settings.sortDir] || labels.asc;
   }
 
@@ -202,7 +226,7 @@ function renderSortbar(visibleItems) {
     hintEl.textContent = notice;
   } else if (isCustom) {
     hintEl.hidden = false;
-    hintEl.textContent = 'Glisse la poignée à gauche d\'un article pour le déplacer.';
+    hintEl.textContent = "Glisse la poignée à gauche d'un article pour le déplacer.";
   } else if (missing) {
     hintEl.hidden = false;
     hintEl.textContent = `${missing} article${missing > 1 ? 's' : ''} sans donnée pour ce tri, placé${
@@ -215,7 +239,7 @@ function renderSortbar(visibleItems) {
 
 // --- Rendu : liste ------------------------------------------------------------
 
-function renderEmpty(message, hint) {
+function renderEmpty(message: string, hint: string): void {
   const div = document.createElement('div');
   div.className = 'empty';
   const strong = document.createElement('strong');
@@ -224,26 +248,26 @@ function renderEmpty(message, hint) {
   listEl.append(div);
 }
 
-function renderItem(item) {
-  const node = template.content.cloneNode(true);
-  const article = node.querySelector('.item');
+function renderItem(item: SavedItem): DocumentFragment {
+  const node = template.content.cloneNode(true) as DocumentFragment;
+  const article = within<HTMLElement>(node, '.item');
   article.dataset.id = item.id;
 
-  const thumb = node.querySelector('.item-thumb');
+  const thumb = within<HTMLAnchorElement>(node, '.item-thumb');
   thumb.href = item.url;
-  const img = node.querySelector('.item-thumb img');
+  const img = within<HTMLImageElement>(node, '.item-thumb img');
   if (item.imageUrl) {
     img.src = item.imageUrl;
     img.alt = item.title || '';
   }
 
-  const title = node.querySelector('.item-title');
+  const title = within<HTMLAnchorElement>(node, '.item-title');
   title.href = item.url;
   title.textContent = item.title || `Article ${item.id}`;
 
   // "Nike · 42 · Neuf avec étiquette", en sautant les champs absents. La marque
   // devient un lien vers le catalogue quand on peut la filtrer.
-  const meta = [];
+  const meta: Node[] = [];
 
   if (item.brand) {
     const brandUrl = brandSearchUrl(item);
@@ -254,10 +278,9 @@ function renderItem(item) {
       link.target = '_blank';
       link.rel = 'noreferrer';
       link.textContent = item.brand;
-      link.title =
-        item.category && item.category.exact
-          ? `Voir les ${item.brand} dans « ${item.category.name} »`
-          : `Voir tous les articles ${item.brand}`;
+      link.title = item.category?.exact
+        ? `Voir les ${item.brand} dans « ${item.category.name} »`
+        : `Voir tous les articles ${item.brand}`;
       meta.push(link);
     } else {
       meta.push(document.createTextNode(item.brand));
@@ -271,7 +294,7 @@ function renderItem(item) {
   const likes = item.favouriteCount ?? item.likes;
   if (typeof likes === 'number') meta.push(document.createTextNode(`♥ ${likes}`));
 
-  const metaEl = node.querySelector('.item-meta');
+  const metaEl = within(node, '.item-meta');
   metaEl.textContent = '';
   meta.forEach((part, index) => {
     if (index) metaEl.append(document.createTextNode(' · '));
@@ -291,21 +314,25 @@ function renderItem(item) {
     metaEl.append(loader);
   }
 
-  node.querySelector('.item-price').textContent = item.price || '';
+  within(node, '.item-price').textContent = item.price || '';
 
-  node.querySelector('.item-similar').addEventListener('click', () => {
-    chrome.tabs.create({ url: similarSearchUrl(item), active: true });
+  within(node, '.item-similar').addEventListener('click', () => {
+    void chrome.tabs.create({ url: similarSearchUrl(item), active: true });
   });
-  node.querySelector('.item-offer').addEventListener('click', () => openOfferDialog(item));
-  node.querySelector('.item-move').addEventListener('click', (event) => {
-    openMoveMenu(item, event.currentTarget);
+  within(node, '.item-offer').addEventListener('click', () => {
+    openOfferDialog(item);
   });
-  node.querySelector('.item-remove').addEventListener('click', () => removeItem(item.id));
+  within(node, '.item-move').addEventListener('click', (event) => {
+    if (event.currentTarget instanceof HTMLElement) openMoveMenu(item, event.currentTarget);
+  });
+  within(node, '.item-remove').addEventListener('click', () => {
+    void removeItem(item.id);
+  });
 
   return node;
 }
 
-function render() {
+function render(): void {
   if (dragging) {
     renderPending = true;
     return;
@@ -323,7 +350,7 @@ function render() {
     visible,
     settings.sortMode,
     settings.sortDir,
-    (activeCollection() || {}).order || []
+    activeCollection()?.order ?? []
   );
 
   listEl.textContent = '';
@@ -367,12 +394,12 @@ enableDragAndDrop(listEl, {
     hintEl.textContent = 'Ordre personnalisé activé.';
   },
 
-  onDrop: async (ids) => {
+  onDrop: (ids) => {
     dragging = false;
 
     const collectionId = settings.activeCollectionId;
     // La recherche peut masquer des articles : ils gardent leur place dans l'ordre complet.
-    const order = mergeVisibleOrder((collections[collectionId] || {}).order || [], ids);
+    const order = mergeVisibleOrder(collections[collectionId]?.order ?? [], ids);
 
     // L'état local prend l'ordre déposé avant l'écriture : un rendu déclenché
     // entre-temps (autre onglet, autre écriture) affiche déjà le bon ordre.
@@ -380,16 +407,16 @@ enableDragAndDrop(listEl, {
     if (collection) collections = { ...collections, [collectionId]: { ...collection, order } };
     settings = { ...settings, sortMode: 'custom', sortDir: 'asc' };
 
-    await commitCustomOrder(collectionId, order);
+    void commitCustomOrder(collectionId, order);
   },
 
-  onDropToCollection: async (itemId, collectionId) => {
+  onDropToCollection: (itemId, collectionId) => {
     dragging = false;
     if (collectionId === settings.activeCollectionId) {
       render();
       return;
     }
-    await moveItemToCollection(itemId, collectionId);
+    void moveItemToCollection(itemId, collectionId);
   },
 
   onCancel: () => {
@@ -401,7 +428,8 @@ enableDragAndDrop(listEl, {
 // Marqué dès la saisie de la poignée : une écriture du storage arrivant en plein
 // glisser ne doit pas re-rendre la liste sous la main de l'utilisateur.
 listEl.addEventListener('pointerdown', (event) => {
-  if (event.button === 0 && event.target.closest('.item-drag')) dragging = true;
+  if (event.button !== 0) return;
+  if (event.target instanceof Element && event.target.closest('.item-drag')) dragging = true;
 });
 
 document.addEventListener('pointerup', () => {
@@ -415,13 +443,13 @@ document.addEventListener('pointerup', () => {
 
 // --- Menus contextuels --------------------------------------------------------
 
-function closeMenu() {
+function closeMenu(): void {
   menuEl.hidden = true;
   menuEl.textContent = '';
 }
 
 /** Ouvre `menuEl` sous l'élément d'ancrage, recalé pour rester dans le panneau. */
-function openMenu(anchor, build) {
+function openMenu(anchor: HTMLElement, build: (menu: HTMLElement) => void): void {
   menuEl.textContent = '';
   build(menuEl);
   menuEl.hidden = false;
@@ -439,7 +467,11 @@ function openMenu(anchor, build) {
   menuEl.style.top = `${top}px`;
 }
 
-function menuButton(label, onClick, { current = false, danger = false } = {}) {
+function menuButton(
+  label: string,
+  onClick: () => void,
+  { current = false, danger = false }: { current?: boolean; danger?: boolean } = {}
+): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = danger ? 'menu-item danger' : 'menu-item';
@@ -452,7 +484,7 @@ function menuButton(label, onClick, { current = false, danger = false } = {}) {
   return btn;
 }
 
-function openMoveMenu(item, anchor) {
+function openMoveMenu(item: SavedItem, anchor: HTMLElement): void {
   const currentId = collectionOf(item, collections);
 
   openMenu(anchor, (menu) => {
@@ -465,7 +497,9 @@ function openMoveMenu(item, anchor) {
       menu.append(
         menuButton(
           collection.name,
-          () => moveItemToCollection(item.id, collection.id),
+          () => {
+            void moveItemToCollection(item.id, collection.id);
+          },
           { current: collection.id === currentId }
         )
       );
@@ -473,7 +507,10 @@ function openMoveMenu(item, anchor) {
 
     const separator = document.createElement('hr');
     separator.className = 'menu-sep';
-    menu.append(separator, menuButton('Nouvelle collection…', () => openCollectionDialog(null, item.id)));
+    menu.append(
+      separator,
+      menuButton('Nouvelle collection…', () => openCollectionDialog(null, item.id))
+    );
   });
 }
 
@@ -484,7 +521,7 @@ function openMoveMenu(item, anchor) {
  * un article depuis le dernier rendu. On le dit alors, plutôt que de laisser un
  * clic sans effet visible.
  */
-async function removeCollection(collection) {
+async function removeCollection(collection: Collection): Promise<void> {
   const result = await deleteCollection(collection.id);
 
   if (!result.ok) {
@@ -502,30 +539,31 @@ async function removeCollection(collection) {
   }
 }
 
-function openCollectionMenu(collection, anchor) {
+function openCollectionMenu(collection: Collection, anchor: HTMLElement): void {
   openMenu(anchor, (menu) => {
     menu.append(menuButton('Renommer…', () => openCollectionDialog(collection)));
   });
 }
 
 document.addEventListener('pointerdown', (event) => {
-  if (!menuEl.hidden && !menuEl.contains(event.target)) closeMenu();
+  const target = event.target;
+  if (!menuEl.hidden && target instanceof Node && !menuEl.contains(target)) closeMenu();
 });
 
 // --- Modale : collection ------------------------------------------------------
 
-const collectionDialog = document.getElementById('collection-dialog');
-const collectionForm = document.getElementById('collection-form');
-const collectionNameEl = document.getElementById('collection-name');
-const collectionTitleEl = document.getElementById('collection-dialog-title');
-const collectionSubmitEl = document.getElementById('collection-submit');
+const collectionDialog = required('collection-dialog');
+const collectionForm = required<HTMLFormElement>('collection-form');
+const collectionNameEl = required<HTMLInputElement>('collection-name');
+const collectionTitleEl = required('collection-dialog-title');
+const collectionSubmitEl = required('collection-submit');
 
 /** Collection en cours de renommage, sinon null (création). */
-let editingCollection = null;
+let editingCollection: Collection | null = null;
 /** Article à déplacer dans la collection dès sa création, sinon null. */
-let pendingItemForNewCollection = null;
+let pendingItemForNewCollection: string | null = null;
 
-function openCollectionDialog(collection, itemId = null) {
+function openCollectionDialog(collection: Collection | null, itemId: string | null = null): void {
   editingCollection = collection;
   pendingItemForNewCollection = itemId;
 
@@ -538,73 +576,77 @@ function openCollectionDialog(collection, itemId = null) {
   collectionNameEl.select();
 }
 
-collectionForm.addEventListener('submit', async (event) => {
+collectionForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const name = collectionNameEl.value.trim();
   if (!name) return;
 
   collectionDialog.hidden = true;
 
-  if (editingCollection) {
-    await renameCollection(editingCollection.id, name);
-    return;
-  }
+  void (async () => {
+    if (editingCollection) {
+      await renameCollection(editingCollection.id, name);
+      return;
+    }
 
-  const collection = await createCollection(name);
-  if (pendingItemForNewCollection) {
-    await moveItemToCollection(pendingItemForNewCollection, collection.id);
-  }
-  settings = await saveSettings({ activeCollectionId: collection.id });
-  render();
+    const collection = await createCollection(name);
+    if (pendingItemForNewCollection) {
+      await moveItemToCollection(pendingItemForNewCollection, collection.id);
+    }
+    settings = await saveSettings({ activeCollectionId: collection.id });
+    render();
+  })();
 });
 
 // --- Modale : offre -----------------------------------------------------------
 
-const offerDialog = document.getElementById('offer-dialog');
-const offerForm = document.getElementById('offer-form');
-const offerItemEl = document.getElementById('offer-item');
-const offerPriceEl = document.getElementById('offer-price');
-const offerOriginalEl = document.getElementById('offer-original');
-const offerPresetsEl = document.getElementById('offer-presets');
-const offerMessageEl = document.getElementById('offer-message');
-const offerSendMessageEl = document.getElementById('offer-send-message');
-const offerStatusEl = document.getElementById('offer-status');
-const offerSubmitEl = document.getElementById('offer-submit');
+const offerDialog = required('offer-dialog');
+const offerForm = required<HTMLFormElement>('offer-form');
+const offerItemEl = required('offer-item');
+const offerPriceEl = required<HTMLInputElement>('offer-price');
+const offerOriginalEl = required('offer-original');
+const offerPresetsEl = required('offer-presets');
+const offerMessageEl = required<HTMLTextAreaElement>('offer-message');
+const offerSendMessageEl = required<HTMLInputElement>('offer-send-message');
+const offerStatusEl = required('offer-status');
+const offerSubmitEl = required<HTMLButtonElement>('offer-submit');
 
 /** Article visé par la modale d'offre. */
-let offerItem = null;
+let offerItem: SavedItem | null = null;
 /** Le message suit le prix tant que l'utilisateur ne l'a pas retouché lui-même. */
 let messageEdited = false;
 
-function setOfferStatus(text, kind) {
+function setOfferStatus(text: string, kind?: 'error' | 'ok' | 'warn'): void {
   offerStatusEl.hidden = !text;
   offerStatusEl.textContent = text || '';
   offerStatusEl.className = `offer-status${kind ? ` ${kind}` : ''}`;
 }
 
-function markPreset(discount) {
-  for (const chip of offerPresetsEl.querySelectorAll('.chip')) {
+function markPreset(discount: number | null): void {
+  for (const chip of offerPresetsEl.querySelectorAll<HTMLElement>('.chip')) {
     chip.classList.toggle('active', Number(chip.dataset.discount) === discount);
   }
 }
 
 /** Réécrit le message pour le prix actuellement saisi. */
-function refreshOfferMessage() {
+function refreshOfferMessage(): void {
   const price = Number(offerPriceEl.value);
   if (!offerItem || !Number.isFinite(price) || price <= 0) return;
   offerMessageEl.value = composeMessage(offerItem, price);
 }
 
-function openOfferDialog(item) {
+function openOfferDialog(item: SavedItem): void {
   offerItem = item;
   const original = parsePrice(item);
   const discount = settings.offer.discount;
 
   offerItemEl.textContent = item.title || `Article ${item.id}`;
-  offerOriginalEl.textContent = original ? `Prix affiché : ${formatEuro(original)}` : 'Prix inconnu';
+  offerOriginalEl.textContent = original
+    ? `Prix affiché : ${formatEuro(original)}`
+    : 'Prix inconnu';
 
   const suggested = suggestPrice(item, discount);
-  offerPriceEl.value = suggested != null ? suggested : '';
+  offerPriceEl.value = suggested != null ? String(suggested) : '';
   offerPriceEl.max = original ? String(Math.ceil(original)) : '';
   markPreset(original ? discount : null);
 
@@ -623,7 +665,7 @@ function openOfferDialog(item) {
 }
 
 offerPresetsEl.addEventListener('click', (event) => {
-  const chip = event.target.closest('.chip');
+  const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('.chip') : null;
   if (!chip || !offerItem) return;
 
   const discount = Number(chip.dataset.discount);
@@ -633,10 +675,10 @@ offerPresetsEl.addEventListener('click', (event) => {
     return;
   }
 
-  offerPriceEl.value = suggested;
+  offerPriceEl.value = String(suggested);
   markPreset(discount);
   refreshOfferMessage();
-  saveSettings({ offer: { ...settings.offer, discount } });
+  void saveSettings({ offer: { ...settings.offer, discount } });
 });
 
 offerMessageEl.addEventListener('input', () => {
@@ -646,28 +688,40 @@ offerPriceEl.addEventListener('input', () => {
   markPreset(null);
   if (!messageEdited) refreshOfferMessage();
 });
-document.getElementById('offer-regen').addEventListener('click', () => {
+required('offer-regen').addEventListener('click', () => {
   messageEdited = false;
   refreshOfferMessage();
 });
 
-document.getElementById('offer-copy').addEventListener('click', async (event) => {
+required('offer-copy').addEventListener('click', (event) => {
   const button = event.currentTarget;
-  try {
-    await navigator.clipboard.writeText(offerMessageEl.value);
-    button.textContent = 'Copié';
-  } catch {
-    // Presse-papier refusé : la sélection permet au moins un copier manuel.
-    offerMessageEl.select();
-    button.textContent = 'Sélectionné';
-  }
-  setTimeout(() => {
-    button.textContent = 'Copier';
-  }, 1500);
+  if (!(button instanceof HTMLElement)) return;
+
+  void (async () => {
+    try {
+      await navigator.clipboard.writeText(offerMessageEl.value);
+      button.textContent = 'Copié';
+    } catch {
+      // Presse-papier refusé : la sélection permet au moins un copier manuel.
+      offerMessageEl.select();
+      button.textContent = 'Sélectionné';
+    }
+    setTimeout(() => {
+      button.textContent = 'Copier';
+    }, 1500);
+  })();
 });
 
-offerForm.addEventListener('submit', async (event) => {
+offerForm.addEventListener('submit', (event) => {
   event.preventDefault();
+  void submitOfferFromForm();
+});
+
+/**
+ * Corps de l'envoi, extrait de l'écouteur : un gestionnaire d'événement ne doit
+ * rien renvoyer, or celui-ci enchaîne plusieurs allers-retours avec l'agent.
+ */
+async function submitOfferFromForm(): Promise<void> {
   if (!offerItem) return;
 
   const price = Number(offerPriceEl.value);
@@ -693,7 +747,7 @@ offerForm.addEventListener('submit', async (event) => {
   offerSubmitEl.disabled = false;
   offerSubmitEl.textContent = "Envoyer l'offre";
 
-  if (result && result.ok) {
+  if (result.ok) {
     // Offre partie mais message bloqué : on le dit, et on laisse le texte sous la
     // main pour un envoi manuel plutôt que de le perdre.
     if (result.messagePending) {
@@ -705,16 +759,14 @@ offerForm.addEventListener('submit', async (event) => {
   }
 
   setOfferStatus(
-    `Échec à l'étape « ${(result && result.step) || 'inconnue'} ». ${
-      (result && result.detail) || ''
-    }`.trim(),
+    `Échec à l'étape « ${result.step || 'inconnue'} ». ${result.detail || ''}`.trim(),
     'error'
   );
-});
+}
 
 // --- Fermeture des modales ----------------------------------------------------
 
-for (const overlay of document.querySelectorAll('.overlay')) {
+for (const overlay of document.querySelectorAll<HTMLElement>('.overlay')) {
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) overlay.hidden = true;
   });
@@ -722,21 +774,22 @@ for (const overlay of document.querySelectorAll('.overlay')) {
 
 for (const button of document.querySelectorAll('[data-close]')) {
   button.addEventListener('click', () => {
-    button.closest('.overlay').hidden = true;
+    const overlay = button.closest<HTMLElement>('.overlay');
+    if (overlay) overlay.hidden = true;
   });
 }
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   closeMenu();
-  for (const overlay of document.querySelectorAll('.overlay:not([hidden])')) {
+  for (const overlay of document.querySelectorAll<HTMLElement>('.overlay:not([hidden])')) {
     overlay.hidden = true;
   }
 });
 
 // --- Export -------------------------------------------------------------------
 
-function exportJson() {
+function exportJson(): void {
   const payload = {
     exportedAt: new Date().toISOString(),
     collections: sortCollections(collections).map(({ id, name, order }) => ({ id, name, order })),
@@ -762,29 +815,31 @@ function exportJson() {
  * dans le storage : elle est produite même sans onglet Vinted, plutôt que de
  * renvoyer l'utilisateur sans rien quand il voulait juste inspecter ses données.
  */
-async function runDiagnostic() {
+async function runDiagnostic(): Promise<void> {
   reportEl.hidden = false;
   reportEl.textContent = 'Analyse en cours…';
 
-  const report = {};
+  /** Rapport hétérogène par nature : chaque clé est une section, en français. */
+  const report: Record<string, unknown> = {};
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const onVinted = tab && tab.url && tab.url.startsWith('https://www.vinted.fr/');
+  const tabId = tab?.id;
+  const onVinted = tabId !== undefined && tab?.url?.startsWith('https://www.vinted.fr/');
 
   if (!onVinted) {
     report.page =
       'Aucun onglet www.vinted.fr actif — analyse du DOM impossible. Ouvre une page de recherche ou une fiche article, puis relance le diagnostic.';
   } else {
     try {
-      report.catalogue = await chrome.tabs.sendMessage(tab.id, { type: 'VF_DIAGNOSE' });
+      report.catalogue = await chrome.tabs.sendMessage(tabId, { type: 'VF_DIAGNOSE' });
     } catch {
       report.catalogue = 'Content script injoignable. Recharge la page Vinted (Cmd+R).';
     }
 
     try {
-      report.offre = await chrome.tabs.sendMessage(tab.id, { type: 'VF_OFFER_DIAGNOSE' });
+      report.offre = await chrome.tabs.sendMessage(tabId, { type: 'VF_OFFER_DIAGNOSE' });
     } catch {
-      report.offre = 'Agent d\'offre injoignable. Recharge la page Vinted (Cmd+R).';
+      report.offre = "Agent d'offre injoignable. Recharge la page Vinted (Cmd+R).";
     }
   }
 
@@ -796,7 +851,7 @@ async function runDiagnostic() {
       .length,
     sansTaille: items.filter((item) => !item.size).length,
     sansEtat: items.filter((item) => !item.condition).length,
-    sansCategorie: items.filter((item) => !(item.category && item.category.url)).length,
+    sansCategorie: items.filter((item) => !item.category?.url).length,
     // Fiche encore en cours de lecture : ces articles n'ont que les données de
     // leur carte. Un compte qui ne redescend jamais signale un fetch qui échoue.
     enAttenteDeFiche: items.filter((item) => item.pending).length,
@@ -821,28 +876,36 @@ async function runDiagnostic() {
 
 // --- Écouteurs ----------------------------------------------------------------
 
-searchEl.addEventListener('input', (event) => {
-  filter = event.target.value.trim().toLowerCase();
+searchEl.addEventListener('input', () => {
+  filter = searchEl.value.trim().toLowerCase();
   render();
 });
 
-sortEl.addEventListener('change', async () => {
-  const mode = sortEl.value;
-  settings = await saveSettings({ sortMode: mode, sortDir: defaultDirFor(mode) });
-  render();
+sortEl.addEventListener('change', () => {
+  // `sortEl` ne contient que les options issues de SORT_MODES : la conversion
+  // constate ce que le rendu garantit.
+  const mode = sortEl.value as SortMode;
+  void saveSettings({ sortMode: mode, sortDir: defaultDirFor(mode) }).then((next) => {
+    settings = next;
+    render();
+  });
 });
 
-sortDirEl.addEventListener('click', async () => {
-  settings = await saveSettings({ sortDir: settings.sortDir === 'asc' ? 'desc' : 'asc' });
-  render();
+sortDirEl.addEventListener('click', () => {
+  void saveSettings({ sortDir: settings.sortDir === 'asc' ? 'desc' : 'asc' }).then((next) => {
+    settings = next;
+    render();
+  });
 });
 
-document.getElementById('export').addEventListener('click', exportJson);
-document.getElementById('diagnose').addEventListener('click', runDiagnostic);
+required('export').addEventListener('click', exportJson);
+required('diagnose').addEventListener('click', () => {
+  void runDiagnostic();
+});
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes[ITEMS_KEY] || changes[COLLECTIONS_KEY] || changes[SETTINGS_KEY]) reload();
+  if (changes[ITEMS_KEY] || changes[COLLECTIONS_KEY] || changes[SETTINGS_KEY]) void reload();
 });
 
-reload();
+void reload();

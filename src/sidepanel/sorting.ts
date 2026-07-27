@@ -15,7 +15,10 @@
  * enregistrés avant, que rien ne recalcule — voir docs/limitations.md.
  */
 
-export const SORT_MODES = [
+import { parsePriceString } from '../shared/price.ts';
+import type { KeyedSortMode, SavedItem, SortDir, SortMode } from '../shared/types.ts';
+
+export const SORT_MODES: readonly { id: SortMode; label: string }[] = [
   { id: 'custom', label: 'Personnalisé' },
   { id: 'savedAt', label: "Date d'ajout" },
   { id: 'price', label: 'Prix' },
@@ -25,7 +28,7 @@ export const SORT_MODES = [
 ];
 
 /** Sens par défaut de chaque mode, celui qu'on attend en le sélectionnant. */
-const DEFAULT_DIR = {
+const DEFAULT_DIR: Record<KeyedSortMode, SortDir> = {
   savedAt: 'desc', // le plus récent d'abord
   price: 'asc', // le moins cher d'abord
   condition: 'desc', // le meilleur état d'abord
@@ -34,10 +37,11 @@ const DEFAULT_DIR = {
   // `custom` est absent volontairement : l'ordre manuel n'a pas de sens de tri.
 };
 
-export const defaultDirFor = (mode) => DEFAULT_DIR[mode] || 'asc';
+export const defaultDirFor = (mode: SortMode): SortDir =>
+  mode === 'custom' ? 'asc' : DEFAULT_DIR[mode];
 
 /** Libellés des deux sens, adaptés au mode : "Moins cher" a plus de sens que "Croissant". */
-export const DIR_LABELS = {
+export const DIR_LABELS: Partial<Record<SortMode, Record<SortDir, string>>> = {
   savedAt: { asc: 'Plus ancien', desc: 'Plus récent' },
   price: { asc: 'Moins cher', desc: 'Plus cher' },
   condition: { asc: 'État le plus usé', desc: 'Meilleur état' },
@@ -48,28 +52,21 @@ export const DIR_LABELS = {
 // --- Extraction des clés de tri ---------------------------------------------
 
 /**
- * Prix affiché → nombre : "1 234,56 €" donne 1234.56.
+ * Prix d'un article : le nombre extrait à l'enregistrement s'il existe, sinon
+ * relu depuis le prix affiché.
  *
- * On lit le premier nombre de la chaîne plutôt que de la nettoyer globalement :
- * Vinted suffixe parfois le prix ("13,45 EUR incl. Protection acheteurs"), et la
- * ponctuation du suffixe fausserait un nettoyage caractère par caractère.
- * Espaces fines et insécables des milliers comprises.
+ * Le repli sert les articles enregistrés avant l'ajout de `priceValue`, que rien
+ * ne recalcule — voir `docs/limitations.md`.
  */
-export function parsePrice(item) {
+export function parsePrice(item: SavedItem): number | null {
   if (typeof item.priceValue === 'number' && Number.isFinite(item.priceValue)) {
     return item.priceValue;
   }
-
-  const match = String(item.price || '').match(/(\d[\d\s\u00a0\u202f]*)(?:[.,](\d{1,2}))?/);
-  if (!match) return null;
-
-  const whole = match[1].replace(/[\s\u00a0\u202f]/g, '');
-  const value = Number.parseFloat(`${whole}.${match[2] || '0'}`);
-  return Number.isFinite(value) ? value : null;
+  return parsePriceString(item.price);
 }
 
 /** Échelle des états Vinted, du plus usé au neuf. */
-const CONDITION_RANK = [
+const CONDITION_RANK: readonly [RegExp, number][] = [
   [/satisfaisant/i, 1],
   [/bon\s+état/i, 2],
   [/tr[eè]s\s+bon\s+état/i, 3],
@@ -77,23 +74,24 @@ const CONDITION_RANK = [
   [/neuf\s+avec/i, 5],
 ];
 
-export function parseCondition(item) {
+export function parseCondition(item: SavedItem): number | null {
   const raw = String(item.condition || '').trim();
   if (!raw) return null;
 
   // Parcours à l'envers : "très bon état" doit gagner sur "bon état".
   for (let i = CONDITION_RANK.length - 1; i >= 0; i -= 1) {
-    if (CONDITION_RANK[i][0].test(raw)) return CONDITION_RANK[i][1];
+    const entry = CONDITION_RANK[i];
+    if (entry?.[0].test(raw)) return entry[1];
   }
   return null;
 }
 
-export function parseLikes(item) {
+export function parseLikes(item: SavedItem): number | null {
   const value = item.favouriteCount ?? item.likes;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-const ALPHA_SIZES = [
+const ALPHA_SIZES: readonly [RegExp, number][] = [
   [/^(xxxs|3xs)$/i, 1],
   [/^(xxs|2xs)$/i, 2],
   [/^xs$/i, 3],
@@ -109,15 +107,17 @@ const ALPHA_SIZES = [
  * Les tailles Vinted mélangent des échelles incomparables ("M", "42", "36/38").
  * On les range par famille (alpha < numérique) puis par valeur, ce qui garde
  * chaque échelle groupée et ordonnée.
- * @returns {number|null} clé de tri, ou null si la taille est illisible.
+ * @returns clé de tri, ou null si la taille est illisible.
  */
-export function parseSize(item) {
+export function parseSize(item: SavedItem): number | null {
   const raw = String(item.size || '').trim();
   if (!raw) return null;
 
   // "36 / 38" ou "42 (EU)" → on trie sur la première valeur numérique.
   const numeric = raw.match(/\d+([.,]\d+)?/);
-  const alpha = raw.split(/[\s/(]/)[0];
+  // `raw` n'est pas vide (testé plus haut) : split renvoie toujours au moins un
+  // segment, mais le type ne le dit pas.
+  const alpha = raw.split(/[\s/(]/)[0] ?? raw;
 
   for (const [pattern, rank] of ALPHA_SIZES) {
     if (pattern.test(alpha)) return rank;
@@ -131,7 +131,9 @@ export function parseSize(item) {
   return null;
 }
 
-const KEY_OF = {
+type SortKey = (item: SavedItem) => number | null;
+
+const KEY_OF: Record<KeyedSortMode, SortKey> = {
   savedAt: (item) => (typeof item.savedAt === 'number' ? item.savedAt : null),
   price: parsePrice,
   condition: parseCondition,
@@ -140,9 +142,9 @@ const KEY_OF = {
 };
 
 /** Nombre d'articles pour lesquels le mode courant n'a aucune donnée à trier. */
-export function countMissing(items, mode) {
+export function countMissing(items: SavedItem[], mode: SortMode): number {
+  if (mode === 'custom') return 0;
   const keyOf = KEY_OF[mode];
-  if (!keyOf) return 0;
   return items.filter((item) => keyOf(item) === null).length;
 }
 
@@ -156,10 +158,10 @@ export function countMissing(items, mode) {
  * réordonne sous filtre. On ne réécrit donc que les positions occupées par des
  * articles visibles, chaque masqué conservant la sienne.
  *
- * @param {string[]} previousOrder ordre complet enregistré
- * @param {string[]} visibleIds ids affichés, dans leur nouvel ordre
+ * @param previousOrder ordre complet enregistré
+ * @param visibleIds ids affichés, dans leur nouvel ordre
  */
-export function mergeVisibleOrder(previousOrder, visibleIds) {
+export function mergeVisibleOrder(previousOrder: string[], visibleIds: string[]): string[] {
   const shown = new Set(visibleIds);
   const known = new Set(previousOrder);
 
@@ -167,18 +169,23 @@ export function mergeVisibleOrder(previousOrder, visibleIds) {
   const base = [...visibleIds.filter((id) => !known.has(id)), ...previousOrder];
 
   const queue = [...visibleIds];
-  return base.map((id) => (shown.has(id) ? queue.shift() : id));
+  // `?? id` ne devrait jamais servir — il y a autant de places visibles que
+  // d'ids à replacer — mais garde la liste complète si l'invariant se brisait.
+  return base.map((id) => (shown.has(id) ? (queue.shift() ?? id) : id));
 }
 
 // --- Tri ---------------------------------------------------------------------
 
 /**
- * @param {object[]} items
- * @param {string} mode identifiant d'un SORT_MODES
- * @param {'asc'|'desc'} dir
- * @param {string[]} customOrder ids dans l'ordre personnalisé de la collection
+ * @param mode identifiant d'un SORT_MODES
+ * @param customOrder ids dans l'ordre personnalisé de la collection
  */
-export function sortItems(items, mode, dir, customOrder = []) {
+export function sortItems(
+  items: SavedItem[],
+  mode: SortMode,
+  dir: SortDir,
+  customOrder: string[] = []
+): SavedItem[] {
   const list = [...items];
 
   // L'ordre manuel est déjà l'ordre voulu : `dir` ne s'y applique pas. L'inverser
@@ -188,8 +195,8 @@ export function sortItems(items, mode, dir, customOrder = []) {
     const rank = new Map(customOrder.map((id, index) => [id, index]));
     // Un article jamais réordonné (nouvel ajout) passe en tête, du plus récent au plus ancien.
     list.sort((a, b) => {
-      const ra = rank.has(a.id) ? rank.get(a.id) : -1;
-      const rb = rank.has(b.id) ? rank.get(b.id) : -1;
+      const ra = rank.get(a.id) ?? -1;
+      const rb = rank.get(b.id) ?? -1;
       if (ra !== rb) return ra - rb;
       return (b.savedAt || 0) - (a.savedAt || 0);
     });
@@ -197,8 +204,6 @@ export function sortItems(items, mode, dir, customOrder = []) {
   }
 
   const keyOf = KEY_OF[mode];
-  if (!keyOf) return list;
-
   const sign = dir === 'desc' ? -1 : 1;
 
   list.sort((a, b) => {

@@ -12,23 +12,32 @@
  * de la plus stable (testid) à la plus permissive (libellé visible). Le
  * diagnostic `VF_OFFER_DIAGNOSE` indique, page ouverte, ce que l'agent trouve.
  */
+import { errorText } from '../shared/errors.ts';
+import type { ExtensionMessage, OfferDiagnoseReport, StepResult } from '../shared/messages.ts';
+
 (() => {
   'use strict';
 
   const STEP_TIMEOUT_MS = 8000;
   const POLL_MS = 120;
 
+  /** Une ancre Vinted : des sélecteurs, et des libellés visibles en repli. */
+  type Anchor = { selectors: string[]; labels?: string[] };
+
+  /** Champ de saisie que l'agent sait remplir. */
+  type EditableField = HTMLInputElement | HTMLTextAreaElement;
+
   // ---------------------------------------------------------------------------
   // Utilitaires DOM
   // ---------------------------------------------------------------------------
 
-  const visible = (el) => {
+  const visible = (el: Element | null): boolean => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0 && getComputedStyle(el).visibility !== 'hidden';
   };
 
-  const norm = (value) =>
+  const norm = (value: string | null): string =>
     String(value || '')
       .toLowerCase()
       .normalize('NFD')
@@ -36,9 +45,12 @@
       .trim();
 
   /** Premier élément visible correspondant à l'un des sélecteurs, dans l'ordre. */
-  function findBySelectors(selectors, root = document) {
+  function findBySelectors<T extends HTMLElement = HTMLElement>(
+    selectors: string[],
+    root: ParentNode = document
+  ): T | null {
     for (const selector of selectors) {
-      for (const el of root.querySelectorAll(selector)) {
+      for (const el of root.querySelectorAll<T>(selector)) {
         if (visible(el)) return el;
       }
     }
@@ -46,8 +58,10 @@
   }
 
   /** Bouton visible dont le libellé contient l'une des expressions données. */
-  function findByLabel(labels, root = document) {
-    const candidates = root.querySelectorAll('button, a[role="button"], [role="button"]');
+  function findByLabel(labels: string[], root: ParentNode = document): HTMLElement | null {
+    const candidates = root.querySelectorAll<HTMLElement>(
+      'button, a[role="button"], [role="button"]'
+    );
     for (const el of candidates) {
       if (!visible(el)) continue;
       const text = norm(el.textContent) || norm(el.getAttribute('aria-label'));
@@ -57,12 +71,12 @@
   }
 
   /** Attend qu'un getter renvoie une valeur exploitable, sinon null au bout du délai. */
-  function waitFor(getter, timeout = STEP_TIMEOUT_MS) {
+  function waitFor<T>(getter: () => T | null, timeout = STEP_TIMEOUT_MS): Promise<T | null> {
     return new Promise((resolve) => {
       const deadline = Date.now() + timeout;
 
-      const tick = () => {
-        let value = null;
+      const tick = (): void => {
+        let value: T | null;
         try {
           value = getter();
         } catch {
@@ -81,9 +95,14 @@
    * Écrit dans un champ contrôlé par React : passer par `value` seul est ignoré,
    * il faut appeler le setter natif du prototype puis émettre l'événement.
    */
-  function setNativeValue(field, value) {
+  function setNativeValue(field: EditableField, value: string): void {
     const prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement : HTMLInputElement;
-    const setter = Object.getOwnPropertyDescriptor(prototype.prototype, 'value').set;
+    // Détacher le setter du prototype est précisément le contournement : c'est en
+    // l'appelant avec `field` pour `this` qu'on écrit sous le radar de React. Le
+    // lier, ou passer par `field.value`, ferait retomber dans le cas de la règle 5.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const setter = Object.getOwnPropertyDescriptor(prototype.prototype, 'value')?.set;
+    if (!setter) return; // inatteignable dans un navigateur : `value` a toujours un setter
 
     field.focus();
     setter.call(field, value);
@@ -154,28 +173,31 @@
       ],
       labels: ['envoyer', 'send'],
     },
-  };
+    // `satisfies` plutôt qu'une annotation : les clés restent littérales
+    // (`ANCHORS.offerButton` est un Anchor, pas un `Anchor | undefined`) tout en
+    // faisant vérifier la forme de chaque entrée.
+  } satisfies Record<string, Anchor>;
 
   /** Résout une ancre : sélecteurs d'abord, libellés en repli. */
-  function resolve(anchor, root = document) {
+  function resolve(anchor: Anchor, root: ParentNode = document): HTMLElement | null {
     return (
-      findBySelectors(anchor.selectors || [], root) ||
+      findBySelectors(anchor.selectors, root) ||
       (anchor.labels ? findByLabel(anchor.labels, root) : null)
     );
   }
 
-  const currentItemId = () => {
+  const currentItemId = (): string | null => {
     const m = location.pathname.match(/\/items\/(\d+)/);
-    return m ? m[1] : null;
+    return m?.[1] ?? null;
   };
 
   // ---------------------------------------------------------------------------
   // Dépôt de l'offre
   // ---------------------------------------------------------------------------
 
-  const fail = (step, detail) => ({ ok: false, step, detail });
+  const fail = (step: string, detail: string): StepResult => ({ ok: false, step, detail });
 
-  async function placeOffer(price) {
+  async function placeOffer(price: number): Promise<StepResult> {
     const button = await waitFor(() => resolve(ANCHORS.offerButton), 6000);
     if (!button) {
       return fail(
@@ -191,9 +213,9 @@
       // Une modale sans champ de saisie est encore en cours d'ouverture.
       return found && findBySelectors(ANCHORS.priceInput.selectors, found) ? found : null;
     });
-    if (!modal) return fail('modale d\'offre', "La fenêtre d'offre ne s'est pas ouverte.");
+    if (!modal) return fail("modale d'offre", "La fenêtre d'offre ne s'est pas ouverte.");
 
-    const input = findBySelectors(ANCHORS.priceInput.selectors, modal);
+    const input = findBySelectors<HTMLInputElement>(ANCHORS.priceInput.selectors, modal);
     if (!input) return fail('champ prix', 'Champ de saisie du prix introuvable dans la modale.');
 
     setNativeValue(input, String(price));
@@ -201,7 +223,9 @@
     // React réactive le bouton d'envoi de façon asynchrone après la saisie.
     const submit = await waitFor(() => {
       const found = resolve(ANCHORS.offerSubmit, modal);
-      return found && !found.disabled ? found : null;
+      // `disabled` n'existe que sur les éléments de formulaire : React réactive
+      // le bouton d'envoi après la saisie, il faut donc attendre ce moment.
+      return found && !(found instanceof HTMLButtonElement && found.disabled) ? found : null;
     }, 4000);
     if (!submit) {
       return fail(
@@ -240,14 +264,14 @@
    * sans vérifier reviendrait à risquer d'envoyer le message à un autre vendeur —
    * on préfère renoncer et le dire.
    */
-  function pageMatchesItem(itemId) {
+  function pageMatchesItem(itemId: string): boolean {
     if (!itemId) return true;
     if (currentItemId() === String(itemId)) return true;
     // Une conversation renvoie toujours vers l'article dont elle parle.
     return Boolean(document.querySelector(`a[href*="/items/${itemId}"]`));
   }
 
-  async function sendMessage(message, itemId) {
+  async function sendMessage(message: string, itemId: string): Promise<StepResult> {
     if (!pageMatchesItem(itemId)) {
       return fail(
         'conversation',
@@ -256,13 +280,15 @@
     }
 
     // Après une offre, Vinted bascule souvent déjà sur la conversation.
-    let field = findBySelectors(ANCHORS.messageInput.selectors);
+    let field = findBySelectors<HTMLTextAreaElement>(ANCHORS.messageInput.selectors);
 
     if (!field) {
       const button = resolve(ANCHORS.messageButton);
       if (!button) return fail('bouton message', 'Aucun accès à la messagerie sur cette page.');
       button.click();
-      field = await waitFor(() => findBySelectors(ANCHORS.messageInput.selectors));
+      field = await waitFor(() =>
+        findBySelectors<HTMLTextAreaElement>(ANCHORS.messageInput.selectors)
+      );
     }
 
     if (!field) return fail('zone de message', 'Zone de saisie du message introuvable.');
@@ -272,7 +298,9 @@
     const form = field.closest('form') || document;
     const submit = await waitFor(() => {
       const found = resolve(ANCHORS.messageSubmit, form);
-      return found && !found.disabled ? found : null;
+      // `disabled` n'existe que sur les éléments de formulaire : React réactive
+      // le bouton d'envoi après la saisie, il faut donc attendre ce moment.
+      return found && !(found instanceof HTMLButtonElement && found.disabled) ? found : null;
     }, 4000);
 
     if (!submit) {
@@ -299,24 +327,26 @@
    * qu'il ait pu répondre — le canal se fermait sur « asynchronous response …
    * message channel closed », l'offre étant pourtant partie.
    */
-  async function run({ itemId, price }) {
+  async function run({ itemId, price }: { itemId: string; price: number }): Promise<StepResult> {
     if (itemId && currentItemId() !== String(itemId)) {
       return fail('navigation', "L'onglet n'affiche pas la fiche de cet article.");
     }
     return placeOffer(price);
   }
 
-  function diagnose() {
+  function diagnose(): OfferDiagnoseReport {
     const modal = findBySelectors(ANCHORS.offerModal.selectors);
-    const describe = (el) =>
-      !el ? 'ABSENT' : `${el.tagName.toLowerCase()}${el.dataset.testid ? `[${el.dataset.testid}]` : ''}`;
+    const describe = (el: HTMLElement | null): string =>
+      !el
+        ? 'ABSENT'
+        : `${el.tagName.toLowerCase()}${el.dataset.testid ? `[${el.dataset.testid}]` : ''}`;
 
     return {
       url: location.href,
       itemId: currentItemId(),
       boutonOffre: describe(resolve(ANCHORS.offerButton)),
       modaleOuverte: describe(modal),
-      champPrix: describe(modal && findBySelectors(ANCHORS.priceInput.selectors, modal)),
+      champPrix: describe(modal ? findBySelectors(ANCHORS.priceInput.selectors, modal) : null),
       boutonMessage: describe(resolve(ANCHORS.messageButton)),
       zoneMessage: describe(findBySelectors(ANCHORS.messageInput.selectors)),
     };
@@ -326,7 +356,10 @@
   // Messages du panneau latéral
   // ---------------------------------------------------------------------------
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+    // Le canal est typé `any` : on ne fait confiance qu'au champ `type`, et on
+    // ignore tout ce qui ne vient pas de notre panneau.
+    const message = raw as ExtensionMessage | null;
     if (!message) return false;
 
     if (message.type === 'VF_OFFER_PING') {
@@ -350,14 +383,14 @@
     if (message.type === 'VF_SEND_MESSAGE') {
       sendMessage(message.message, message.itemId)
         .then(sendResponse)
-        .catch((err) => sendResponse(fail('exception', String((err && err.message) || err))));
+        .catch((err: unknown) => sendResponse(fail('exception', errorText(err))));
       return true; // réponse asynchrone
     }
 
     if (message.type === 'VF_MAKE_OFFER') {
       run(message)
         .then(sendResponse)
-        .catch((err) => sendResponse(fail('exception', String((err && err.message) || err))));
+        .catch((err: unknown) => sendResponse(fail('exception', errorText(err))));
       return true; // réponse asynchrone
     }
 
