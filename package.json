@@ -1,9 +1,67 @@
 {
   "name": "vinted-favoris",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Déclare src/sidepanel/*.js comme modules ES — c'est ainsi que sidepanel.html les charge, et cela permet aux tests de les importer directement. Aucune dépendance : la racine de l'extension reste sans node_modules, les tests vivent dans tests/.",
+  "description": "Extension Chrome (Manifest V3) pour enregistrer des articles Vinted en local et les retrouver dans un panneau latéral.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.17.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10"
+  },
   "scripts": {
-    "test": "npm --prefix tests test"
+    "dev": "tsx scripts/build.ts --dev --watch",
+    "build": "tsx scripts/build.ts",
+    "build:dev": "tsx scripts/build.ts --dev",
+    "package": "tsx scripts/build.ts && tsx scripts/package.ts",
+    "clean": "tsx scripts/clean.ts",
+    "test": "tsx --test \"tests/**/*.test.ts\"",
+    "test:watch": "tsx --test --watch \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && stylelint \"src/**/*.css\"",
+    "lint:fix": "eslint . --fix && stylelint \"src/**/*.css\" --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
+    "refresh-fixtures": "tsx tests/tools/refresh-fixtures.ts",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,js}": [
+      "eslint --fix --max-warnings 0",
+      "prettier --write"
+    ],
+    "*.css": [
+      "stylelint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,html}": "prettier --write"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.1",
+    "@commitlint/config-conventional": "^21.2.0",
+    "@eslint/js": "^10.0.1",
+    "@types/chrome": "^0.2.2",
+    "@types/jsdom": "^28.0.3",
+    "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.8.0",
+    "husky": "^9.1.7",
+    "jsdom": "^30.0.0",
+    "lint-staged": "^17.2.0",
+    "prettier": "^3.9.6",
+    "stylelint": "^17.14.1",
+    "stylelint-config-standard": "^40.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0"
   }
 }

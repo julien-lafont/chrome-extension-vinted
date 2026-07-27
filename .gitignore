@@ -1,2 +1,11 @@
 node_modules/
 .DS_Store
+
+# Produits du build. Chrome charge dist/, mais `pnpm build` le régénère.
+dist/
+artifacts/
+
+# Caches d'outillage
+*.log
+.eslintcache
+.stylelintcache

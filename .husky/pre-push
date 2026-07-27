@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Dernier filet avant que le code quitte la machine : le typecheck ne peut pas
+# travailler sur des fichiers isolés (il lui faut tout le programme), et les tests
+# jsdom prennent ~20 s — trop pour un pre-commit, juste ce qu'il faut ici.
+pnpm typecheck && pnpm test

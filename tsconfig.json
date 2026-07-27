@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    // Chrome 114+ (le panneau latéral n'existe pas avant) : tout ES2023 est là.
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+
+    // esbuild transpile fichier par fichier et n'a aucune vue d'ensemble du
+    // programme. Ces trois options garantissent que ce que tsc valide est
+    // exactement ce qu'esbuild peut produire :
+    //   isolatedModules      — interdit ce qui ne se compile pas hors contexte
+    //   verbatimModuleSyntax — les imports de types doivent être explicites
+    //   erasableSyntaxOnly   — interdit enum/namespace, que le strip de types
+    //                          d'esbuild ne sait pas traduire
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+
+    // Les imports citent le fichier réel (`./sorting.ts`) et non une sortie
+    // hypothétique (`./sorting.js`) : c'est esbuild qui produit le `.js`, et un
+    // spécificateur qui ment sur ce qu'il désigne complique la navigation.
+    // Sans risque ici puisque tsc n'émet rien.
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+
+    // tsc ne produit rien : c'est un vérificateur, esbuild est le compilateur.
+    "noEmit": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+
+    // Le code inutile est une erreur, pas un avertissement : sur ce projet les
+    // contournements sont commentés, un reste non commenté est un oubli.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "types": ["chrome", "node"],
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+}

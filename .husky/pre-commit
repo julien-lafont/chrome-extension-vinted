@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Lint et formatage des seuls fichiers indexés : rapide, donc réellement exécuté.
+# Le typecheck et la suite complète tournent en pre-push, où quelques secondes
+# passent mieux qu'à chaque commit.
+pnpm exec lint-staged
