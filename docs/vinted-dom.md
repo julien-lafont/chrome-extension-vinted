@@ -155,6 +155,50 @@ similaires ». Le bouton hydraté reste prioritaire quand il porte le nombre.
 `refresh-fixtures` conserve le plus petit script portant un compteur chiffré, ce qui
 garde cette voie sous test.
 
+### Les photos : trois sources, une seule qui donne la pleine résolution
+
+| Source                            | Photos                     | Résolution max   |
+| --------------------------------- | -------------------------- | ---------------- |
+| Flux RSC, bloc `"name":"gallery"` | toutes, ordonnées          | **1200×1600**    |
+| DOM `item-photo-{N}--img`         | toutes, mais dupliquées ×5 | 600×800 (`f800`) |
+| JSON-LD `image`                   | la principale seulement    | 600×800          |
+
+Les trois sont dans le HTML **servi** : la galerie se remplit aussi bien sur la page
+ouverte que sur le document `fetch()` de l'enrichissement. Le JSON-LD expose une chaîne,
+jamais un tableau — même sur une fiche à trois photos.
+
+Le bloc du flux porte son nom et l'article qu'il décrit :
+
+```js
+{"name":"gallery","type":"gallery","section":"content",
+ "data":{"item_id":9504133342,"seller_id":148532183,"photos":[
+   {"image_no":1,"width":600,"height":800,"dominant_color":"#CD98C1",
+    "url":"…/t/<hash>/f800/1785153571.webp?s=aff1c5…",
+    "full_size_url":"…/tc/<hash>/1785153571.webp?s=f6eb46…",
+    "thumbnails":[{"type":"thumb310x430","url":"…"},…],
+    "is_hidden":false,"is_suspicious":false}]}}
+```
+
+**Les URLs sont signées, et la signature est liée à l'URL exacte.** Réécrire `f800` en
+`310x430` pour obtenir une miniature répond 404 : chaque taille se prend telle qu'elle
+est livrée, jamais fabriquée. `full_size_url` (chemin `/tc/`, sans segment de taille)
+est l'original ; c'est la seule raison de préférer le flux au DOM.
+
+Trois pièges, tous vérifiés sur une fiche réelle :
+
+- **le DOM rend le carrousel cinq fois** (bureau, mobile, bande de miniatures) : une
+  fiche à trois photos y expose quinze `<img>`. Le `data-testid` porte le numéro, il
+  sert de clé de dédoublonnage et d'ordre ;
+- **le tableau n'est pas forcément dans l'ordre d'affichage** : `image_no` fait foi ;
+- **`item_id` doit être vérifié.** Aujourd'hui la page servie ne contient que l'article
+  affiché, mais le dressing du membre et les articles similaires réutilisent la même
+  structure : le jour où Vinted les rendra côté serveur, une galerie sans contrôle
+  mélangerait les photos de deux articles. Même précaution que pour le compteur de
+  favoris.
+
+`extractPhotos()` prend le flux d'abord, le DOM en repli. Le [Diagnostic](diagnostic.md)
+compte les deux séparément.
+
 ### Les blocs d'articles de la fiche renomment leurs cartes
 
 Sous la fiche, « Dressing du membre » et « Articles similaires » réutilisent la carte du

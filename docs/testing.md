@@ -28,6 +28,8 @@ le dossier de tests n'y entre jamais.
 | `offer-flow.test.ts`     | L'offre et le message partent-ils, et que dit-on si un seul passe ?                       |
 | `collections.test.ts`    | Une collection ne se supprime-t-elle que vide ?                                           |
 | `similar-search.test.ts` | L'URL de recherche est-elle correctement filtrée ?                                        |
+| `photos.test.ts`         | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?          |
+| `gallery.test.ts`        | La visionneuse montre-t-elle la bonne photo ?                                             |
 
 Les trois dernières suites verrouillent les correctifs décrits dans
 [pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber 6
@@ -48,6 +50,20 @@ La suite « blocs d'articles d'une fiche » couvre le dressing du membre et les 
 similaires, dont les cartes portent un autre préfixe de `data-testid` (voir
 [vinted-dom.md](vinted-dom.md)). Vérifié : neutraliser `blockCards()` fait tomber 4
 tests, faire hériter ces cartes du fil d'Ariane de la fiche en fait tomber 1.
+
+`photos.test.ts` et `gallery.test.ts` se partagent la galerie : le premier vérifie ce
+qu'on lit de la page, le second ce qu'on en montre. Vérifié un correctif à la fois :
+supprimer le tri par `image_no`, le contrôle de l'`item_id`, le dédoublonnage du
+carrousel, la montée en pleine résolution, ou rendre `[]` au lieu d'`undefined` fait
+rougir la suite. Côté visionneuse : retirer la garde de course, le bouclage, ou laisser
+les flèches agir fenêtre fermée en font tomber une chacun.
+
+La garde de course mérite un mot : `full` pèse quatre fois `url`, et si l'utilisateur
+change de photo pendant son chargement, l'événement `load` arrive **après** la
+navigation. Rien dans l'événement ne dit à quelle photo il se rapporte — sans garde, la
+pleine résolution de la précédente s'affiche par-dessus la suivante. jsdom ne va pas sur
+le réseau : le test remplace `Image` par un faux qui laisse décider du moment où chaque
+chargement aboutit, ce qui est précisément ce qu'il faut pour intercaler la navigation.
 
 `drag-slots.test.ts` porte sur `pickSlot()`, la fonction pure extraite de `dnd.ts` qui
 décide de l'emplacement visé. Ce calcul dépend de positions à l'écran, que jsdom ne
@@ -109,13 +125,14 @@ marche pas — les rAF et observateurs encore en vol échouent sur une fenêtre 
 
 ## Fixtures
 
-Trois fixtures, extraites de vraies pages Vinted :
+Quatre fixtures, extraites de vraies pages Vinted :
 
 | Fixture                           | Page d'origine                   | Ce qu'elle seule couvre                                       |
 | --------------------------------- | -------------------------------- | ------------------------------------------------------------- |
 | `catalog.html` (10 cartes, 61 Ko) | recherche `?search_text=nike`    | l'extraction des cartes, et l'absence de catégorie            |
 | `item.html` (10 Ko)               | une fiche article                | JSON-LD, attributs, favoris par hydratation, catégorie exacte |
 | `category.html` (2 cartes, 13 Ko) | `/catalog/584-hauts-et-t-shirts` | la catégorie héritée du fil d'Ariane de la page               |
+| `item-photos.html` (18 Ko)        | une fiche à trois photos         | la galerie : ordre, pleine résolution, dédoublonnage          |
 
 Les pages brutes pèsent 8 Mo et 2 Mo, presque entièrement du bundle Next.js : on ne
 garde que le markup réellement lu par le content script. Le markup conservé est
@@ -123,19 +140,31 @@ authentique, jamais réécrit à la main.
 
 L'échantillon de cartes n'est pas seulement « les 8 premières » : `pickCards()` ajoute
 au besoin une carte sans taille et une carte sans marque, seules à exercer les replis
-d'extraction. La fiche embarque en plus le bouton favori, le fil d'Ariane et le fragment
-du flux d'hydratation qui porte le compteur de favoris.
+d'extraction. La fiche embarque en plus le bouton favori, le fil d'Ariane, ses photos et
+les fragments du flux d'hydratation qui portent le compteur de favoris et la galerie.
 
-`fixtures/meta.json` porte les URLs des trois pages (l'ID de l'article se lit dans celle
-de la fiche) et le nombre de cartes, que les tests lisent au lieu de coder ces valeurs
-en dur. **L'URL compte** : c'est elle qui décide si le content script se croit sur une
-fiche, et dans quel contexte de catégorie.
+**Les quinze `<img>` d'`item-photos.html` ne sont pas une négligence** : Vinted rend le
+carrousel cinq fois, et c'est exactement ce que le dédoublonnage doit absorber. Une
+première version les réduisait à trois en construisant la fixture — le test du
+dédoublonnage passait alors quoi qu'on fasse au code.
+
+`item-photos.html` a une URL épinglée, là où `itemUrl` est pris au premier article du
+catalogue : son nombre de photos change à chaque rafraîchissement, et une galerie testée
+à un seul exemplaire n'est pas testée. L'article finira vendu et retiré ; le refresh le
+signale alors sans échouer, et conserve la fixture. Il suffit de remplacer `PHOTOS_URL`
+par n'importe quelle fiche à trois photos ou plus.
+
+`fixtures/meta.json` porte les URLs des quatre pages (l'ID de l'article se lit dans
+celle de la fiche) et le nombre de cartes, que les tests lisent au lieu de coder ces
+valeurs en dur. **L'URL compte** : c'est elle qui décide si le content script se croit
+sur une fiche, et dans quel contexte de catégorie.
 
 ### Rafraîchir
 
 ```bash
-pnpm refresh-fixtures                                  # télécharge depuis vinted.fr
-pnpm refresh-fixtures -- cat.html item.html cat2.html  # depuis des pages capturées
+pnpm refresh-fixtures                                    # télécharge depuis vinted.fr
+tsx tests/tools/refresh-fixtures.ts cat.html item.html \
+  cat2.html photos.html                                  # depuis des pages capturées
 ```
 
 Les pages Vinted étant rendues côté serveur, aucune session n'est nécessaire.
@@ -155,8 +184,12 @@ dans Chrome :
   évalués ; les règles de [pitfalls.md](pitfalls.md) reposent sur la revue de code ;
 - **le panneau latéral** — le calcul d'emplacement du glisser-déposer est couvert
   (`drag-slots.test.ts`), mais le geste complet ne l'est pas : capture du pointeur,
-  défilement automatique, dépôt sur un onglet de collection. Collections, tri et offres
-  ne sont pas testés non plus ;
+  défilement automatique, dépôt sur un onglet de collection. L'orchestration de
+  `sidepanel.ts` — rendu de la liste, badge de photos sur la miniature, collections à
+  l'écran — n'est pas testée non plus ;
+- **le chargement réel des images** — `gallery.test.ts` remplace `Image` par un faux,
+  puisque jsdom ne va pas sur le réseau. Que les URLs signées répondent vraiment, et que
+  la montée en pleine résolution soit imperceptible, se vérifie dans Chrome ;
 - **le pilotage d'offre** — `offer-agent.ts` dépend d'ancres non vérifiées en
   production.
 

@@ -321,12 +321,31 @@ h1 {
 }
 
 .item-thumb {
+  position: relative;
   flex: 0 0 60px;
   width: 60px;
   height: 76px;
+  padding: 0;
+  border: none;
   border-radius: 6px;
   overflow: hidden;
   background: var(--surface);
+  cursor: pointer;
+
+  /* Sans ça, tirer sur la miniature sélectionne le texte de l'article. */
+  user-select: none;
+}
+
+/* Aucun `transform` au survol : le bouton sortirait de sa propre zone de survol
+   et oscillerait. Voir CLAUDE.md, règle 2. */
+.item-thumb:hover img {
+  opacity: 0.85;
+}
+
+/* Les enfants ne reçoivent aucun événement : un pointeur qui glisse de l'image
+   au badge supprimerait le clic. Voir CLAUDE.md, règle 2. */
+.item-thumb > * {
+  pointer-events: none;
 }
 
 .item-thumb img {
@@ -334,6 +353,25 @@ h1 {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* Nombre de photos, quand il y en a plus d'une : la seule indication qu'un clic
+   ouvrira autre chose qu'une image isolée. */
+.item-photo-count {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(17, 24, 39, 0.72);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+}
+
+.item-photo-count[hidden] {
+  display: none;
 }
 
 .item-body {
@@ -783,4 +821,155 @@ h1 {
      normalisé — il coupe les longues chaînes du rapport de diagnostic (URLs,
      sélecteurs) sans casser les mots courts. */
   overflow-wrap: anywhere;
+}
+
+/* --- Visionneuse de photos ------------------------------------------------ */
+
+.gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 94vh;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  user-select: none;
+}
+
+.gallery-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.gallery-title {
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--surface);
+
+  /* Le geste horizontal appartient à la visionneuse, pas au défilement. */
+  touch-action: pan-y;
+}
+
+.gallery-stage img {
+  max-width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+}
+
+.gallery-nav {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-top: -16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(17, 24, 39, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* Pas de `transform` au survol — le bouton quitterait sa zone de survol et
+   oscillerait sous le pointeur. Voir CLAUDE.md, règle 2. */
+.gallery-nav:hover {
+  background: rgba(17, 24, 39, 0.8);
+}
+
+.gallery-nav > * {
+  pointer-events: none;
+}
+
+.gallery-nav svg {
+  width: 18px;
+  height: 18px;
+}
+
+.gallery-nav[hidden] {
+  display: none;
+}
+
+.gallery-prev {
+  left: 8px;
+}
+
+.gallery-next {
+  right: 8px;
+}
+
+.gallery-thumbs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.gallery-thumbs[hidden] {
+  display: none;
+}
+
+.gallery-thumb {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 56px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.gallery-thumb > * {
+  pointer-events: none;
+}
+
+.gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.gallery-thumb.is-current {
+  border-color: var(--accent);
+}
+
+.gallery-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.gallery-foot a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.gallery-foot a:hover {
+  text-decoration: underline;
 }

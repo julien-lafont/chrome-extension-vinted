@@ -15,6 +15,7 @@
  */
 import { errorText } from '../shared/errors.ts';
 import type { ExtensionMessage } from '../shared/messages.ts';
+import { extractPhotos, photosFromDom, photosFromHydration } from '../shared/photos.ts';
 import { parsePriceString } from '../shared/price.ts';
 import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
 
@@ -485,6 +486,10 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     // Ici le fil d'Ariane décrit l'article lui-même : catégorie exacte.
     const category = categoryOf(doc, true);
 
+    // Les deux branches ci-dessous partagent la galerie : le JSON-LD ne porte
+    // que la photo principale (une chaîne, pas un tableau, même à trois photos).
+    const images = extractPhotos(doc, id);
+
     if (ld) {
       const offer = ld.offers || {};
       // Le JSON-LD donne un nombre brut (1) ; on le rend comme le catalogue ("1,00 €").
@@ -510,7 +515,8 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
         category:
           category ||
           (ld.category ? { id: null, name: ld.category, path: [], url: null, exact: true } : null),
-        imageUrl: ld.image || '',
+        imageUrl: ld.image || images?.[0]?.url || '',
+        images,
         source: 'detail',
       };
     }
@@ -530,7 +536,8 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
       priceValue: parsePriceValue(price),
       favouriteCount,
       category,
-      imageUrl: img ? img.src : '',
+      imageUrl: img ? img.src : images?.[0]?.url || '',
+      images,
       source: 'detail',
     };
   }
@@ -906,6 +913,7 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
 
     blocsArticles?: string[];
     blockCardsFound?: number;
+    photos?: { flux: number; dom: number };
     detailJsonLd?: boolean;
     detailExtraction?: SavedItem | null;
     detailButton?: string;
@@ -971,6 +979,16 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     report.detailJsonLd = Boolean(readJsonLd(document));
     report.detailExtraction = extractFromDetail();
     report.detailButton = !btn ? 'ABSENT' : 'présent';
+
+    // Les deux voies de la galerie, comptées séparément : un flux muet et un DOM
+    // fourni disent que le bloc `gallery` a changé de nom, pas que l'article n'a
+    // qu'une photo. L'inverse (flux fourni, DOM muet) est normal après une
+    // navigation SPA. Voir shared/photos.ts.
+    const detailId = extractIdFromUrl(location.href);
+    report.photos = {
+      flux: detailId ? photosFromHydration(document, detailId).length : 0,
+      dom: photosFromDom(document).length,
+    };
 
     if (btn) {
       const r = btn.getBoundingClientRect();

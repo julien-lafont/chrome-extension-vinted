@@ -37,6 +37,7 @@ sur leur type, pas sur leur valeur — 0 favori est une donnée, pas une absence
 
 ```json
 { "detailButton": "présent", "detailJsonLd": true, "detailExtraction": { … },
+  "photos": { "flux": 3, "dom": 3 },
   "detailButtonBox": { "top": 732, "left": 1180, "w": 148, "h": 41, "opacity": "1" },
   "clickablePoints": "9/9", "inViewport": true }
 ```
@@ -45,6 +46,16 @@ sur leur type, pas sur leur valeur — 0 favori est une donnée, pas une absence
 son centre : un recouvrement partiel — le symptôme « ça ne marche qu'à certains endroits
 » — est invisible autrement. En dessous de `9/9`, le champ `BLOQUÉ_PAR` nomme les
 éléments qui interceptent le clic.
+
+`photos` compte les deux voies de la galerie séparément, et l'écart entre elles se lit
+ainsi :
+
+| `flux` | `dom` | Ce que ça dit                                                         |
+| ------ | ----- | --------------------------------------------------------------------- |
+| n      | n     | tout va bien ; la galerie a la pleine résolution                      |
+| 0      | n     | le bloc `gallery` a changé de nom → la galerie retombe sur le `f800`  |
+| n      | 0     | normal après une navigation SPA : le carrousel n'est pas encore rendu |
+| 0      | 0     | les deux ancres ont cassé — voir [vinted-dom.md](vinted-dom.md)       |
 
 ## Blocs supplémentaires
 

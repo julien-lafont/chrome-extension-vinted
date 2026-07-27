@@ -68,6 +68,25 @@ Un article sans donnée exploitable pour le tri courant finit **toujours** en ba
 liste, dans les deux sens : une donnée manquante ne doit pas remonter artificiellement
 en tête. L'en-tête du panneau indique combien d'articles sont dans ce cas.
 
+## Galerie de photos
+
+**Les articles enregistrés avant la 0.3 n'en ont pas.** Rien ne rétro-remplit `images` :
+leur miniature continue d'ouvrir l'onglet Vinted, comme avant. Les réenregistrer (un
+clic pour retirer, un pour remettre) leur donne la galerie — c'est le même geste que
+pour compléter un nombre de favoris manquant.
+
+**Les URLs d'images sont signées, et on ignore leur durée de vie.** Le `?s=…` qui les
+termine est lié à l'URL exacte : rien ne peut être reconstruit, et si Vinted fait
+expirer ces signatures, la galerie d'un vieil article affichera des images cassées. Le
+cas n'a pas été observé, et le risque existe déjà pour `imageUrl`, stocké de la même
+façon depuis le début. Le réenregistrement rafraîchit tout.
+
+**Le repli DOM plafonne à 600×800.** Quand le bloc `gallery` du flux d'hydratation est
+introuvable — après une navigation SPA, ou s'il change de nom — la galerie se rabat sur
+le carrousel de la page, qui ne sert que la taille d'affichage. Elle reste complète et
+utilisable ; seul le zoom pleine résolution est perdu. Le [Diagnostic](diagnostic.md)
+distingue les deux voies.
+
 ## Offres
 
 **Ancres non vérifiées en production.** Les `data-testid` de la modale d'offre sont des
@@ -93,6 +112,8 @@ le seul point de contrôle : il n'y a pas de mode simulation.
 
 ## Couverture de test
 
-Le panneau latéral (collections, tri, glisser-déposer, offres) n'est pas couvert par les
-tests automatisés, qui portent uniquement sur le content script. Voir
+Le panneau latéral n'est couvert qu'en partie. Ses modules testables isolément le sont
+(tri, `pickSlot()` du glisser-déposer, composition d'offre, URLs de recherche,
+visionneuse de photos) ; son orchestration — `sidepanel.ts`, le rendu de la liste, les
+collections à l'écran — ne l'est pas. Voir
 [testing.md](testing.md#ce-que-les-tests-ne-couvrent-pas).

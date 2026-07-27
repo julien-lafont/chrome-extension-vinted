@@ -16,8 +16,10 @@ src/
   sidepanel/dnd.ts                 réorganisation par glisser-déposer
   sidepanel/offer.ts               composition du message + pilotage de l'onglet
   sidepanel/search.ts              URLs de catalogue (similaires, marque)
+  sidepanel/gallery.ts             visionneuse des photos d'un article
   shared/types.ts                  modèle de données (SavedItem, Collection, Settings)
   shared/messages.ts               protocole panneau ↔ content scripts
+  shared/photos.ts                 photos d'une fiche, du flux RSC ou du DOM
   shared/price.ts                  lecture d'un prix affiché par Vinted
   shared/errors.ts                 message lisible d'une erreur attrapée
 scripts/build-config.ts            entrées, formats et options esbuild
@@ -88,6 +90,18 @@ savedItems = {
       exact: true, // false = catégorie de la page, pas de l'article
     },
     imageUrl: 'https://images1.vinted.net/...webp',
+    images: [
+      // toutes les photos de la fiche ; absent tant qu'elle n'a pas été lue,
+      // et sur les articles enregistrés avant la 0.3. Jamais un tableau vide.
+      {
+        thumb: 'https://images1.vinted.net/t/.../310x430/....webp?s=...',
+        url: 'https://images1.vinted.net/t/.../f800/....webp?s=...', // 600×800
+        full: 'https://images1.vinted.net/tc/.../....webp?s=...', // 1200×1600
+        width: 600,
+        height: 800,
+        dominantColor: '#cd98c1',
+      },
+    ],
     savedAt: 1753500000000,
     source: 'catalog', // ou "detail"
     collectionId: 'col-lq3x8f-4b2', // absent = collection par défaut
@@ -182,7 +196,26 @@ panneau, qui repeignent leur état.
 Attention : `onChanged` notifie **aussi** l'onglet qui vient d'écrire. C'est le chaînon
 qui a provoqué la boucle de repeint décrite dans [pitfalls.md](pitfalls.md).
 
+## La galerie de photos
+
+`images` porte toutes les photos de la fiche, lues par `shared/photos.ts`. Deux
+particularités valent d'être connues avant d'y toucher :
+
+- **rien n'est dérivé.** Les URLs Vinted se terminent par une signature (`?s=…`) liée à
+  l'URL exacte : réécrire `f800` en autre chose pour obtenir une autre taille produit
+  un 404. Les trois tailles viennent donc toutes de la page, telles quelles ;
+- **le champ n'est jamais un tableau vide.** `mergeDetail()` ignore `undefined` mais
+  recopierait un `[]` : une fiche devenue illisible effacerait alors une galerie déjà
+  lue. `extractPhotos()` rend `undefined` quand il n'a rien trouvé.
+
+Rien ne rétro-remplit les articles enregistrés avant la 0.3 : leur miniature retombe sur
+l'onglet Vinted, comme avant. C'est un choix, pas un oubli — la seule façon de les
+compléter serait de refetcher chaque fiche, pour un gain que le prochain enregistrement
+apporte de lui-même.
+
 ## Quota
 
 `chrome.storage.local` offre 10 Mo. On ne stocke que des URLs d'images, jamais les
-images elles-mêmes : plusieurs milliers d'articles tiennent sans problème.
+images elles-mêmes : plusieurs milliers d'articles tiennent sans problème. La galerie
+ajoute environ 1,3 Ko par article de trois photos — 5 Ko pour un article qui en porte
+douze.

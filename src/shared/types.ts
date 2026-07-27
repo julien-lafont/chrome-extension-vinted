@@ -30,6 +30,31 @@ export type ItemCategory = {
 /** D'où vient l'extraction. La fiche fait foi ; la carte est un état transitoire. */
 export type ItemSource = 'catalog' | 'detail';
 
+/**
+ * Une photo de la fiche article, dans les trois tailles qu'affiche la galerie.
+ *
+ * Les trois URLs sont **livrées telles quelles par Vinted**, jamais dérivées : le
+ * `?s=…` qui les termine est une signature liée à l'URL exacte, et réécrire le
+ * segment de taille (`f800` → autre chose) produit un 404. Voir
+ * `docs/vinted-dom.md`.
+ *
+ * `full` est nettement plus lourd que `url` (1200×1600 contre 600×800, ~4× le
+ * poids) : la galerie n'affiche `url` et ne charge `full` que sur demande.
+ */
+export type ItemPhoto = {
+  /** Miniature de la bande de navigation (310×430). */
+  thumb: string;
+  /** Taille d'affichage courante (`f800`, 600×800). */
+  url: string;
+  /** Qualité maximale (`full_size_url`, 1200×1600). */
+  full: string;
+  /** Dimensions de l'original, quand la source les donne : réserve le ratio. */
+  width?: number;
+  height?: number;
+  /** Couleur dominante, affichée en fond pendant le chargement. */
+  dominantColor?: string;
+};
+
 /** Un article enregistré, tel qu'il est écrit dans `savedItems`. */
 export type SavedItem = {
   id: string;
@@ -46,6 +71,15 @@ export type SavedItem = {
   category: ItemCategory | null;
   imageUrl: string;
   source: ItemSource;
+
+  /**
+   * Toutes les photos de la fiche, dans l'ordre de Vinted. Absent tant que la
+   * fiche n'a pas été lue — une carte de catalogue n'expose que sa miniature —
+   * et absent aussi sur les articles enregistrés avant la 0.3 : la galerie ne
+   * s'affiche que là où le champ existe, rien ne le recalcule. **Jamais `[]`**,
+   * voir `extractPhotos()`.
+   */
+  images?: ItemPhoto[];
 
   /** Posé à l'écriture en storage, pas à l'extraction. */
   savedAt?: number;

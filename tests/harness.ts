@@ -25,10 +25,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const FIXTURES = join(HERE, 'fixtures');
 
-type FixtureMeta = { itemUrl: string; categoryUrl: string; catalogUrl: string } & Record<
-  string,
-  unknown
->;
+type FixtureMeta = {
+  itemUrl: string;
+  categoryUrl: string;
+  catalogUrl: string;
+  photosUrl: string;
+} & Record<string, unknown>;
 
 export const meta = JSON.parse(readFileSync(join(FIXTURES, 'meta.json'), 'utf8')) as FixtureMeta;
 
@@ -108,20 +110,28 @@ export async function settleFetches(): Promise<void> {
  * ses blocs. Lever ici plutôt que d'échouer par un `undefined` diffus : si les
  * fixtures sont re-téléchargées et que l'URL change de forme, le message le dit.
  */
-export const ITEM_ID: string = (() => {
-  const id = meta.itemUrl.match(/\/items\/(\d+)/)?.[1];
-  if (!id) throw new Error(`meta.itemUrl ne porte pas d'identifiant : ${meta.itemUrl}`);
+function itemIdOf(url: string, field: string): string {
+  const id = url.match(/\/items\/(\d+)/)?.[1];
+  if (!id) throw new Error(`meta.${field} ne porte pas d'identifiant : ${url}`);
   return id;
-})();
+}
+
+export const ITEM_ID: string = itemIdOf(meta.itemUrl, 'itemUrl');
+
+/** Identifiant de la fiche multi-photos — la galerie est indexée par article. */
+export const PHOTOS_ITEM_ID: string = itemIdOf(meta.photosUrl, 'photosUrl');
 
 /** Nom d'une fixture de markup Vinted présente dans `tests/fixtures/`. */
-export type Fixture = 'catalog' | 'item' | 'category';
+export type Fixture = 'catalog' | 'item' | 'category' | 'item-photos';
 
 /** L'URL compte : elle décide de la page détail, et du contexte de catégorie. */
 const URLS: Record<Fixture, () => string> = {
   item: () => meta.itemUrl,
   category: () => meta.categoryUrl,
   catalog: () => meta.catalogUrl,
+  // Une fiche comme une autre pour l'extraction — sa seule particularité est de
+  // porter plusieurs photos, ce que `itemUrl` ne garantit pas.
+  'item-photos': () => meta.photosUrl,
 };
 
 /** @param options état initial du storage */

@@ -61,6 +61,18 @@ Les onglets en haut du panneau regroupent les articles. Tout nouvel article arri
   faut la vider d'abord, ce qui évite de déplacer des articles sans le vouloir. **Mes
   favoris** n'en affiche jamais.
 
+### Photos
+
+Un clic sur la miniature d'un article ouvre **toutes les photos de sa fiche**, sans
+quitter le panneau. Le badge dans le coin de la miniature en donne le nombre.
+
+Navigation : les flèches de part et d'autre de l'image, les touches ←/→, un balayage au
+doigt, ou la bande de miniatures. `Échap` ou un clic à côté referme.
+
+Chaque photo s'affiche d'abord en 600×800, puis passe en 1200×1600 dès que la pleine
+résolution est chargée. Les articles enregistrés avant la 0.3 n'ont pas de galerie :
+leur miniature ouvre l'onglet Vinted, comme avant. Les réenregistrer la leur donne.
+
 ### Tri et ordre manuel
 
 Six modes : **Personnalisé**, **Date d'ajout**, **Prix**, **État**, **Likes**,

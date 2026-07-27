@@ -218,6 +218,11 @@ describe('enrichissement par la fiche', () => {
     assert.match(item.category.url, /\/catalog\/\d+-/);
     assert.equal(typeof item.favouriteCount, 'number');
     assert.ok(item.size && item.condition);
+
+    // La carte n'expose que sa miniature : la galerie ne peut venir que de la
+    // fiche, et c'est ce qui la rend disponible sur un article enregistré
+    // depuis une recherche.
+    assert.ok(item.images?.length, 'galerie non rapportée par la fiche');
   });
 
   test('un article retiré pendant la requête ne réapparaît pas', async () => {
@@ -364,6 +369,30 @@ describe('fiche article', () => {
 
     assert.equal(page.savedCount(), 1);
     assert.equal(page.saved()[0].source, 'detail');
+  });
+
+  test('enregistre toutes les photos de la fiche', async () => {
+    // Le détail du parsing est couvert par photos.test.ts ; ce qui se vérifie
+    // ici, c'est que la galerie arrive bien jusqu'au storage — et que la
+    // miniature du panneau reste la première photo.
+    const page = await loadContentScript('item-photos');
+
+    await page.clickMouse(page.detailButton());
+
+    const [item] = page.saved();
+    assert.equal(item.images.length, 3, 'galerie absente du storage');
+    assert.equal(item.imageUrl, item.images[0].url, 'la miniature n’est pas la première photo');
+    assert.ok(item.images[0].full.length > 0);
+  });
+
+  test('le diagnostic compte les photos de chaque source', async () => {
+    const page = await loadContentScript('item-photos');
+    const { photos } = await page.diagnose();
+
+    // Un flux muet doublé d'un DOM fourni signale que le bloc `gallery` a été
+    // renommé, pas que l'article n'a qu'une photo. Voir docs/diagnostic.md.
+    assert.equal(photos.flux, 3, 'flux d’hydratation muet');
+    assert.equal(photos.dom, 3, 'photos introuvables dans le DOM');
   });
 
   test('reflète un article déjà enregistré au chargement', async () => {

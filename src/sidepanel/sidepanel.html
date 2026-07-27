@@ -67,9 +67,13 @@
           </svg>
         </button>
 
-        <a class="item-thumb" target="_blank" rel="noreferrer">
-          <img alt="" loading="lazy" />
-        </a>
+        <!-- Un bouton, pas un lien : le clic ouvre la visionneuse. Il retombe
+             sur l'onglet Vinted pour les articles enregistrés avant la 0.3, qui
+             n'ont pas de galerie — le titre reste le lien de plein droit. -->
+        <button type="button" class="item-thumb">
+          <img alt="" loading="lazy" draggable="false" />
+          <span class="item-photo-count" hidden></span>
+        </button>
 
         <div class="item-body">
           <a class="item-title" target="_blank" rel="noreferrer"></a>
@@ -212,6 +216,78 @@
           <button type="submit" class="primary" id="offer-submit">Envoyer l'offre</button>
         </div>
       </form>
+    </div>
+
+    <!-- Visionneuse : toutes les photos de la fiche, sans quitter le panneau -->
+    <div id="gallery-dialog" class="overlay" hidden>
+      <div class="gallery" role="dialog" aria-modal="true" aria-label="Photos de l'article">
+        <div class="gallery-head">
+          <p class="gallery-title" id="gallery-title"></p>
+          <button type="button" class="icon-btn" data-close title="Fermer" aria-label="Fermer">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="gallery-stage" id="gallery-stage">
+          <img id="gallery-image" alt="" draggable="false" />
+
+          <button
+            type="button"
+            class="gallery-nav gallery-prev"
+            id="gallery-prev"
+            title="Photo précédente"
+            aria-label="Photo précédente"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M15 5l-7 7 7 7" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="gallery-nav gallery-next"
+            id="gallery-next"
+            title="Photo suivante"
+            aria-label="Photo suivante"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="gallery-thumbs" id="gallery-thumbs"></div>
+
+        <p class="gallery-foot">
+          <span id="gallery-counter"></span>
+          <a id="gallery-link" target="_blank" rel="noreferrer">Ouvrir sur Vinted</a>
+        </p>
+      </div>
     </div>
 
     <footer class="footer">

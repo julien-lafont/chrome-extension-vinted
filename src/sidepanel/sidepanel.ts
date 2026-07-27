@@ -34,6 +34,7 @@ import {
 } from './sorting.ts';
 
 import { enableDragAndDrop } from './dnd.ts';
+import { initGallery, openGallery } from './gallery.ts';
 import { similarSearchUrl, brandSearchUrl } from './search.ts';
 import { composeMessage, suggestPrice, submitOffer, formatEuro } from './offer.ts';
 
@@ -252,12 +253,33 @@ function renderItem(item: SavedItem): DocumentFragment {
   const article = within<HTMLElement>(node, '.item');
   article.dataset.id = item.id;
 
-  const thumb = within<HTMLAnchorElement>(node, '.item-thumb');
-  thumb.href = item.url;
+  const thumb = within<HTMLButtonElement>(node, '.item-thumb');
   const img = within<HTMLImageElement>(node, '.item-thumb img');
   if (item.imageUrl) {
     img.src = item.imageUrl;
     img.alt = item.title || '';
+  }
+
+  // La galerie n'existe que sur les articles dont la fiche a été lue depuis la
+  // 0.3 : les autres gardent le comportement d'avant, l'onglet Vinted.
+  const photos = item.images?.length ?? 0;
+
+  if (photos) {
+    thumb.title = photos > 1 ? `Voir les ${photos} photos` : 'Voir la photo';
+    thumb.addEventListener('click', () => {
+      openGallery(item);
+    });
+  } else {
+    thumb.title = 'Ouvrir sur Vinted';
+    thumb.addEventListener('click', () => {
+      void chrome.tabs.create({ url: item.url, active: true });
+    });
+  }
+
+  if (photos > 1) {
+    const count = within<HTMLElement>(node, '.item-photo-count');
+    count.textContent = String(photos);
+    count.hidden = false;
   }
 
   const title = within<HTMLAnchorElement>(node, '.item-title');
@@ -762,6 +784,20 @@ async function submitOfferFromForm(): Promise<void> {
     'error'
   );
 }
+
+// --- Visionneuse de photos ----------------------------------------------------
+
+initGallery({
+  overlay: required('gallery-dialog'),
+  image: required<HTMLImageElement>('gallery-image'),
+  stage: required('gallery-stage'),
+  thumbs: required('gallery-thumbs'),
+  title: required('gallery-title'),
+  counter: required('gallery-counter'),
+  link: required<HTMLAnchorElement>('gallery-link'),
+  prev: required<HTMLButtonElement>('gallery-prev'),
+  next: required<HTMLButtonElement>('gallery-next'),
+});
 
 // --- Fermeture des modales ----------------------------------------------------
 
