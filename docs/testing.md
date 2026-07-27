@@ -1,177 +1,175 @@
 # Tests
 
 ```bash
-cd tests
-npm install     # jsdom, une seule fois
-npm test
+pnpm install
+ppnpm test
 ```
 
-81 tests, ~20 s. Le runner est celui de Node (`node --test`) : aucune dépendance de
-test à installer.
+88 tests, ~25 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
+pour qu'il lise directement les sources TypeScript. Node 22 minimum.
 
-Les tests vivent dans `tests/` avec leur propre `package.json`, ce qui garde la
-racine de l'extension sans `node_modules`. Chrome charge le dossier entier mais
-n'exécute que les fichiers déclarés dans `manifest.json` : `tests/` est inerte à
-l'exécution, et trivial à exclure d'un éventuel packaging.
+**Les tests chargent le bundle esbuild, pas le fichier source.** `content.ts` importe du
+code de `src/shared/` : un `window.eval()` sur le source échouerait sur son premier
+`import`. Le harness le passe donc par esbuild avec les options de production, lues dans
+`scripts/build-config.ts` — ce qui est testé est ce qui est livré, y compris la mise en
+IIFE dont dépend la règle 1 du projet.
+
+`tests/` est inerte à l'exécution : `dist/` ne contient que ce que le build y écrit, et
+le dossier de tests n'y entre jamais.
 
 ## Ce qui est couvert
 
-| Fichier | Question posée |
-|---|---|
-| `extraction.test.mjs` | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ? |
-| `click-gestures.test.mjs` | Les boutons répondent-ils à tous les gestes ? |
-| `repaint-loop.test.mjs` | Le content script se repeint-il en boucle ? |
-| `drag-slots.test.mjs` | Où se pose une carte qu'on fait glisser ? |
-| `offer-flow.test.mjs` | L'offre et le message partent-ils, et que dit-on si un seul passe ? |
-| `collections.test.mjs` | Une collection ne se supprime-t-elle que vide ? |
-| `similar-search.test.mjs` | L'URL de recherche est-elle correctement filtrée ? |
+| Fichier                  | Question posée                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| `extraction.test.ts`     | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ? |
+| `click-gestures.test.ts` | Les boutons répondent-ils à tous les gestes ?                                             |
+| `repaint-loop.test.ts`   | Le content script se repeint-il en boucle ?                                               |
+| `drag-slots.test.ts`     | Où se pose une carte qu'on fait glisser ?                                                 |
+| `offer-flow.test.ts`     | L'offre et le message partent-ils, et que dit-on si un seul passe ?                       |
+| `collections.test.ts`    | Une collection ne se supprime-t-elle que vide ?                                           |
+| `similar-search.test.ts` | L'URL de recherche est-elle correctement filtrée ?                                        |
 
 Les trois dernières suites verrouillent les correctifs décrits dans
-[pitfalls.md](pitfalls.md). Vérifié : retirer le
-listener `pointerdown` fait tomber 6 tests, neutraliser la garde `vfPainted` en
-fait tomber 1.
+[pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber 6
+tests, neutraliser la garde `vfPainted` en fait tomber 1.
 
-La suite « données de tri » d'`extraction.test.mjs` couvre les quatre modes du
-panneau. Vérifié aussi, un correctif à la fois : ne plus désambiguïser le
-sous-titre, recouper le titre au seul `", marque:"`, ne plus lire le bouton
-`--favourite`, relire une ligne d'attribut de fiche en bloc, ou retirer le repli
-d'hydratation — chacun fait rougir la suite concernée.
+La suite « données de tri » d'`extraction.test.ts` couvre les quatre modes du panneau.
+Vérifié aussi, un correctif à la fois : ne plus désambiguïser le sous-titre, recouper le
+titre au seul `", marque:"`, ne plus lire le bouton `--favourite`, relire une ligne
+d'attribut de fiche en bloc, ou retirer le repli d'hydratation — chacun fait rougir la
+suite concernée.
 
-La suite « catégorie » vérifie les trois contextes de navigation (fiche, page
-catégorie, recherche par mots-clés) — une fixture chacun. Vérifié de même : ne
-plus filtrer le maillon de marque, ne plus lire le fil sur les cartes, ou marquer
-`exact` sans distinguer la page de l'article font rougir la suite.
+La suite « catégorie » vérifie les trois contextes de navigation (fiche, page catégorie,
+recherche par mots-clés) — une fixture chacun. Vérifié de même : ne plus filtrer le
+maillon de marque, ne plus lire le fil sur les cartes, ou marquer `exact` sans
+distinguer la page de l'article font rougir la suite.
 
-La suite « blocs d'articles d'une fiche » couvre le dressing du membre et les
-articles similaires, dont les cartes portent un autre préfixe de `data-testid`
-(voir [vinted-dom.md](vinted-dom.md)). Vérifié : neutraliser `blockCards()` fait
-tomber 4 tests, faire hériter ces cartes du fil d'Ariane de la fiche en fait
-tomber 1.
+La suite « blocs d'articles d'une fiche » couvre le dressing du membre et les articles
+similaires, dont les cartes portent un autre préfixe de `data-testid` (voir
+[vinted-dom.md](vinted-dom.md)). Vérifié : neutraliser `blockCards()` fait tomber 4
+tests, faire hériter ces cartes du fil d'Ariane de la fiche en fait tomber 1.
 
-`drag-slots.test.mjs` porte sur `pickSlot()`, la fonction pure extraite de `dnd.js`
-qui décide de l'emplacement visé. Ce calcul dépend de positions à l'écran, que jsdom
-ne produit pas — d'où une fonction pure alimentée par des rectangles décrits à la
-main, plutôt qu'un DOM simulé. Le cas qui échouait avant correction : un déplacement
-de 0,7 carte doit faire gagner un rang, et n'en faisait gagner aucun.
+`drag-slots.test.ts` porte sur `pickSlot()`, la fonction pure extraite de `dnd.ts` qui
+décide de l'emplacement visé. Ce calcul dépend de positions à l'écran, que jsdom ne
+produit pas — d'où une fonction pure alimentée par des rectangles décrits à la main,
+plutôt qu'un DOM simulé. Le cas qui échouait avant correction : un déplacement de 0,7
+carte doit faire gagner un rang, et n'en faisait gagner aucun.
 
 ## Le harness
 
-`harness.mjs` charge `src/content/content.js` dans un DOM jsdom bâti sur du markup
-Vinted réel, avec un faux `chrome`.
+`harness.ts` charge `src/content/content.ts` dans un DOM jsdom bâti sur du markup Vinted
+réel, avec un faux `chrome`.
 
 ```js
-const page = await loadContentScript('item');   // ou 'catalog'
+const page = await loadContentScript('item'); // ou 'catalog'
 await page.clickMouse(page.detailButton());
 assert.equal(page.savedCount(), 1);
 ```
 
 Helpers de geste, tous attendables (l'écriture en storage est asynchrone) :
 
-| Helper | Simule |
-|---|---|
-| `clickMouse(el)` | geste souris complet — `pointerdown` + `click` avec `detail: 1` |
-| `pressOnly(el)` | appui dont le navigateur a **supprimé** le `click` |
-| `pressKey(el)` | activation clavier — `click` seul, `detail: 0` |
+| Helper           | Simule                                                           |
+| ---------------- | ---------------------------------------------------------------- |
+| `clickMouse(el)` | geste souris complet — `pointerdown` + `click` avec `detail: 1`  |
+| `pressOnly(el)`  | appui dont le navigateur a **supprimé** le `click`               |
+| `pressKey(el)`   | activation clavier — `click` seul, `detail: 0`                   |
 | `watchChurn(el)` | compte les remplacements d'enfants, révèle une boucle de repeint |
 
-**Le stub `chrome.storage.onChanged` notifie l'onglet qui vient d'écrire**, comme
-le vrai Chrome. Ce détail n'est pas cosmétique : une version antérieure le
-stubbait en no-op, ce qui coupait le chaînon déclencheur de la boucle de repeint
-et produisait un faux négatif.
+**Le stub `chrome.storage.onChanged` notifie l'onglet qui vient d'écrire**, comme le
+vrai Chrome. Ce détail n'est pas cosmétique : une version antérieure le stubbait en
+no-op, ce qui coupait le chaînon déclencheur de la boucle de repeint et produisait un
+faux négatif.
 
 ### Piloter la lecture des fiches
 
-`window.fetch` est stubbé, et **les requêtes ne se résolvent pas d'elles-mêmes** :
-c'est le test qui décide quand la fiche répond. C'est ce qui permet d'observer
-l'état intermédiaire — l'article affiché dès le clic, avant que la fiche n'arrive.
+`window.fetch` est stubbé, et **les requêtes ne se résolvent pas d'elles-mêmes** : c'est
+le test qui décide quand la fiche répond. C'est ce qui permet d'observer l'état
+intermédiaire — l'article affiché dès le clic, avant que la fiche n'arrive.
 
-| Helper | Effet |
-|---|---|
-| `pendingFetches()` | requêtes parties et pas encore honorées |
-| `respondWithFixture('item')` | répond avec le HTML d'une fixture |
-| `respond({ ok: false, status: 503, … })` | répond une erreur HTTP |
-| `failFetch()` | coupure réseau |
+| Helper                                   | Effet                                   |
+| ---------------------------------------- | --------------------------------------- |
+| `pendingFetches()`                       | requêtes parties et pas encore honorées |
+| `respondWithFixture('item')`             | répond avec le HTML d'une fixture       |
+| `respond({ ok: false, status: 503, … })` | répond une erreur HTTP                  |
+| `failFetch()`                            | coupure réseau                          |
 
 ### Faire arriver un bloc d'articles de fiche
 
-`appendItemBlock('other_user_items')` ajoute au DOM un « Dressing du membre »
-après le rendu initial, comme Vinted le fait. Il ne peut pas venir d'une
-fixture : la page servie ne contient qu'un squelette, ces articles n'existent que
-dans le DOM hydraté et `refresh-fixtures` ne les voit pas passer. Le markup des
-cartes est donc celui, authentique, de `catalog.html`, avec pour seule retouche
-le préfixe de leur `data-testid` — ce que Vinted change, et rien d'autre.
+`appendItemBlock('other_user_items')` ajoute au DOM un « Dressing du membre » après le
+rendu initial, comme Vinted le fait. Il ne peut pas venir d'une fixture : la page servie
+ne contient qu'un squelette, ces articles n'existent que dans le DOM hydraté et
+`refresh-fixtures` ne les voit pas passer. Le markup des cartes est donc celui,
+authentique, de `catalog.html`, avec pour seule retouche le préfixe de leur
+`data-testid` — ce que Vinted change, et rien d'autre.
 
 Chaque fichier qui charge le content script doit terminer par `after(settleFetches)` :
-le content script pose 15 s d'expiration sur chaque requête, et un test qui en
-laisse une en suspens retiendrait le process d'autant. Fermer les fenêtres jsdom à
-la place ne marche pas — les rAF et observateurs encore en vol échouent sur une
-fenêtre détruite.
+le content script pose 15 s d'expiration sur chaque requête, et un test qui en laisse
+une en suspens retiendrait le process d'autant. Fermer les fenêtres jsdom à la place ne
+marche pas — les rAF et observateurs encore en vol échouent sur une fenêtre détruite.
 
 ## Fixtures
 
 Trois fixtures, extraites de vraies pages Vinted :
 
-| Fixture | Page d'origine | Ce qu'elle seule couvre |
-|---|---|---|
-| `catalog.html` (10 cartes, 61 Ko) | recherche `?search_text=nike` | l'extraction des cartes, et l'absence de catégorie |
-| `item.html` (10 Ko) | une fiche article | JSON-LD, attributs, favoris par hydratation, catégorie exacte |
-| `category.html` (2 cartes, 13 Ko) | `/catalog/584-hauts-et-t-shirts` | la catégorie héritée du fil d'Ariane de la page |
+| Fixture                           | Page d'origine                   | Ce qu'elle seule couvre                                       |
+| --------------------------------- | -------------------------------- | ------------------------------------------------------------- |
+| `catalog.html` (10 cartes, 61 Ko) | recherche `?search_text=nike`    | l'extraction des cartes, et l'absence de catégorie            |
+| `item.html` (10 Ko)               | une fiche article                | JSON-LD, attributs, favoris par hydratation, catégorie exacte |
+| `category.html` (2 cartes, 13 Ko) | `/catalog/584-hauts-et-t-shirts` | la catégorie héritée du fil d'Ariane de la page               |
 
-Les pages brutes pèsent 8 Mo et 2 Mo, presque entièrement du bundle Next.js : on
-ne garde que le markup réellement lu par le content script. Le markup conservé est
+Les pages brutes pèsent 8 Mo et 2 Mo, presque entièrement du bundle Next.js : on ne
+garde que le markup réellement lu par le content script. Le markup conservé est
 authentique, jamais réécrit à la main.
 
-L'échantillon de cartes n'est pas seulement « les 8 premières » : `pickCards()`
-ajoute au besoin une carte sans taille et une carte sans marque, seules à exercer
-les replis d'extraction. La fiche embarque en plus le bouton favori, le fil
-d'Ariane et le fragment du flux d'hydratation qui porte le compteur de favoris.
+L'échantillon de cartes n'est pas seulement « les 8 premières » : `pickCards()` ajoute
+au besoin une carte sans taille et une carte sans marque, seules à exercer les replis
+d'extraction. La fiche embarque en plus le bouton favori, le fil d'Ariane et le fragment
+du flux d'hydratation qui porte le compteur de favoris.
 
-`fixtures/meta.json` porte les URLs des trois pages (l'ID de l'article se lit dans
-celle de la fiche) et le nombre de cartes, que les tests lisent au lieu de coder
-ces valeurs en dur. **L'URL compte** : c'est elle qui décide si le content script
-se croit sur une fiche, et dans quel contexte de catégorie.
+`fixtures/meta.json` porte les URLs des trois pages (l'ID de l'article se lit dans celle
+de la fiche) et le nombre de cartes, que les tests lisent au lieu de coder ces valeurs
+en dur. **L'URL compte** : c'est elle qui décide si le content script se croit sur une
+fiche, et dans quel contexte de catégorie.
 
 ### Rafraîchir
 
 ```bash
-npm run refresh-fixtures                                  # télécharge depuis vinted.fr
-npm run refresh-fixtures -- cat.html item.html cat2.html  # depuis des pages capturées
+pnpm refresh-fixtures                                  # télécharge depuis vinted.fr
+pnpm refresh-fixtures -- cat.html item.html cat2.html  # depuis des pages capturées
 ```
 
 Les pages Vinted étant rendues côté serveur, aucune session n'est nécessaire.
 
-À faire quand la suite d'extraction rougit : si elle repasse au vert avec des
-fixtures fraîches, seules les fixtures étaient périmées. Si elle reste rouge, les
-ancres ont vraiment changé → [vinted-dom.md](vinted-dom.md).
+À faire quand la suite d'extraction rougit : si elle repasse au vert avec des fixtures
+fraîches, seules les fixtures étaient périmées. Si elle reste rouge, les ancres ont
+vraiment changé → [vinted-dom.md](vinted-dom.md).
 
 ## Ce que les tests ne couvrent pas
 
-jsdom n'est pas un navigateur. Restent invérifiables ici, et donc à contrôler à la
-main dans Chrome :
+jsdom n'est pas un navigateur. Restent invérifiables ici, et donc à contrôler à la main
+dans Chrome :
 
-- **la mise en page** — `elementFromPoint` n'existe pas, aucun recouvrement ne
-  peut être détecté (c'est le rôle de `clickablePoints` dans le
-  [Diagnostic](diagnostic.md)) ;
+- **la mise en page** — `elementFromPoint` n'existe pas, aucun recouvrement ne peut être
+  détecté (c'est le rôle de `clickablePoints` dans le [Diagnostic](diagnostic.md)) ;
 - **le CSS calculé** — `user-select`, `pointer-events` et les `:hover` ne sont pas
-  évalués ; les règles de [pitfalls.md](pitfalls.md)
-  reposent sur la revue de code ;
+  évalués ; les règles de [pitfalls.md](pitfalls.md) reposent sur la revue de code ;
 - **le panneau latéral** — le calcul d'emplacement du glisser-déposer est couvert
-  (`drag-slots.test.mjs`), mais le geste complet ne l'est pas : capture du pointeur,
-  défilement automatique, dépôt sur un onglet de collection. Collections, tri et
-  offres ne sont pas testés non plus ;
-- **le pilotage d'offre** — `offer-agent.js` dépend d'ancres non vérifiées en
+  (`drag-slots.test.ts`), mais le geste complet ne l'est pas : capture du pointeur,
+  défilement automatique, dépôt sur un onglet de collection. Collections, tri et offres
+  ne sont pas testés non plus ;
+- **le pilotage d'offre** — `offer-agent.ts` dépend d'ancres non vérifiées en
   production.
 
 ### Rejouer un vrai glisser
 
-Le geste complet ne se vérifie que dans un navigateur. Le panneau tourne hors
-extension avec un `chrome` simulé : servir un dossier contenant `sidepanel.html`
-(les modules ES exigent `http://`, pas `file://`), en insérant avant
-`sidepanel.js` un script qui pose `window.chrome` — `storage.local` en mémoire,
-`onChanged` notifiant de façon asynchrone — et quelques articles de test.
+Le geste complet ne se vérifie que dans un navigateur. Le panneau tourne hors extension
+avec un `chrome` simulé : servir `dist/sidepanel/` après un `pnpm build:dev` (les
+modules ES exigent `http://`, pas `file://`), en insérant avant `sidepanel.js` un script
+qui pose `window.chrome` — `storage.local` en mémoire, `onChanged` notifiant de façon
+asynchrone — et quelques articles de test.
 
-Un geste se rejoue ensuite en dispatchant `pointerdown` / `pointermove` ×N /
-`pointerup` sur `.item-drag`. C'est ainsi qu'a été trouvé le décalage d'une
-demi-carte : un déplacement de 95 px pour des cartes de 98 px ne bougeait rien.
-Une seule paire `pointermove` ne suffit pas à reproduire — il faut une trentaine
-de pas, comme une vraie souris.
+Un geste se rejoue ensuite en dispatchant `pointerdown` / `pointermove` ×N / `pointerup`
+sur `.item-drag`. C'est ainsi qu'a été trouvé le décalage d'une demi-carte : un
+déplacement de 95 px pour des cartes de 98 px ne bougeait rien. Une seule paire
+`pointermove` ne suffit pas à reproduire — il faut une trentaine de pas, comme une vraie
+souris.
