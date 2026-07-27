@@ -13,16 +13,16 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickSlot } from '../src/sidepanel/dnd.js';
+import { pickSlot, type SlotBox } from '../src/sidepanel/dnd.ts';
 
 const H = 100; // hauteur d'une carte, chiffre rond pour lire les cas
 
 /**
  * Liste de `count` cartes empilées depuis y=0, dont une — le fantôme — est retirée.
- * @param {number} ghostIndex emplacement occupé par le fantôme
+ * @param ghostIndex emplacement occupé par le fantôme
  */
-function layout(count, ghostIndex, height = H) {
-  const boxes = [];
+function layout(count: number, ghostIndex: number, height = H): SlotBox[] {
+  const boxes: SlotBox[] = [];
   for (let i = 0; i < count; i += 1) {
     // Les voisins placés après le fantôme sont décalés de sa hauteur.
     boxes.push({ top: i * height + (i >= ghostIndex ? height : 0), height });
@@ -31,7 +31,7 @@ function layout(count, ghostIndex, height = H) {
 }
 
 /** Centre de la carte saisie après un déplacement de `cards` hauteurs. */
-const centerAfter = (ghostIndex, cards, height = H) =>
+const centerAfter = (ghostIndex: number, cards: number, height = H): number =>
   ghostIndex * height + height / 2 + cards * height;
 
 describe('emplacement visé pendant un glisser', () => {
@@ -86,7 +86,8 @@ describe('emplacement visé pendant un glisser', () => {
     }
 
     // Le centre visé est celui du 3e emplacement, calculé sur les hauteurs réelles.
-    const target = boxes[1].top - H + boxes[1].height + H / 2;
+    const second = boxes[1]!;
+    const target = second.top - H + second.height + H / 2;
     assert.equal(pickSlot(target, H, ghostIndex, boxes), 2);
   });
 

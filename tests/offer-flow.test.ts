@@ -10,31 +10,51 @@
  */
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { submitOffer } from '../src/sidepanel/offer.js';
+import { submitOffer } from '../src/sidepanel/offer.ts';
+import type { ExtensionMessage } from '../src/shared/messages.ts';
+import { makeItem } from './factories.ts';
 
 const CHANNEL_CLOSED =
   'A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received';
 
-const ITEM = { id: '123', title: 'Jean brut', price: '40,00 €', url: 'https://www.vinted.fr/items/123-jean' };
+const ITEM = makeItem({
+  id: '123',
+  title: 'Jean brut',
+  price: '40,00 €',
+  url: 'https://www.vinted.fr/items/123-jean',
+});
 
-/** Onglet Vinted simulé : `replies` donne la réponse (ou l'erreur) par type de message. */
-function fakeTab(replies) {
-  const sent = [];
+/**
+ * Ce qu'un faux onglet peut répondre : une valeur (y compris une `Error`, que
+ * `fakeTab` relance), ou une fonction qui la calcule depuis le message reçu.
+ * `unknown` absorbe les deux cas — les distinguer dans le type n'apporterait rien.
+ */
+type Reply = unknown;
 
-  globalThis.chrome = {
+/**
+ * Onglet Vinted simulé : `replies` donne la réponse (ou l'erreur) par type de
+ * message. Le faux ne couvre que `chrome.tabs`, seule partie de l'API que
+ * `submitOffer` utilise — d'où la conversion, faite ici et commentée.
+ */
+function fakeTab(replies: Partial<Record<ExtensionMessage['type'], Reply>>): string[] {
+  const sent: string[] = [];
+
+  const fake = {
     tabs: {
-      query: async () => [{ id: 7, url: 'https://www.vinted.fr/items/123-jean' }],
-      update: async () => ({}),
-      create: async () => ({ id: 7 }),
-      sendMessage: async (_tabId, message) => {
+      query: () => Promise.resolve([{ id: 7, url: 'https://www.vinted.fr/items/123-jean' }]),
+      update: () => Promise.resolve({}),
+      create: () => Promise.resolve({ id: 7 }),
+      sendMessage: (_tabId: number, message: ExtensionMessage) => {
         sent.push(message.type);
         const reply = replies[message.type];
         if (reply instanceof Error) throw reply;
-        if (typeof reply === 'function') return reply(message);
-        return reply;
+        if (typeof reply === 'function') return Promise.resolve(reply(message));
+        return Promise.resolve(reply);
       },
     },
   };
+
+  (globalThis as { chrome?: unknown }).chrome = fake;
 
   return sent;
 }
@@ -44,7 +64,7 @@ const OFFER_OK = { ok: true, step: 'offre', detail: 'Offre de 34 € envoyée.' 
 
 describe('envoi d une offre', () => {
   beforeEach(() => {
-    delete globalThis.chrome;
+    delete (globalThis as { chrome?: unknown }).chrome;
   });
 
   test('offre puis message : les deux partent', async () => {
@@ -87,8 +107,8 @@ describe('envoi d une offre', () => {
 
     assert.equal(res.ok, true, "l'offre est partie : ne pas la présenter comme un échec");
     assert.equal(res.messagePending, true, 'le panneau doit proposer de copier le message');
-    assert.match(res.detail, /Offre de 34 € envoyée/);
-    assert.match(res.detail, /Zone de saisie introuvable/);
+    assert.match(res.detail ?? '', /Offre de 34 € envoyée/);
+    assert.match(res.detail ?? '', /Zone de saisie introuvable/);
   });
 
   test('sans message demandé, rien n est envoyé au vendeur', async () => {

@@ -9,7 +9,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadContentScript, settleFetches } from './harness.mjs';
+import { loadContentScript, settleFetches } from './harness.ts';
 
 // Solde les requêtes de fiche laissées en attente : leur délai d'expiration
 // retiendrait le process de test. Voir settleFetches().
@@ -80,7 +80,7 @@ describe('boutons des cartes', () => {
     // preventDefault/stopPropagation, cliquer ouvrirait la fiche.
     let navigated = false;
     const overlay = button.closest('[data-testid^="product-item-id-"]').querySelector('a');
-    overlay.addEventListener('click', (event) => {
+    overlay.addEventListener('click', (event: Event) => {
       if (!event.defaultPrevented) navigated = true;
     });
 

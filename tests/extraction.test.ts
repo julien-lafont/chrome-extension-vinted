@@ -8,7 +8,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadContentScript, meta, settle, settleFetches } from './harness.mjs';
+import { ITEM_ID, loadContentScript, meta, settle, settleFetches } from './harness.ts';
 
 // Solde les requêtes de fiche laissées en attente : leur délai d'expiration
 // retiendrait le process de test. Voir settleFetches().
@@ -104,7 +104,7 @@ describe('données de tri', () => {
 
     // Sacs et accessoires : le sous-titre se réduit à l'état ("Très bon état"),
     // sans rien pour signaler la taille absente.
-    const button = page.cardButtonWhere((label) => label && !/taille\s*:/i.test(label));
+    const button = page.cardButtonWhere((label) => Boolean(label) && !/taille\s*:/i.test(label));
     assert.ok(button, 'la fixture ne contient plus de carte sans taille');
 
     await page.clickMouse(button);
@@ -119,7 +119,7 @@ describe('données de tri', () => {
 
     // Le titre se coupe au premier attribut du libellé. Couper au seul
     // ", marque:" laissait tout le libellé en titre sur ces cartes-là.
-    const button = page.cardButtonWhere((label) => label && !/marque\s*:/i.test(label));
+    const button = page.cardButtonWhere((label) => Boolean(label) && !/marque\s*:/i.test(label));
     assert.ok(button, 'la fixture ne contient plus de carte sans marque');
 
     await page.clickMouse(button);
@@ -136,7 +136,7 @@ describe('catégorie', () => {
   // Elle est enregistrée pour pouvoir relancer une recherche : ce qui compte est
   // l'URL de catalogue, pas seulement le nom.
 
-  test("la fiche article donne la catégorie exacte, sans le maillon de marque", async () => {
+  test('la fiche article donne la catégorie exacte, sans le maillon de marque', async () => {
     const page = await loadContentScript('item');
     const { detailExtraction } = await page.diagnose();
     const { category } = detailExtraction;
@@ -239,7 +239,7 @@ describe('enrichissement par la fiche', () => {
     await page.clickMouse(page.cardButtons()[0]);
     const before = page.saved()[0];
 
-    await page.respond({ ok: false, status: 503, text: async () => '' });
+    await page.respond({ ok: false, status: 503, text: () => Promise.resolve('') });
 
     const [item] = page.saved();
     assert.equal(item.pending, undefined, 'l’attente doit être levée même en échec');
@@ -330,7 +330,11 @@ describe('fiche article', () => {
 
     // Le JSON-LD donne un nombre brut (1) ; le catalogue affiche "1,00 €".
     // Les deux sources doivent produire la même chaîne.
-    assert.match(detailExtraction.price, /^\d+,\d{2}\s€$/, `prix inattendu : ${detailExtraction.price}`);
+    assert.match(
+      detailExtraction.price,
+      /^\d+,\d{2}\s€$/,
+      `prix inattendu : ${detailExtraction.price}`
+    );
     assert.equal(detailExtraction.source, 'detail');
     assert.match(detailExtraction.id, /^\d+$/);
     assert.ok(detailExtraction.title.length > 0);
@@ -363,9 +367,8 @@ describe('fiche article', () => {
   });
 
   test('reflète un article déjà enregistré au chargement', async () => {
-    const id = meta.itemUrl.match(/\/items\/(\d+)/)[1];
     const page = await loadContentScript('item', {
-      saved: { [id]: { id, title: 'déjà là', savedAt: 1 } },
+      saved: { [ITEM_ID]: { id: ITEM_ID, title: 'déjà là', savedAt: 1 } },
     });
 
     assert.equal(page.detailButton().dataset.vfSaved, 'true');
@@ -405,10 +408,11 @@ describe('blocs d’articles d’une fiche', () => {
 
     // La première carte de la fixture catalogue est l'article de la fixture
     // fiche : on prend une autre, sans quoi le test ne prouverait rien.
-    const detailId = meta.itemUrl.match(/\/items\/(\d+)/)[1];
     const box = [
       ...block.querySelectorAll('[data-testid^="other_user_items-"]:not([data-testid*="--"])'),
-    ].find((el) => el.dataset.testid !== `other_user_items-${detailId}`);
+    ].find((el) => el.dataset.testid !== `other_user_items-${ITEM_ID}`);
+    assert.ok(box, 'aucune carte de dressing distincte de la fiche affichée');
+
     const cardId = box.dataset.testid.replace('other_user_items-', '');
 
     await page.clickMouse(box.querySelector('.vf-card-btn'));
@@ -416,7 +420,7 @@ describe('blocs d’articles d’une fiche', () => {
     const [item] = page.saved();
     assert.equal(item.id, cardId);
     assert.equal(item.pending, true, 'la fiche de la carte doit être demandée');
-    assert.equal(page.pendingFetches()[0].url, item.url);
+    assert.equal(page.pendingFetches()[0]?.url, item.url);
   });
 
   test('n’hérite pas de la catégorie de la fiche affichée', async () => {
@@ -433,11 +437,10 @@ describe('blocs d’articles d’une fiche', () => {
 
   test('le bouton flottant de la fiche reste celui de la fiche', async () => {
     const page = await loadContentScript('item');
-    const detailId = meta.itemUrl.match(/\/items\/(\d+)/)[1];
 
     await page.appendItemBlock('other_user_items', 3);
 
-    assert.equal(page.detailButton().dataset.vfId, detailId);
+    assert.equal(page.detailButton().dataset.vfId, ITEM_ID);
   });
 
   test('ne repeint pas en boucle quand un bloc arrive', async () => {

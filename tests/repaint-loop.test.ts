@@ -10,7 +10,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadContentScript, settle, settleFetches } from './harness.mjs';
+import { loadContentScript, settle, settleFetches } from './harness.ts';
 
 // Solde les requêtes de fiche laissées en attente : leur délai d'expiration
 // retiendrait le process de test. Voir settleFetches().
@@ -25,7 +25,7 @@ describe('stabilité du DOM', () => {
     const button = page.detailButton();
     const churn = page.watchChurn(button);
 
-    page.clickMouse(button);
+    await page.clickMouse(button);
     await settle(600);
 
     assert.ok(

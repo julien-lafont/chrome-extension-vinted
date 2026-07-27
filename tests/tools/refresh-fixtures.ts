@@ -36,20 +36,20 @@ const UA =
 
 const CARDS_KEPT = 8;
 
-async function fetchPage(url) {
+async function fetchPage(url: string): Promise<string> {
   const res = await fetch(url, { headers: { 'user-agent': UA } });
   if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
   return res.text();
 }
 
 /** Enveloppe des fragments dans un document minimal. */
-function wrap(title, body) {
+function wrap(title: string, body: string): string {
   return `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
 <title>${title}</title>
-<!-- Fixture générée par tests/tools/refresh-fixtures.mjs — ne pas éditer à la main. -->
+<!-- Fixture générée par tests/tools/refresh-fixtures.ts — ne pas éditer à la main. -->
 </head>
 <body>
 ${body}
@@ -58,10 +58,8 @@ ${body}
 `;
 }
 
-const cardLabel = (card) => {
-  const link = card.querySelector('[data-testid$="--overlay-link"]');
-  return (link && link.getAttribute('title')) || '';
-};
+const cardLabel = (card: Element): string =>
+  card.querySelector('[data-testid$="--overlay-link"]')?.getAttribute('title') || '';
 
 /**
  * Vinted omet la taille sur les accessoires (sacs, porte-clés) et la marque sur
@@ -70,12 +68,12 @@ const cardLabel = (card) => {
  * chance : on complète l'échantillon d'un exemplaire de chaque cas s'il en
  * existe un dans la page.
  */
-function pickCards(cards) {
+function pickCards(cards: Element[]): Element[] {
   const picked = cards.slice(0, CARDS_KEPT);
 
-  const cases = [
-    (label) => label && !/taille\s*:/i.test(label),
-    (label) => label && !/marque\s*:/i.test(label),
+  const cases: ((label: string) => boolean)[] = [
+    (label) => Boolean(label) && !/taille\s*:/i.test(label),
+    (label) => Boolean(label) && !/marque\s*:/i.test(label),
   ];
 
   for (const matches of cases) {
@@ -88,16 +86,16 @@ function pickCards(cards) {
 }
 
 /**
- * @param {string} title titre du document produit
- * @param {number} [keep] nombre de cartes ; par défaut l'échantillon complet
+ * @param title titre du document produit
+ * @param keep nombre de cartes ; par défaut l'échantillon complet
  */
-function buildCatalogFixture(html, title = 'Fixture catalogue Vinted', keep = 0) {
+function buildCatalogFixture(html: string, title = 'Fixture catalogue Vinted', keep = 0) {
   const doc = new JSDOM(html).window.document;
   const all = [...doc.querySelectorAll('[data-testid="grid-item"]')];
   if (!all.length) throw new Error('aucune carte [data-testid="grid-item"] trouvée');
 
   const cards = keep ? all.slice(0, keep) : pickCards(all);
-  const parts = cards.map((c) => c.outerHTML);
+  const parts = cards.map((card) => card.outerHTML);
 
   // Sur une page catégorie seulement : c'est de ce fil que les cartes tirent
   // leur catégorie, faute de la porter elles-mêmes.
@@ -107,14 +105,14 @@ function buildCatalogFixture(html, title = 'Fixture catalogue Vinted', keep = 0)
   return { html: wrap(title, body), count: cards.length, crumbs: Boolean(crumbs) };
 }
 
-function buildItemFixture(html) {
+function buildItemFixture(html: string) {
   const doc = new JSDOM(html).window.document;
   const parts = [];
 
   // Le JSON-LD est la source principale de extractFromDetail().
   const ld = [...doc.querySelectorAll('script[type="application/ld+json"]')].find((s) => {
     try {
-      return JSON.parse(s.textContent)['@type'] === 'Product';
+      return (JSON.parse(s.textContent ?? '') as { '@type'?: string })['@type'] === 'Product';
     } catch {
       return false;
     }
@@ -155,22 +153,22 @@ function buildItemFixture(html) {
  * mentionnent `favourite_count` sans valeur). On retient donc le plus petit
  * script portant un compteur chiffré.
  */
-function favouriteHydrationScript(doc) {
+function favouriteHydrationScript(doc: Document): string | null {
   const CHIFFRE = /favourite_count\\*":\s*\d/;
 
   const candidates = [...doc.querySelectorAll('script')]
-    .filter((s) => CHIFFRE.test(s.textContent))
-    .sort((a, b) => a.textContent.length - b.textContent.length);
+    .filter((s) => CHIFFRE.test(s.textContent ?? ''))
+    .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0));
 
-  return candidates.length ? candidates[0].outerHTML : null;
+  return candidates[0]?.outerHTML ?? null;
 }
 
 /** Première fiche article référencée par la page catalogue. */
-function firstItemUrl(html) {
+function firstItemUrl(html: string): string {
   const doc = new JSDOM(html).window.document;
-  const link = doc.querySelector('a[href*="/items/"]');
+  const link = doc.querySelector<HTMLAnchorElement>('a[href*="/items/"]');
   if (!link) throw new Error('aucun lien /items/ dans le catalogue');
-  return link.href.split('?')[0];
+  return link.href.split('?')[0] ?? link.href;
 }
 
 const [catalogArg, itemArg, categoryArg] = process.argv.slice(2);
@@ -178,7 +176,9 @@ const [catalogArg, itemArg, categoryArg] = process.argv.slice(2);
 const catalogHtml = catalogArg ? readFileSync(catalogArg, 'utf8') : await fetchPage(CATALOG_URL);
 const itemUrl = firstItemUrl(catalogHtml);
 const itemHtml = itemArg ? readFileSync(itemArg, 'utf8') : await fetchPage(itemUrl);
-const categoryHtml = categoryArg ? readFileSync(categoryArg, 'utf8') : await fetchPage(CATEGORY_URL);
+const categoryHtml = categoryArg
+  ? readFileSync(categoryArg, 'utf8')
+  : await fetchPage(CATEGORY_URL);
 
 mkdirSync(FIXTURES, { recursive: true });
 
@@ -209,7 +209,7 @@ writeFileSync(
   ) + '\n'
 );
 
-const kb = (s) => `${Math.round(Buffer.byteLength(s) / 1024)} Ko`;
+const kb = (s: string): string => `${Math.round(Buffer.byteLength(s) / 1024)} Ko`;
 console.log(`catalog.html   ${catalog.count} cartes  ${kb(catalog.html)}`);
 console.log(`item.html      ${item.count} blocs   ${kb(item.html)}`);
 console.log(`category.html  ${category.count} cartes  ${kb(category.html)}`);

@@ -15,37 +15,25 @@ import {
   deleteCollection,
   moveItemToCollection,
   collectionOf,
-} from '../src/sidepanel/store.js';
+} from '../src/sidepanel/store.ts';
+import type { SavedItem } from '../src/shared/types.ts';
+import { makeItem } from './factories.ts';
+import { installFakeChrome, uninstallFakeChrome, type FakeStore } from './fake-chrome.ts';
 
-/** chrome.storage.local en mémoire, avec la sérialisation du vrai. */
-function fakeStorage(initial = {}) {
-  const db = structuredClone(initial);
+const fakeStorage = (initial: FakeStore = {}): void => {
+  installFakeChrome(initial);
+};
 
-  globalThis.chrome = {
-    storage: {
-      local: {
-        async get(keys) {
-          const list = Array.isArray(keys) ? keys : [keys];
-          const out = {};
-          for (const k of list) if (k in db) out[k] = structuredClone(db[k]);
-          return out;
-        },
-        async set(obj) {
-          Object.assign(db, structuredClone(obj));
-        },
-      },
-      onChanged: { addListener() {} },
-    },
-  };
-
-  return db;
+/** Premier article enregistré, dont les tests vérifient qu'il n'a pas bougé. */
+function firstItem(items: SavedItem[]): SavedItem {
+  const item = items[0];
+  assert.ok(item, 'aucun article enregistré');
+  return item;
 }
-
-const ITEM = (id, collectionId) => ({ id, title: `Article ${id}`, savedAt: Number(id), collectionId });
 
 describe('suppression d une collection', () => {
   beforeEach(() => {
-    delete globalThis.chrome;
+    uninstallFakeChrome();
   });
 
   test('une collection vide disparaît', async () => {
@@ -54,24 +42,27 @@ describe('suppression d une collection', () => {
 
     const res = await deleteCollection(jeans.id);
 
-    assert.equal(res.ok, true);
+    assert.deepEqual(res, { ok: true });
     const { collections } = await readAll();
     assert.deepEqual(Object.keys(collections), [DEFAULT_COLLECTION_ID]);
   });
 
   test('une collection habitée est refusée, et ses articles ne bougent pas', async () => {
-    fakeStorage({ savedItems: { 1: ITEM('1') } });
+    fakeStorage({ savedItems: { 1: makeItem({ id: '1' }) } });
     const jeans = await createCollection('Jeans');
     await moveItemToCollection('1', jeans.id);
 
     const res = await deleteCollection(jeans.id);
 
-    assert.equal(res.ok, false);
-    assert.equal(res.reason, 'not-empty');
+    assert.deepEqual(res, { ok: false, reason: 'not-empty' });
 
     const { items, collections } = await readAll();
     assert.ok(collections[jeans.id], 'la collection doit survivre');
-    assert.equal(collectionOf(items[0], collections), jeans.id, "l'article ne doit pas être déplacé");
+    assert.equal(
+      collectionOf(firstItem(items), collections),
+      jeans.id,
+      "l'article ne doit pas être déplacé"
+    );
   });
 
   test('la collection par défaut ne se supprime jamais, même vide', async () => {
@@ -80,34 +71,36 @@ describe('suppression d une collection', () => {
 
     const res = await deleteCollection(DEFAULT_COLLECTION_ID);
 
-    assert.equal(res.ok, false);
-    assert.equal(res.reason, 'default');
+    assert.deepEqual(res, { ok: false, reason: 'default' });
     const { collections } = await readAll();
     assert.ok(collections[DEFAULT_COLLECTION_ID]);
   });
 
   test('une collection vidée redevient supprimable', async () => {
-    fakeStorage({ savedItems: { 1: ITEM('1') } });
+    fakeStorage({ savedItems: { 1: makeItem({ id: '1' }) } });
     const jeans = await createCollection('Jeans');
     await moveItemToCollection('1', jeans.id);
 
-    assert.equal((await deleteCollection(jeans.id)).reason, 'not-empty');
+    assert.deepEqual(await deleteCollection(jeans.id), { ok: false, reason: 'not-empty' });
 
     // L'article repart ailleurs : la collection est de nouveau vide.
     await moveItemToCollection('1', DEFAULT_COLLECTION_ID);
-    assert.equal((await deleteCollection(jeans.id)).ok, true);
+    assert.deepEqual(await deleteCollection(jeans.id), { ok: true });
 
     const { items, collections } = await readAll();
     assert.ok(!collections[jeans.id]);
-    assert.equal(collectionOf(items[0], collections), DEFAULT_COLLECTION_ID, "l'article est conservé");
+    assert.equal(
+      collectionOf(firstItem(items), collections),
+      DEFAULT_COLLECTION_ID,
+      "l'article est conservé"
+    );
   });
 
   test('supprimer une collection inconnue ne casse rien', async () => {
     fakeStorage();
     const res = await deleteCollection('col-inexistante');
 
-    assert.equal(res.ok, false);
-    assert.equal(res.reason, 'unknown');
+    assert.deepEqual(res, { ok: false, reason: 'unknown' });
   });
 
   test('les autres collections sont intactes après une suppression', async () => {
@@ -118,7 +111,7 @@ describe('suppression d une collection', () => {
     await deleteCollection(jeans.id);
 
     const { collections } = await readAll();
-    assert.equal(collections[cadeaux.id].name, 'Cadeau Julien');
+    assert.equal(collections[cadeaux.id]?.name, 'Cadeau Julien');
     assert.ok(collections[DEFAULT_COLLECTION_ID]);
   });
 });

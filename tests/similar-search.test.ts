@@ -12,10 +12,12 @@ import {
   brandSearchUrl,
   STATUS_IDS,
   SIMILAR_STATUSES,
-} from '../src/sidepanel/search.js';
+} from '../src/sidepanel/search.ts';
+import type { ItemCategory, SavedItem } from '../src/shared/types.ts';
+import { makeItem } from './factories.ts';
 
 /** Relit l'URL produite comme le ferait Vinted. */
-function parse(item) {
+function parse(item: SavedItem) {
   const url = new URL(similarSearchUrl(item));
   return {
     url,
@@ -25,14 +27,23 @@ function parse(item) {
   };
 }
 
-const ITEM = {
+const ITEM = makeItem({
   id: '1',
   title: 'Nike Air Zoom Mercurial',
   brand: 'Nike',
   size: '42',
   condition: 'Bon état',
   price: '40,00 €',
-};
+});
+
+/** Catégorie complète : `id` seul ne suffit pas au type, et Vinted la sert entière. */
+const hautsEtTshirts = (exact: boolean): ItemCategory => ({
+  id: '584',
+  name: 'Hauts et t-shirts',
+  path: ['Hommes', 'Hauts et t-shirts'],
+  url: 'https://www.vinted.fr/catalog/584-hauts-et-t-shirts',
+  exact,
+});
 
 describe('recherche d articles similaires', () => {
   test('vise le catalogue Vinted', () => {
@@ -81,15 +92,15 @@ describe('recherche d articles similaires', () => {
   });
 
   test('sans prix lisible, aucune borne n est posée', () => {
-    const { params } = parse({ ...ITEM, price: '', priceValue: undefined });
+    const { params } = parse({ ...ITEM, price: '', priceValue: null });
     assert.equal(params.get('price_from'), null);
     assert.equal(params.get('price_to'), null);
   });
 
   test('marque et taille passent par le texte à défaut d identifiants', () => {
     const { text } = parse(ITEM);
-    assert.match(text, /Nike/);
-    assert.match(text, /42/);
+    assert.match(text ?? '', /Nike/);
+    assert.match(text ?? '', /42/);
   });
 
   test('les identifiants de marque et de taille priment sur le texte', () => {
@@ -100,14 +111,12 @@ describe('recherche d articles similaires', () => {
   });
 
   test('la catégorie est utilisée quand elle décrit l article', () => {
-    const category = { id: '584', name: 'Hauts et t-shirts', exact: true };
-    const { params } = parse({ ...ITEM, category });
+    const { params } = parse({ ...ITEM, category: hautsEtTshirts(true) });
     assert.equal(params.get('catalog[]'), '584');
   });
 
   test('une catégorie seulement héritée de la page est ignorée', () => {
-    const category = { id: '584', name: 'Hauts et t-shirts', exact: false };
-    const { params } = parse({ ...ITEM, category });
+    const { params } = parse({ ...ITEM, category: hautsEtTshirts(false) });
     assert.equal(params.get('catalog[]'), null, 'ne pas filtrer sur une catégorie approximative');
   });
 
@@ -123,19 +132,30 @@ describe('recherche d articles similaires', () => {
   });
 
   test('un article sans aucune métadonnée produit une URL valide', () => {
-    const { url, statuses } = parse({ id: '9' });
+    const { url, statuses } = parse(makeItem({ id: '9' }));
     assert.equal(url.origin + url.pathname, 'https://www.vinted.fr/catalog');
     assert.deepEqual(statuses, ['6', '1', '2']);
   });
 });
 
 describe('recherche par marque', () => {
-  const parseBrand = (item) => {
+  /**
+   * Les cas de ce bloc portent tous sur un article qui **a** une marque : le lien
+   * existe donc, et l'affirmer ici évite de le revérifier à chaque assertion.
+   */
+  const parseBrand = (item: SavedItem): URLSearchParams => {
     const raw = brandSearchUrl(item);
-    return raw === null ? null : new URL(raw).searchParams;
+    assert.ok(raw, 'un article avec marque doit produire un lien');
+    return new URL(raw).searchParams;
   };
 
-  const CATEGORY = { id: '584', name: 'Hauts et t-shirts', exact: true };
+  const CATEGORY: ItemCategory = {
+    id: '584',
+    name: 'Hauts et t-shirts',
+    path: ['Hommes', 'Hauts et t-shirts'],
+    url: 'https://www.vinted.fr/catalog/584-hauts-et-t-shirts',
+    exact: true,
+  };
 
   test('filtre sur la marque dans la catégorie de l article', () => {
     const params = parseBrand({ ...ITEM, category: CATEGORY });
@@ -150,7 +170,7 @@ describe('recherche par marque', () => {
       assert.equal(params.get(absent), null, `${absent} ne doit pas être filtré`);
     }
     assert.deepEqual(params.getAll('status_ids[]'), [], 'tous les états sont acceptés');
-    assert.ok(!params.get('search_text').includes('42'), 'la taille ne doit pas polluer');
+    assert.ok(!params.get('search_text')?.includes('42'), 'la taille ne doit pas polluer');
   });
 
   test('l identifiant de marque prime sur le texte', () => {
@@ -160,9 +180,7 @@ describe('recherche par marque', () => {
   });
 
   test('sans catégorie exploitable, la marque seule est filtrée', () => {
-    const approximative = { ...CATEGORY, exact: false };
-
-    for (const category of [null, undefined, approximative]) {
+    for (const category of [null, hautsEtTshirts(false)]) {
       const params = parseBrand({ ...ITEM, category });
       assert.equal(params.get('catalog[]'), null);
       assert.equal(params.get('search_text'), 'Nike');
@@ -171,11 +189,12 @@ describe('recherche par marque', () => {
 
   test('sans marque, aucun lien n est proposé', () => {
     assert.equal(brandSearchUrl({ ...ITEM, brand: '' }), null);
-    assert.equal(brandSearchUrl({ id: '9' }), null);
+    assert.equal(brandSearchUrl(makeItem({ id: '9' })), null);
   });
 
   test('les crochets restent lisibles', () => {
     const url = brandSearchUrl({ ...ITEM, brandId: 53, category: CATEGORY });
+    assert.ok(url, 'un article avec marque doit produire un lien');
     assert.ok(url.includes('catalog[]=584'));
     assert.ok(!url.includes('%5B%5D'));
   });
