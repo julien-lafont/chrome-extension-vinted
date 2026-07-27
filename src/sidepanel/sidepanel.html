@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mes favoris Vinted</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-row">
+        <h1>Mes favoris</h1>
+        <span class="count" id="count">0</span>
+      </div>
+
+      <nav class="collections" id="collections" aria-label="Collections">
+        <!-- Onglets injectés par sidepanel.js -->
+      </nav>
+
+      <input
+        type="search"
+        id="search"
+        class="search"
+        placeholder="Filtrer par titre, marque, taille…"
+        autocomplete="off"
+      />
+
+      <div class="sortbar">
+        <label class="sr-only" for="sort">Trier par</label>
+        <select id="sort" class="select"></select>
+        <button type="button" id="sort-dir" class="dir" title="Inverser le sens du tri">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M7 4v16m0 0l-3-3m3 3l3-3M17 20V4m0 0l-3 3m3-3l3 3" />
+          </svg>
+          <span id="sort-dir-label">Croissant</span>
+        </button>
+      </div>
+
+      <p class="hint" id="hint" hidden></p>
+    </header>
+
+    <main id="list" class="list" aria-live="polite"></main>
+
+    <template id="item-template">
+      <article class="item">
+        <button type="button" class="item-drag" title="Glisser pour réorganiser" aria-label="Réorganiser">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="9" cy="6" r="1.6" /><circle cx="15" cy="6" r="1.6" />
+            <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
+            <circle cx="9" cy="18" r="1.6" /><circle cx="15" cy="18" r="1.6" />
+          </svg>
+        </button>
+
+        <a class="item-thumb" target="_blank" rel="noreferrer">
+          <img alt="" loading="lazy" />
+        </a>
+
+        <div class="item-body">
+          <a class="item-title" target="_blank" rel="noreferrer"></a>
+          <p class="item-meta"></p>
+          <p class="item-price"></p>
+        </div>
+
+        <div class="item-actions">
+          <button type="button" class="icon-btn item-similar" title="Rechercher un article similaire">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn item-offer" title="Faire une offre">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.6 13.4L13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V4a1 1 0 0 1 1-1h8a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6z" />
+              <circle cx="7.5" cy="7.5" r="1.2" fill="currentColor" />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn item-move" title="Déplacer vers une collection">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+          </button>
+          <button type="button" class="icon-btn item-remove" title="Retirer de mes favoris">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6" />
+            </svg>
+          </button>
+        </div>
+      </article>
+    </template>
+
+    <!-- Menu « déplacer vers », ancré sous le bouton dossier d'un article -->
+    <div id="move-menu" class="menu" hidden></div>
+
+    <!-- Modale : création / renommage de collection -->
+    <div id="collection-dialog" class="overlay" hidden>
+      <form class="dialog" id="collection-form">
+        <h2 id="collection-dialog-title">Nouvelle collection</h2>
+        <input
+          type="text"
+          id="collection-name"
+          class="input"
+          maxlength="40"
+          placeholder="Jeans, Chemises, Cadeau Julien…"
+          autocomplete="off"
+          required
+        />
+        <div class="dialog-actions">
+          <button type="button" class="ghost" data-close>Annuler</button>
+          <button type="submit" class="primary" id="collection-submit">Créer</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Modale : offre -->
+    <div id="offer-dialog" class="overlay" hidden>
+      <form class="dialog dialog-lg" id="offer-form">
+        <h2>Faire une offre</h2>
+
+        <p class="offer-item" id="offer-item"></p>
+
+        <div class="offer-row">
+          <label class="field">
+            <span>Mon prix</span>
+            <input type="number" id="offer-price" class="input" min="1" step="1" required />
+          </label>
+          <p class="offer-original" id="offer-original"></p>
+        </div>
+
+        <div class="chips" id="offer-presets">
+          <button type="button" class="chip" data-discount="10">−10 %</button>
+          <button type="button" class="chip" data-discount="15">−15 %</button>
+          <button type="button" class="chip" data-discount="20">−20 %</button>
+          <button type="button" class="chip" data-discount="30">−30 %</button>
+        </div>
+
+        <div class="field">
+          <span class="field-head">
+            <label for="offer-message">Message au vendeur</label>
+            <span class="field-tools">
+              <button type="button" class="link" id="offer-copy">Copier</button>
+              <button type="button" class="link" id="offer-regen">Régénérer</button>
+            </span>
+          </span>
+          <textarea id="offer-message" class="input textarea" rows="7"></textarea>
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="offer-send-message" checked />
+          <span>Envoyer aussi le message dans la conversation</span>
+        </label>
+
+        <p class="offer-status" id="offer-status" hidden></p>
+
+        <div class="dialog-actions">
+          <button type="button" class="ghost" data-close>Annuler</button>
+          <button type="submit" class="primary" id="offer-submit">Envoyer l'offre</button>
+        </div>
+      </form>
+    </div>
+
+    <footer class="footer">
+      <button type="button" id="export" class="ghost">Exporter en JSON</button>
+      <button type="button" id="diagnose" class="ghost">Diagnostic</button>
+    </footer>
+
+    <div id="report" class="report" hidden></div>
+
+    <script src="sidepanel.js" type="module"></script>
+  </body>
+</html>

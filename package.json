@@ -1,0 +1,9 @@
+{
+  "name": "vinted-favoris",
+  "private": true,
+  "type": "module",
+  "description": "Déclare src/sidepanel/*.js comme modules ES — c'est ainsi que sidepanel.html les charge, et cela permet aux tests de les importer directement. Aucune dépendance : la racine de l'extension reste sans node_modules, les tests vivent dans tests/.",
+  "scripts": {
+    "test": "npm --prefix tests test"
+  }
+}

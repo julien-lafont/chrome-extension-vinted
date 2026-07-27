@@ -1,0 +1,106 @@
+/* Bouton injecté sur les cartes produit (page catalogue / recherche).
+   Le conteneur d'image Vinted est déjà en position:relative et son propre
+   bouton favori occupe le coin bas-droite : on se place en haut-droite. */
+.vf-card-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  color: #4b5563;
+  cursor: pointer;
+  transition: transform 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.vf-card-btn:hover {
+  transform: scale(1.1);
+  background: #fff;
+}
+
+/* Tous les enfants sont transparents aux événements : le clic cible toujours
+   le <button> lui-même. Sans ça, si un enfant est recréé entre le mousedown et
+   le mouseup, le navigateur n'émet aucun "click". */
+.vf-card-btn > * {
+  pointer-events: none;
+}
+
+.vf-card-btn svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+.vf-card-btn[data-vf-saved='true'] {
+  background: #09b1ba;
+  color: #fff;
+}
+
+/* Bouton flottant sur la page détail d'un article.
+   Volontairement détaché du layout Vinted : rien à surcharger, rien à casser. */
+.vf-detail-btn {
+  position: fixed;
+  right: 24px;
+  /* Au-dessus de la barre d'action sticky de Vinted ("Acheter" / "Faire une
+     offre"), qui recouvrait partiellement le bouton en bottom: 24px : une
+     moitié cliquable, l'autre non. */
+  bottom: 104px;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 999px;
+  background: #09b1ba;
+  color: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+  /* Sans ça, presser sur le libellé arme une sélection de texte : un déplacement
+     de 1-2 px pendant le clic la déclenche et le "click" n'est jamais émis.
+     Le clic marchait sur l'icône (non sélectionnable) mais pas sur le texte. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Surtout pas de transform au survol : déplacer le bouton sous le curseur le
+   fait sortir de sa propre zone de survol près des bords, d'où une oscillation
+   hover/unhover qui avale le clic. On ne change que des propriétés de peinture. */
+.vf-detail-btn:hover {
+  background: #078f96;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+.vf-detail-btn[data-vf-saved='true'] {
+  background: #16743f;
+}
+
+.vf-detail-btn[data-vf-saved='true']:hover {
+  background: #125c33;
+}
+
+/* Le clic doit toujours cibler le <button>, jamais le <svg> ou le <span>. */
+.vf-detail-btn > * {
+  pointer-events: none;
+}
+
+.vf-detail-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
