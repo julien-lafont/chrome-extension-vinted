@@ -239,6 +239,14 @@ export async function loadContentScript(
       return this.respond({ ok: true, status: 200, text: () => Promise.resolve(html) });
     },
 
+    /**
+     * Répond à la plus ancienne requête en attente avec du JSON — la table des
+     * tailles de `shared/size-ids.ts`, seul appel d'API du projet.
+     */
+    async respondJson(body: unknown) {
+      return this.respond({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    },
+
     /** Répond avec une réponse arbitraire (statut d'erreur, corps illisible…). */
     async respond(response: unknown) {
       const call = fetches.find((c) => !c.settled);

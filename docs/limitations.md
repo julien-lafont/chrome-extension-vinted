@@ -34,6 +34,31 @@ nombre. Sur les cartes du catalogue, la lecture est directe et sûre.
 et lu tel quel dans le JSON-LD sur la fiche. Un prix illisible exclut l'article des
 remises et le relègue en fin de tri.
 
+**La taille est filtrée exactement — mais pas toujours.** Aucune page ne porte le
+`size_id` de l'article : il est résolu après l'enregistrement, depuis le libellé et la
+catégorie, par la seule requête d'API du projet (voir
+[vinted-dom.md](vinted-dom.md#la-table-des-tailles-dune-catégorie)). Trois cas laissent
+l'article sans identifiant, et la recherche retombe alors sur le texte :
+
+- **la catégorie n'est pas exacte** — fiche jamais lue, ou article enregistré avant la
+  0.3 : la table d'un rayon large est ambiguë, on ne demande donc rien ;
+- **le libellé est ambigu dans sa catégorie** : « M » vaut 208 en vêtements, 1390 en
+  chapeaux, 1426 en gants. Sur une catégorie feuille — la seule qu'on enregistre — le
+  cas ne s'est pas présenté, mais le renoncement est explicite ;
+- **l'API n'a pas répondu** : 403, coupure, ou 5 s d'expiration.
+
+Le [Diagnostic](diagnostic.md) compte les deux issues sous `debug.sizesResolved` et
+`debug.sizesUnresolved`.
+
+**La description est enregistrée mais inexploitée.** Elle vient du JSON-LD, tronquée à 1
+200 caractères, et n'est ni affichée ni cherchable. C'est une capture d'avance : la
+relire plus tard supposerait de recharger toutes les fiches.
+
+**Le vendeur n'est connu que par son identifiant et son pseudo.** Ni note, ni nombre
+d'évaluations, ni ancienneté — ces blocs de la fiche n'ont pas d'ancre relevée. Le
+pseudo est affiché à côté du prix, cliquable vers le dressing ; les articles enregistrés
+avant la 0.3 n'en ont pas, et rien ne le recalcule.
+
 ## Catégorie
 
 **Une carte de catalogue ne porte pas sa catégorie.** Ni dans le DOM, ni dans le flux

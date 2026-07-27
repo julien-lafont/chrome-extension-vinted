@@ -14,6 +14,8 @@
  * après le build.
  */
 
+import { ICON_PATHS } from './shared/icons.ts';
+
 const VINTED_ORIGIN = 'https://www.vinted.fr/*';
 
 export function buildManifest(version: string): chrome.runtime.ManifestV3 {
@@ -36,6 +38,10 @@ export function buildManifest(version: string): chrome.runtime.ManifestV3 {
 
     action: {
       default_title: 'Ouvrir Vinted Smart Bookmarks',
+      // Déclarée explicitement, et pas seulement via `icons` : le service worker
+      // remplace l'icône le temps de la pulsation puis rend celle-ci
+      // (`saved-pulse.ts`), donc elle doit être une valeur nommée quelque part.
+      default_icon: { ...ICON_PATHS },
     },
 
     side_panel: {
@@ -59,10 +65,6 @@ export function buildManifest(version: string): chrome.runtime.ManifestV3 {
       },
     ],
 
-    icons: {
-      16: 'icons/icon16.png',
-      48: 'icons/icon48.png',
-      128: 'icons/icon128.png',
-    },
+    icons: { ...ICON_PATHS },
   };
 }

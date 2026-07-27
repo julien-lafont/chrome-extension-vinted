@@ -425,6 +425,16 @@ baisse de prix est très souvent suivie d'une vente dans les heures qui suivent.
 
 ### M. Identifiants exacts de marque et de taille · effort M — **prérequis de B**
 
+> **Fait le 27/07/2026, en entier.** `brandId` est extrait de la fiche (maillon
+> `/brand/…` du fil d'Ariane, flux d'hydratation en repli). `sizeId` n'est écrit dans
+> aucune page, mais se **résout** depuis le libellé et la catégorie via
+> `/api/v2/size_groups` — la première conclusion de cet audit, « hors d'atteinte »,
+> était trop rapide. Les trois critères de la recherche similaire (catégorie, marque,
+> taille) sont donc exacts, et `search_text` n'est plus qu'un repli. **B n'a plus de
+> prérequis manquant** : son échantillon peut être propre sur les trois axes. Capturés
+> au passage : vendeur (affiché à côté du prix) et description (enregistrée,
+> inexploitée).
+
 **Le besoin.** Aujourd'hui la recherche similaire cherche « Nike 42 » en texte libre.
 Résultat : des pointures mélangées à des tours de taille, et des marques homonymes.
 `docs/vinted-dom.md` le dit sans détour : « les filtres n'acceptent que des identifiants

@@ -7,6 +7,7 @@ src/manifest.ts                    manifeste typé ; version lue depuis package.
 icons/                             icônes générées (marque-page sur fond teal)
 src/
   background/service-worker.ts     ouvre le panneau au clic sur l'icône
+  background/saved-pulse.ts        badge + pulsation de l'icône à l'enregistrement
   content/content.ts               extraction + injection des boutons
   content/content.css              styles des boutons injectés
   content/offer-agent.ts           pilotage de la modale d'offre Vinted
@@ -20,8 +21,11 @@ src/
   shared/types.ts                  modèle de données (SavedItem, Collection, Settings)
   shared/messages.ts               protocole panneau ↔ content scripts
   shared/photos.ts                 photos d'une fiche, du flux RSC ou du DOM
+  shared/hydration.ts              identifiants lus dans le flux RSC (repli du DOM)
+  shared/size-ids.ts               libellé de taille → identifiant de catalogue
   shared/price.ts                  lecture d'un prix affiché par Vinted
   shared/errors.ts                 message lisible d'une erreur attrapée
+  shared/icons.ts                  chemins des icônes (manifeste + setIcon)
 scripts/build-config.ts            entrées, formats et options esbuild
 scripts/build.ts                   produit dist/, valide le manifeste
 tests/                             voir testing.md
@@ -102,6 +106,13 @@ savedItems = {
         dominantColor: '#cd98c1',
       },
     ],
+    // Les quatre champs suivants ne viennent que de la fiche : absents tant
+    // qu'elle n'a pas été lue, et sur les articles enregistrés avant la 0.3.
+    brandId: '53', // seul filtre de marque accepté par le catalogue
+    sizeId: '208', // résolu après coup, voir shared/size-ids.ts
+    sellerId: '3165663897', // le profil est /member/{sellerId}
+    sellerName: 'emma07297',
+    description: 'Veste Nike Dri-FIT…', // tronquée, encore inexploitée
     savedAt: 1753500000000,
     source: 'catalog', // ou "detail"
     collectionId: 'col-lq3x8f-4b2', // absent = collection par défaut
@@ -141,9 +152,11 @@ clic sur une carte
   → fetch(fiche) en tâche de fond, une à la fois
   → extractFromDetail(doc) — la même fonction que sur la page ouverte
   → fusion, pending retiré                                     (le panneau complète)
+  → résolution de l'identifiant de taille, écriture séparée    (search.ts s'en sert)
 
 clic sur une fiche
-  → extractFromDetail(document), écriture unique, pas de requête
+  → extractFromDetail(document), écriture unique — la fiche est déjà là
+  → résolution de l'identifiant de taille, écriture séparée
 ```
 
 `fetch()` plutôt qu'un onglet : même origine, cookies inclus, aucun JS de Vinted
@@ -213,9 +226,38 @@ l'onglet Vinted, comme avant. C'est un choix, pas un oubli — la seule façon d
 compléter serait de refetcher chaque fiche, pour un gain que le prochain enregistrement
 apporte de lui-même.
 
+## Identifiants : deux sources par champ
+
+Marque et vendeur se lisent deux fois, et l'ordre n'est pas indifférent :
+
+| Champ      | Source préférée                           | Repli               |
+| ---------- | ----------------------------------------- | ------------------- |
+| `brandId`  | maillon `/brand/53-nike` du fil d'Ariane  | `brand_id` du flux  |
+| `sellerId` | lien `/member/{id}` de la cellule vendeur | `seller_id` du flux |
+
+Le DOM rendu côté serveur passe devant parce qu'il est du **contenu** pour Vinted — le
+fil d'Ariane sert son référencement — là où le flux d'hydratation n'est qu'un détail
+d'implémentation de son rendu React, libre de changer sans préavis. Le repli existe
+quand même : un article sans marque référencée n'a pas de maillon de marque.
+
+Les trois clés du flux (`favourite_count`, `brand_id`, `seller_id`) sont lues en **une
+seule passe** par `shared/hydration.ts` : une fiche porte ~240 scripts, dont un de 1 Mo.
+
+`brandId` n'est pas un confort d'affichage : c'est le seul filtre de marque que le
+catalogue accepte (`brand_ids[]` ignore un nom), donc la condition pour que « rechercher
+un article similaire » cherche vraiment la même marque.
+
+`sizeId` n'a lui aucune source dans la page : il est **résolu**, depuis le libellé et la
+catégorie, par la seule requête d'API du projet — et dans une écriture séparée, après
+celle de la fiche. L'article n'attend pas ce champ pour être complet : `pending` est
+déjà levé, la taille exacte le rejoint. Voir `shared/size-ids.ts` et `completeSizeId()`.
+
+Comme la galerie, ces champs ne sont pas rétro-remplis : un article enregistré avant la
+0.3 les acquiert au prochain enregistrement, pas avant.
+
 ## Quota
 
 `chrome.storage.local` offre 10 Mo. On ne stocke que des URLs d'images, jamais les
 images elles-mêmes : plusieurs milliers d'articles tiennent sans problème. La galerie
 ajoute environ 1,3 Ko par article de trois photos — 5 Ko pour un article qui en porte
-douze.
+douze, et la description jusqu'à 1,2 Ko de plus (elle est tronquée pour cette raison).

@@ -78,7 +78,14 @@
         <div class="item-body">
           <a class="item-title" target="_blank" rel="noreferrer"></a>
           <p class="item-meta"></p>
-          <p class="item-price"></p>
+
+          <!-- Le vendeur partage la ligne du prix : c'est avec lui qu'on
+               négocie, et son dressing est le premier endroit où chercher une
+               seconde pièce. Masqué tant que la fiche n'a pas été lue. -->
+          <p class="item-price">
+            <span class="item-price-value"></span>
+            <a class="item-seller" target="_blank" rel="noreferrer" hidden></a>
+          </p>
         </div>
 
         <div class="item-actions">

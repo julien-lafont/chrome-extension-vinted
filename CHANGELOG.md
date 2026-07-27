@@ -7,6 +7,28 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Identifiant de marque extrait de la fiche** (`brandId`), lu dans le maillon du fil
+  d'Ariane que la catégorie écarte, avec le flux d'hydratation en repli. « Rechercher
+  un article similaire » et « explorer la marque » filtrent enfin sur la vraie marque :
+  le catalogue Vinted n'accepte pas de nom dans `brand_ids[]`, et les deux fonctions
+  attendaient depuis toujours un champ que personne ne renseignait.
+- **Identifiant de taille résolu** (`sizeId`) : aucune page de Vinted ne le porte, il est
+  déduit du libellé et de la catégorie via `/api/v2/size_groups`, dans une écriture
+  séparée qui ne retarde pas l'affichage. La recherche d'articles similaires filtre donc
+  la taille exactement, au lieu de la chercher en texte — « 42 » ne remonte plus une
+  pointure quand on cherchait un tour de taille. La résolution renonce plutôt que de
+  filtrer sur la mauvaise échelle quand le libellé est ambigu.
+- **Vendeur affiché à côté du prix**, cliquable vers son dressing (`sellerId`,
+  `sellerName`).
+- **Description enregistrée** avec l'article (tronquée à 1 200 caractères). Encore
+  inexploitée : la capturer maintenant évite d'avoir à relire toutes les fiches le jour
+  où la recherche s'en servira.
+- `src/shared/size-ids.ts` : résolution d'un libellé de taille en identifiant de
+  catalogue, avec cache par catégorie et repli textuel silencieux.
+- `src/shared/hydration.ts` : lecture des identifiants du flux React Server Components,
+  en une seule passe pour les trois clés (`favourite_count`, `brand_id`, `seller_id`).
+- Le rapport de Diagnostic montre les **deux sources** de chaque identifiant, ce qui dit
+  laquelle a lâché plutôt que de conclure à une donnée absente.
 - Chaîne d'outillage complète : pnpm, build esbuild, ESLint, Prettier, stylelint,
   hooks git (`lint-staged`, `commitlint`) et `pnpm check` comme porte de qualité
   unique, rejouée à l'identique par le CI.

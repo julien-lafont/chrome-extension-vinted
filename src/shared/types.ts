@@ -73,6 +73,43 @@ export type SavedItem = {
   source: ItemSource;
 
   /**
+   * Identifiant Vinted de la marque, en chaîne comme `category.id`.
+   *
+   * C'est **le seul filtre de marque que le catalogue accepte** : `brand_ids[]`
+   * ignore un nom. Il ne vient que de la fiche (fil d'Ariane ou flux
+   * d'hydratation) : `undefined` sur un article dont la fiche n'a jamais été lue,
+   * `null` sur une fiche sans marque référencée. Voir `search.ts`.
+   */
+  brandId?: string | null;
+
+  /**
+   * Identifiant Vinted de la taille, l'autre filtre exact du catalogue
+   * (`size_ids[]`).
+   *
+   * Contrairement à `brandId`, il n'est **écrit dans aucune page** : il est
+   * résolu depuis le libellé et la catégorie, par une requête à l'API du site,
+   * après l'enregistrement — voir `shared/size-ids.ts` et `completeSizeId()`.
+   * Absent quand la catégorie n'est pas exacte, quand le libellé est ambigu, ou
+   * quand l'API n'a pas répondu : la recherche retombe alors sur le texte.
+   */
+  sizeId?: string | null;
+
+  /** Identifiant du vendeur. `sellerUrl` s'en déduit : `/member/{sellerId}`. */
+  sellerId?: string | null;
+  /** Pseudo affiché du vendeur, quand il est lisible sur la fiche. */
+  sellerName?: string | null;
+
+  /**
+   * Description rédigée par le vendeur, tronquée à {@link DESCRIPTION_MAX}.
+   *
+   * Enregistrée mais **encore inexploitée** : c'est là que vivent les mesures
+   * (« épaules 46, longueur 68 »), les défauts et la provenance, que ni les
+   * attributs ni le titre ne portent. La capturer maintenant évite d'avoir à
+   * relire toutes les fiches le jour où la recherche s'en servira.
+   */
+  description?: string | null;
+
+  /**
    * Toutes les photos de la fiche, dans l'ordre de Vinted. Absent tant que la
    * fiche n'a pas été lue — une carte de catalogue n'expose que sa miniature —
    * et absent aussi sur les articles enregistrés avant la 0.3 : la galerie ne
@@ -94,9 +131,15 @@ export type SavedItem = {
    * et la recherche les lisent en repli. Voir `docs/limitations.md`.
    */
   likes?: number;
-  brandId?: string | number;
-  sizeId?: string | number;
 };
+
+/**
+ * Longueur retenue d'une description. Les plus bavardes dépassent 2 000
+ * caractères ; `chrome.storage.local` plafonne à 10 Mo, et une liste de plusieurs
+ * milliers d'articles doit y tenir. Le début porte l'essentiel — les mesures et
+ * l'état sont annoncés en tête, jamais après le récit.
+ */
+export const DESCRIPTION_MAX = 1200;
 
 /** Une collection. `order` porte l'ordre personnalisé (des ids d'articles). */
 export type Collection = {

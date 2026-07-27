@@ -14,9 +14,12 @@
  *   les data-testid `item-*` servent de repli.
  */
 import { errorText } from '../shared/errors.ts';
+import { hydrationNumbers } from '../shared/hydration.ts';
 import type { ExtensionMessage } from '../shared/messages.ts';
 import { extractPhotos, photosFromDom, photosFromHydration } from '../shared/photos.ts';
 import { parsePriceString } from '../shared/price.ts';
+import { sizeIdFor } from '../shared/size-ids.ts';
+import { DESCRIPTION_MAX } from '../shared/types.ts';
 import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
 
 (() => {
@@ -34,6 +37,10 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     writes: 0,
     enriched: 0,
     enrichFailed: 0,
+    // Tailles résolues en identifiant de catalogue, et libellés restés sans —
+    // catégorie inexacte, table ambiguë, ou API muette. Voir completeSizeId().
+    sizesResolved: 0,
+    sizesUnresolved: 0,
     lastError: null as string | null,
   };
 
@@ -95,6 +102,26 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
   // ---------------------------------------------------------------------------
 
   const text = (el: Element | null): string => el?.textContent?.trim() ?? '';
+
+  /**
+   * Identifiant Vinted ramené à la chaîne du modèle. Le flux d'hydratation les
+   * donne en nombres, le DOM en chaînes : le storage n'en garde qu'une forme,
+   * celle de `category.id`.
+   */
+  const idOf = (value: number | undefined): string | null =>
+    typeof value === 'number' ? String(value) : null;
+
+  /**
+   * Description ramenée à la longueur que le storage accepte de porter pour des
+   * milliers d'articles. Une valeur vide devient `null` : `mergeDetail()` ignore
+   * les deux, mais `null` dit « lu, rien trouvé » là où `''` se confondrait avec
+   * une description réellement vide.
+   */
+  const truncate = (value: string | undefined): string | null => {
+    const raw = (value ?? '').trim();
+    if (!raw) return null;
+    return raw.length <= DESCRIPTION_MAX ? raw : `${raw.slice(0, DESCRIPTION_MAX).trimEnd()}…`;
+  };
 
   /**
    * Vocabulaire des états Vinted. Sert à reconnaître un état quand rien ne dit
@@ -162,16 +189,18 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
    *
    * @param doc page courante, ou fiche récupérée par fetch
    */
-  function readBreadcrumbCategory(doc: Document): Omit<ItemCategory, 'exact'> | null {
+  function breadcrumbLinks(doc: Document): Element[] {
     const list =
       doc.querySelector('ul.breadcrumbs') ??
       doc.querySelector('a[itemprop="url"][href*="/catalog/"]')?.parentElement;
 
-    const links = list
-      ? [...list.querySelectorAll('a[href*="/catalog/"]')].filter(
-          (a) => !(a.getAttribute('href') ?? '').includes('/brand/')
-        )
-      : [];
+    return list ? [...list.querySelectorAll('a[href*="/catalog/"]')] : [];
+  }
+
+  function readBreadcrumbCategory(doc: Document): Omit<ItemCategory, 'exact'> | null {
+    const links = breadcrumbLinks(doc).filter(
+      (a) => !(a.getAttribute('href') ?? '').includes('/brand/')
+    );
 
     const leaf = links.at(-1);
     if (!leaf) return null;
@@ -204,6 +233,57 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
   function categoryOf(doc: Document, exact: boolean): ItemCategory | null {
     const category = readBreadcrumbCategory(doc);
     return category ? { ...category, exact } : null;
+  }
+
+  /**
+   * Identifiant de marque, lu dans le maillon que la catégorie écarte.
+   *
+   * Le dernier maillon d'une fiche croise catégorie et marque
+   * (« Nike Hauts et t-shirts » → `/catalog/584-tops-and-t-shirts/brand/53-nike`)
+   * : inutilisable comme catégorie, mais c'est **la seule occurrence en clair de
+   * l'identifiant de marque dans le DOM servi**. Le fil est rendu côté serveur et
+   * Vinted a un intérêt SEO à le garder — on le préfère donc au flux
+   * d'hydratation, qui reste en repli dans `extractFromDetail()`.
+   *
+   * Sans cet identifiant, le catalogue ne sait pas filtrer par marque :
+   * `brand_ids[]` n'accepte pas de nom, et la recherche retombait sur du texte
+   * libre. Voir `docs/vinted-dom.md`.
+   *
+   * @returns l'identifiant, ou null si l'article n'a pas de marque référencée
+   */
+  function brandIdFromBreadcrumb(doc: Document): string | null {
+    for (const link of breadcrumbLinks(doc)) {
+      const id = (link.getAttribute('href') ?? '').match(/\/brand\/(\d+)/)?.[1];
+      if (id) return id;
+    }
+    return null;
+  }
+
+  /**
+   * Vendeur de l'article : identifiant et pseudo.
+   *
+   * Deux ancres complémentaires, toutes deux rendues côté serveur :
+   *   <a href="/member/3165663897">…<span data-testid="profile-username">emma07297</span>
+   *
+   * L'identifiant vient du lien plutôt que du `data-testid`, parce que c'est lui
+   * qui porte le nombre ; le pseudo vient du `data-testid`, seul endroit où il
+   * est isolé du reste de la cellule (avatar, note, nombre d'évaluations).
+   *
+   * `/member/signup/...` traîne aussi dans la page (liens d'inscription) : le
+   * motif exige des chiffres, ce qui les écarte sans avoir à les énumérer.
+   */
+  function readSeller(doc: Document): { id: string | null; name: string } {
+    let id: string | null = null;
+
+    for (const link of doc.querySelectorAll('a[href*="/member/"]')) {
+      const found = (link.getAttribute('href') ?? '').match(/\/member\/(\d+)/)?.[1];
+      if (found) {
+        id = found;
+        break;
+      }
+    }
+
+    return { id, name: text(doc.querySelector('[data-testid="profile-username"]')) };
   }
 
   // ---------------------------------------------------------------------------
@@ -370,6 +450,7 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
   type ProductJsonLd = {
     '@type'?: string;
     name?: string;
+    description?: string;
     brand?: { name?: string };
     category?: string;
     image?: string;
@@ -416,38 +497,17 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
   }
 
   /**
-   * Nombre de favoris de la fiche, lu dans le flux React Server Components.
+   * Ce que la fiche ne rend que dans son flux d'hydratation. Trois clés, une
+   * seule passe sur les scripts de la page — voir `shared/hydration.ts`.
    *
-   * Le bouton cœur de la fiche arrive `disabled`, sans compteur ni libellé :
-   * Vinted l'hydrate côté client, et l'enregistrement peut survenir avant. Le
-   * nombre, lui, est présent dès le HTML dans les `self.__next_f.push(...)`, sous
-   *   {"name":"favourite",…,"data":{"item_id":<id>,…,"favourite_count":N,…}}
-   * Les guillemets y sont échappés (\"), d'où les `\\?"` du motif ; `[^}]` borne
-   * la recherche à l'objet courant, pour ne pas rattacher à cet article le
-   * compteur d'un article voisin (« autres articles du membre »).
-   *
-   * Balayer les ~240 scripts d'une fiche coûte 16 ms (mesuré sous jsdom, donc
-   * majoré), quelques fois par article : pas de cache, pour la même raison que
-   * `readBreadcrumbCategory()` — un document fetché et la page courante n'ont pas
-   * le même contenu, et une valeur mémorisée finit toujours par être servie au
-   * mauvais article.
-   *
+   *   favourite_count  le bouton cœur arrive `disabled` et vide : Vinted
+   *                    l'hydrate côté client, et l'enregistrement peut survenir
+   *                    avant ;
+   *   brand_id         repli du fil d'Ariane, qui n'a de maillon de marque que
+   *                    si l'article en a une de référencée ;
+   *   seller_id        repli du lien `/member/{id}`.
    */
-  function favouriteCountFromHydration(doc: Document, id: string): number | null {
-    const pattern = new RegExp(
-      `\\\\?"item_id\\\\?":\\s*${id}\\b[^}]{0,300}?\\\\?"favourite_count\\\\?":\\s*(\\d+)`
-    );
-
-    for (const script of doc.querySelectorAll('script')) {
-      const source = script.textContent;
-      if (!source || source.indexOf('favourite_count') === -1) continue;
-
-      const match = source.match(pattern);
-      if (match?.[1]) return Number.parseInt(match[1], 10);
-    }
-
-    return null;
-  }
+  const HYDRATED_KEYS = ['favourite_count', 'brand_id', 'seller_id'] as const;
 
   /**
    * Extraction complète d'une fiche article — **la seule source de vérité**.
@@ -479,12 +539,26 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     // est vivante depuis longtemps et le bouton porte le compteur.
     const size = detailAttribute(doc, 'size', 'size');
     const condition = detailAttribute(doc, 'status', 'status');
+
+    const hydrated = hydrationNumbers(doc, id, HYDRATED_KEYS);
     const favouriteCount =
       readFavouriteButton(doc, '[data-testid="favourite-button"]') ??
-      favouriteCountFromHydration(doc, id);
+      hydrated.favourite_count ??
+      null;
 
     // Ici le fil d'Ariane décrit l'article lui-même : catégorie exacte.
     const category = categoryOf(doc, true);
+
+    // DOM d'abord, flux en repli : le fil d'Ariane et le lien du vendeur sont
+    // rendus côté serveur et visibles par Vinted comme du contenu, là où le flux
+    // n'est qu'un détail d'implémentation de son rendu React.
+    const brandId = brandIdFromBreadcrumb(doc) ?? idOf(hydrated.brand_id);
+    const seller = readSeller(doc);
+    const sellerId = seller.id ?? idOf(hydrated.seller_id);
+
+    // Le pseudo n'a d'intérêt que s'il dit autre chose que l'identifiant, qui
+    // suffit déjà à construire le lien vers le profil.
+    const sellerName = seller.name && seller.name !== sellerId ? seller.name : null;
 
     // Les deux branches ci-dessous partagent la galerie : le JSON-LD ne porte
     // que la photo principale (une chaîne, pas un tableau, même à trois photos).
@@ -517,6 +591,13 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
           (ld.category ? { id: null, name: ld.category, path: [], url: null, exact: true } : null),
         imageUrl: ld.image || images?.[0]?.url || '',
         images,
+        brandId,
+        sellerId,
+        sellerName,
+        // Le JSON-LD est la seule source de la description : la fiche ne porte
+        // pas d'`itemprop="description"` (vérifié), et le bloc affiché est rendu
+        // par React après hydratation.
+        description: truncate(ld.description),
         source: 'detail',
       };
     }
@@ -538,6 +619,12 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
       category,
       imageUrl: img ? img.src : images?.[0]?.url || '',
       images,
+      brandId,
+      sellerId,
+      sellerName,
+      // Sans JSON-LD, la description n'est nulle part dans le HTML servi : on la
+      // laisse absente plutôt que d'écraser celle d'une lecture précédente.
+      description: null,
       source: 'detail',
     };
   }
@@ -560,8 +647,15 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
    */
   const ENRICH_TIMEOUT_MS = 15000;
 
-  /** Un article dont il reste à lire la fiche. */
-  type EnrichJob = { id: string; url: string };
+  /**
+   * Un complément à apporter à un article déjà enregistré.
+   *
+   * `sizeOnly` distingue les deux provenances : un article venu d'une **carte**
+   * a toute sa fiche à lire, un article enregistré **depuis sa fiche** n'a plus
+   * qu'à faire résoudre sa taille — voir `completeSizeId()`. Les deux passent par
+   * la même file, pour que ces requêtes de fond restent sérialisées entre elles.
+   */
+  type EnrichJob = { id: string; url: string; sizeOnly?: boolean };
 
   /** Articles en attente d'enrichissement, traités un par un. */
   const enrichQueue: EnrichJob[] = [];
@@ -573,9 +667,9 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
    *                     données de sa carte
    *   pending absent  → article complet, ou fiche définitivement illisible
    */
-  function queueEnrich(id: string, url: string): void {
+  function queueEnrich(id: string, url: string, sizeOnly = false): void {
     if (enrichQueue.some((job) => job.id === id)) return;
-    enrichQueue.push({ id, url });
+    enrichQueue.push({ id, url, sizeOnly });
     // Volontairement non attendu : le clic ne doit pas patienter sur la requête.
     if (!enrichRunning) void runEnrichQueue();
   }
@@ -591,11 +685,12 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     let job: EnrichJob | undefined;
     while ((job = enrichQueue.shift())) {
       try {
-        await enrichFromDetail(job.id, job.url);
+        if (!job.sizeOnly) await enrichFromDetail(job.id, job.url);
+        await completeSizeId(job.id);
       } catch (err) {
         debug.lastError = `enrichissement ${job.id} : ${errorText(err)}`;
         debug.enrichFailed += 1;
-        await finishEnrich(job.id, null);
+        if (!job.sizeOnly) await finishEnrich(job.id, null);
       }
     }
 
@@ -646,6 +741,45 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
 
     current[id] = merged;
     await chrome.storage.local.set({ [STORAGE_KEY]: current });
+  }
+
+  /**
+   * Complète un article par l'identifiant de sa taille.
+   *
+   * **Écriture séparée, après celle de la fiche**, et volontairement : la
+   * résolution passe par une requête à l'API du site (voir `shared/size-ids.ts`),
+   * et l'article ne doit pas rester en attente pour un champ qui ne sert qu'à la
+   * recherche d'articles similaires. `pending` est donc déjà levé quand on arrive
+   * ici — le panneau affiche l'article complet, la taille exacte le rejoint.
+   *
+   * Trois cas où l'on ne demande rien :
+   *  - l'article a déjà son identifiant, ou n'a pas de taille (accessoires) ;
+   *  - sa catégorie n'est pas **exacte** : la table des tailles d'un rayon large
+   *    est ambiguë (« M » y vaut vêtement, chapeau ou gant) ;
+   *  - il a disparu du storage pendant la requête.
+   */
+  async function completeSizeId(id: string): Promise<void> {
+    const current = await readItems();
+    const item = current[id];
+
+    if (!item || item.sizeId || !item.size) return;
+    if (!item.category?.exact || !item.category.id) return;
+
+    const sizeId = await sizeIdFor(item.category.id, item.size);
+    if (!sizeId) {
+      debug.sizesUnresolved += 1;
+      return;
+    }
+
+    // Relecture : la requête a laissé le temps à un autre onglet d'écrire, et à
+    // l'utilisateur de retirer l'article.
+    const fresh = await readItems();
+    const target = fresh[id];
+    if (!target) return;
+
+    fresh[id] = { ...target, sizeId };
+    await chrome.storage.local.set({ [STORAGE_KEY]: fresh });
+    debug.sizesResolved += 1;
   }
 
   // ---------------------------------------------------------------------------
@@ -715,7 +849,10 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
         saved = await readItems();
         repaintAll();
 
-        if (fromCard && action === 'added') queueEnrich(item.id, item.url);
+        // Depuis une carte : toute la fiche est à lire, la taille suivra.
+        // Depuis une fiche : tout est déjà là sauf l'identifiant de taille, que
+        // seule l'API du site peut donner — voir completeSizeId().
+        if (action === 'added') queueEnrich(item.id, item.url, !fromCard);
       } catch (err) {
         // Cas classique : extension rechargée sans recharger l'onglet
         // ("Extension context invalidated") — le clic échoue en silence.
@@ -914,6 +1051,7 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     blocsArticles?: string[];
     blockCardsFound?: number;
     photos?: { flux: number; dom: number };
+    identifiants?: Record<string, string | number | null>;
     detailJsonLd?: boolean;
     detailExtraction?: SavedItem | null;
     detailButton?: string;
@@ -988,6 +1126,21 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     report.photos = {
       flux: detailId ? photosFromHydration(document, detailId).length : 0,
       dom: photosFromDom(document).length,
+    };
+
+    // Marque et vendeur ont chacun deux sources : le DOM rendu côté serveur, et
+    // le flux d'hydratation en repli. Les afficher côte à côte dit laquelle des
+    // deux a lâché — un `filDAriane: null` avec un `flux` renseigné signale que
+    // Vinted a retiré le maillon de marque, pas que l'article n'en a pas.
+    const hydrated = detailId ? hydrationNumbers(document, detailId, HYDRATED_KEYS) : {};
+    const seller = readSeller(document);
+    report.identifiants = {
+      marqueFilDAriane: brandIdFromBreadcrumb(document),
+      marqueFlux: hydrated.brand_id ?? null,
+      vendeurLien: seller.id,
+      vendeurFlux: hydrated.seller_id ?? null,
+      vendeurPseudo: seller.name || null,
+      taille: 'non exposée par Vinted — voir docs/limitations.md',
     };
 
     if (btn) {

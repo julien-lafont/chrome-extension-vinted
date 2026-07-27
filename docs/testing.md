@@ -30,6 +30,9 @@ le dossier de tests n'y entre jamais.
 | `similar-search.test.ts` | L'URL de recherche est-elle correctement filtrée ?                                        |
 | `photos.test.ts`         | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?          |
 | `gallery.test.ts`        | La visionneuse montre-t-elle la bonne photo ?                                             |
+| `saved-pulse.test.ts`    | L'icône ne confirme-t-elle _que_ les enregistrements ?                                    |
+| `hydration.test.ts`      | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                  |
+| `size-ids.test.ts`       | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?            |
 
 Les trois dernières suites verrouillent les correctifs décrits dans
 [pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber 6
@@ -51,6 +54,22 @@ similaires, dont les cartes portent un autre préfixe de `data-testid` (voir
 [vinted-dom.md](vinted-dom.md)). Vérifié : neutraliser `blockCards()` fait tomber 4
 tests, faire hériter ces cartes du fil d'Ariane de la fiche en fait tomber 1.
 
+La suite « identifiants et vendeur » d'`extraction.test.ts` couvre la marque, le vendeur
+et la description ; `hydration.test.ts` couvre le flux à part, parce qu'il n'est qu'un
+repli — le DOM répond d'abord. Vérifié, un correctif à la fois :
+
+- retirer la garde `item_id` du motif du flux fait tomber 1 test d'`hydration.test.ts` ;
+- neutraliser la lecture du fil d'Ariane n'en fait tomber qu'**un** — celui du
+  diagnostic, qui compare les deux sources. Les autres passent toujours : c'est le repli
+  du flux qui prend le relais, et c'est exactement ce qu'on attend de lui ;
+- neutraliser les **deux** sources en fait tomber 3. C'est la mesure qui dit que ces
+  tests ne sont pas vides.
+
+`size-ids.test.ts` couvre la seule requête d'API du projet, sur un `fetch` injecté —
+aucun test ne sort sur le réseau. Vérifié : ignorer l'ambiguïté d'un libellé fait tomber
+2 tests (un ici, un dans `extraction.test.ts`), retirer le cache par catégorie en fait
+tomber 2 autres.
+
 `photos.test.ts` et `gallery.test.ts` se partagent la galerie : le premier vérifie ce
 qu'on lit de la page, le second ce qu'on en montre. Vérifié un correctif à la fois :
 supprimer le tri par `image_no`, le contrôle de l'`item_id`, le dédoublonnage du
@@ -64,6 +83,14 @@ navigation. Rien dans l'événement ne dit à quelle photo il se rapporte — sa
 pleine résolution de la précédente s'affiche par-dessus la suivante. jsdom ne va pas sur
 le réseau : le test remplace `Image` par un faux qui laisse décider du moment où chaque
 chargement aboutit, ce qui est précisément ce qu'il faut pour intercaler la navigation.
+
+`saved-pulse.test.ts` ne teste pas l'animation — Node n'a ni `OffscreenCanvas` ni
+`createImageBitmap`, et le module se contente alors du badge — mais **ce qui la
+déclenche**. Un clic sur une carte écrit deux fois dans le storage (article en attente,
+puis fiche complétée) : `countAdded()` ne compte que les identifiants apparus. Les
+horloges du runner de Node servent à traverser la seconde d'affichage du badge sans
+attendre. Vérifié : compter toutes les écritures au lieu des ajouts, ou retirer la garde
+qui empêche une pulsation d'effacer le badge de la suivante, fait tomber 5 tests.
 
 `drag-slots.test.ts` porte sur `pickSlot()`, la fonction pure extraite de `dnd.ts` qui
 décide de l'emplacement visé. Ce calcul dépend de positions à l'écran, que jsdom ne

@@ -57,6 +57,37 @@ ainsi :
 | n      | 0     | normal après une navigation SPA : le carrousel n'est pas encore rendu |
 | 0      | 0     | les deux ancres ont cassé — voir [vinted-dom.md](vinted-dom.md)       |
 
+### `identifiants`
+
+Marque et vendeur ont chacun deux sources : le DOM rendu côté serveur, préféré, et le
+flux d'hydratation en repli. Le bloc les montre **côte à côte**, ce qui dit laquelle des
+deux a lâché plutôt que de conclure à l'absence de donnée.
+
+```json
+{
+  "identifiants": {
+    "marqueFilDAriane": "53",
+    "marqueFlux": 53,
+    "vendeurLien": "3165663897",
+    "vendeurFlux": 3165663897,
+    "vendeurPseudo": "emma07297",
+    "taille": "non exposée par Vinted — voir docs/limitations.md"
+  }
+}
+```
+
+| Ce qu'on lit                          | Interprétation                                                       |
+| ------------------------------------- | -------------------------------------------------------------------- |
+| les deux sources d'accord             | tout va bien                                                         |
+| `marqueFilDAriane: null`, flux fourni | le maillon `/brand/…` a disparu du fil ; le repli tient              |
+| les deux à `null`                     | l'article n'a pas de marque référencée, ou les deux ancres ont sauté |
+| `vendeurPseudo: null`                 | `profile-username` a changé de nom → le panneau n'affiche plus rien  |
+| sources en désaccord                  | le motif du flux attrape un article voisin — à corriger d'urgence    |
+
+`taille` rappelle que Vinted n'écrit ce identifiant nulle part : il est résolu par
+requête, et ce sont `debug.sizesResolved` / `debug.sizesUnresolved` qui disent si cela
+fonctionne.
+
 ## Blocs supplémentaires
 
 Le rapport comprend aussi `offre` (ancres de la modale vues par `offer-agent.ts`, via

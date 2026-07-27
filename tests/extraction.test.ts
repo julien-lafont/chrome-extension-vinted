@@ -9,6 +9,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { ITEM_ID, loadContentScript, meta, settle, settleFetches } from './harness.ts';
+import { DESCRIPTION_MAX } from '../src/shared/types.ts';
 
 // Solde les requêtes de fiche laissées en attente : leur délai d'expiration
 // retiendrait le process de test. Voir settleFetches().
@@ -308,14 +309,22 @@ describe('enrichissement par la fiche', () => {
     assert.equal(page.pendingFetches().length, 1, 'requêtes de fiche en parallèle');
   });
 
-  test('un enregistrement depuis la fiche ne déclenche aucune requête', async () => {
+  test('un enregistrement depuis la fiche ne relit pas la fiche', async () => {
     const page = await loadContentScript('item');
 
     await page.clickMouse(page.detailButton());
 
     assert.equal(page.savedCount(), 1);
     assert.equal(page.saved()[0].pending, undefined, 'attente inutile depuis la fiche');
-    assert.equal(page.pendingFetches().length, 0, 'la fiche est déjà là');
+
+    // Tout est déjà là sauf l'identifiant de taille, que seule l'API du site
+    // donne : c'est la seule requête admise ici, et elle ne remet pas l'article
+    // en attente. Voir completeSizeId().
+    const urls = page.pendingFetches().map((call) => call.url);
+    assert.ok(
+      !urls.some((url) => url.includes('/items/')),
+      `la fiche ne doit pas être relue : ${urls.join(', ')}`
+    );
   });
 });
 
@@ -402,6 +411,170 @@ describe('fiche article', () => {
 
     assert.equal(page.detailButton().dataset.vfSaved, 'true');
     assert.match(page.detailButton().textContent, /Enregistré/);
+  });
+});
+
+describe('identifiants et vendeur', () => {
+  // Sans identifiant de marque, le catalogue ne sait pas filtrer : `brand_ids[]`
+  // n'accepte pas de nom, et la recherche similaire retombait sur du texte libre.
+  // Voir search.ts et docs/vinted-dom.md.
+
+  test('la fiche donne l’identifiant de marque du fil d’Ariane', async () => {
+    const page = await loadContentScript('item');
+    const { detailExtraction } = await page.diagnose();
+
+    assert.match(detailExtraction.brandId, /^\d+$/, 'identifiant de marque absent');
+
+    // Il vient du maillon que la catégorie écarte : les deux doivent donc être
+    // extraits de la même page sans se gêner.
+    assert.ok(detailExtraction.category, 'catégorie perdue au passage');
+    assert.doesNotMatch(detailExtraction.category.url, /\/brand\//);
+  });
+
+  test('le diagnostic montre les deux sources de chaque identifiant', async () => {
+    const page = await loadContentScript('item');
+    const { identifiants } = await page.diagnose();
+
+    // Un fil muet doublé d'un flux fourni dit que Vinted a retiré le maillon de
+    // marque, pas que l'article n'en a pas. Voir docs/diagnostic.md.
+    assert.match(String(identifiants.marqueFilDAriane), /^\d+$/, 'fil d’Ariane muet');
+    assert.match(String(identifiants.marqueFlux), /^\d+$/, 'flux d’hydratation muet');
+    assert.equal(String(identifiants.marqueFilDAriane), String(identifiants.marqueFlux));
+
+    assert.match(String(identifiants.vendeurLien), /^\d+$/, 'lien /member/ introuvable');
+    assert.equal(String(identifiants.vendeurLien), String(identifiants.vendeurFlux));
+  });
+
+  test('la fiche donne le vendeur, identifiant et pseudo', async () => {
+    const page = await loadContentScript('item');
+    const { detailExtraction } = await page.diagnose();
+
+    assert.match(detailExtraction.sellerId, /^\d+$/, 'identifiant de vendeur absent');
+    assert.ok(detailExtraction.sellerName, 'pseudo du vendeur absent');
+    // Le pseudo n'est retenu que s'il dit autre chose que l'identifiant.
+    assert.notEqual(detailExtraction.sellerName, detailExtraction.sellerId);
+  });
+
+  test('la fiche donne la description, tronquée', async () => {
+    const page = await loadContentScript('item');
+    const { detailExtraction } = await page.diagnose();
+
+    // Encore inexploitée à l'affichage : ce qui compte ici est qu'elle atterrisse
+    // dans le storage, et qu'elle n'y prenne pas toute la place.
+    assert.ok(detailExtraction.description, 'description absente du JSON-LD');
+    assert.ok(
+      detailExtraction.description.length <= DESCRIPTION_MAX + 1,
+      `description non tronquée : ${detailExtraction.description.length} caractères`
+    );
+  });
+
+  test('l’enrichissement d’une carte rapporte marque, vendeur et description', async () => {
+    const page = await loadContentScript('catalog');
+
+    await page.clickMouse(page.cardButtons()[0]);
+    await page.respondWithFixture('item');
+
+    // Une carte ne porte rien de tout cela : c'est la fiche lue en tâche de fond
+    // qui rend un article enregistré depuis une recherche aussi complet qu'un
+    // article enregistré depuis sa fiche.
+    const [item] = page.saved();
+    assert.match(item.brandId, /^\d+$/, 'identifiant de marque non rapporté');
+    assert.match(item.sellerId, /^\d+$/, 'vendeur non rapporté');
+    assert.ok(item.sellerName, 'pseudo du vendeur non rapporté');
+    assert.ok(item.description, 'description non rapportée');
+  });
+
+  test('la taille est résolue en identifiant de catalogue', async () => {
+    const page = await loadContentScript('item');
+
+    await page.clickMouse(page.detailButton());
+
+    // La fiche donne le libellé (« M »), jamais l'identifiant : il est demandé à
+    // l'API du site, sur la catégorie exacte de l'article. Voir size-ids.ts.
+    const [call] = page.pendingFetches();
+    assert.match(call?.url ?? '', /size_groups\?catalog_ids=\d+/, 'table des tailles non demandée');
+
+    const label = page.saved()[0].size;
+    await page.respondJson({
+      size_groups: [{ description: 'Tailles hommes', sizes: [{ id: 208, title: label }] }],
+    });
+
+    assert.equal(page.saved()[0].sizeId, '208', 'identifiant de taille non enregistré');
+  });
+
+  test('un article venu d’une carte finit avec sa taille résolue', async () => {
+    const page = await loadContentScript('catalog');
+
+    await page.clickMouse(page.cardButtons()[0]);
+    await page.respondWithFixture('item'); // la fiche donne catégorie et libellé
+
+    const label = page.saved()[0].size;
+    await page.respondJson({
+      size_groups: [{ description: 'Tailles hommes', sizes: [{ id: 208, title: label }] }],
+    });
+
+    const [item] = page.saved();
+    assert.equal(item.sizeId, '208');
+    assert.equal(item.pending, undefined);
+  });
+
+  test('une fiche illisible ne fait pas demander la table des tailles', async () => {
+    const page = await loadContentScript('catalog');
+
+    await page.clickMouse(page.cardButtons()[0]);
+    await page.respond({ ok: false, status: 503, text: () => Promise.resolve('') });
+
+    // Sans fiche, la catégorie reste celle de la page — trop large pour que la
+    // table soit sans ambiguïté. On ne demande rien plutôt que de mal filtrer.
+    const urls = page.pendingFetches().map((call) => call.url);
+    assert.ok(
+      !urls.some((url) => url.includes('size_groups')),
+      `requête inutile : ${urls.join(', ')}`
+    );
+  });
+
+  test('un libellé ambigu dans sa catégorie n’est pas résolu', async () => {
+    const page = await loadContentScript('item');
+
+    await page.clickMouse(page.detailButton());
+    const label = page.saved()[0].size;
+
+    // Deux échelles pour le même libellé : filtrer sur l'une d'elles reviendrait
+    // à chercher des chapeaux. La recherche retombe sur le texte.
+    await page.respondJson({
+      size_groups: [
+        { description: 'Tailles hommes', sizes: [{ id: 208, title: label }] },
+        { description: 'Chapeaux adulte', sizes: [{ id: 1390, title: label }] },
+      ],
+    });
+
+    assert.equal(page.saved()[0].sizeId, undefined, 'identifiant ambigu enregistré');
+  });
+
+  test('une API muette laisse l’article complet, sans identifiant de taille', async () => {
+    const page = await loadContentScript('item');
+
+    await page.clickMouse(page.detailButton());
+    await page.respond({ ok: false, status: 403, json: () => Promise.resolve({}) });
+
+    const [item] = page.saved();
+    assert.equal(item.sizeId, undefined);
+    assert.ok(item.title && item.price && item.size, 'le reste de l’article doit tenir');
+    assert.equal(item.pending, undefined, 'un identifiant de taille ne met rien en attente');
+  });
+
+  test('une carte n’invente ni marque ni vendeur avant la fiche', async () => {
+    const page = await loadContentScript('catalog');
+
+    await page.clickMouse(page.cardButtons()[0]);
+
+    // Une carte de catalogue ne porte aucun de ces identifiants. Les laisser
+    // absents plutôt que vides est ce qui permet à `search.ts` de choisir entre
+    // le filtre exact et le repli textuel — un `brandId: ''` filtrerait sur rien.
+    const [item] = page.saved();
+    assert.equal(item.brandId, undefined, 'marque inventée depuis la carte');
+    assert.equal(item.sellerId, undefined, 'vendeur inventé depuis la carte');
+    assert.equal(item.description, undefined, 'description inventée depuis la carte');
   });
 });
 

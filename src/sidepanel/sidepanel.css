@@ -426,6 +426,30 @@ h1 {
 }
 
 /*
+ * Le vendeur partage la ligne du prix sans en prendre le poids : le prix reste
+ * ce que l'œil accroche en balayant la liste. Le point médian est posé en CSS
+ * plutôt que dans le texte du lien, pour rester hors de la zone cliquable.
+ *
+ * Pas de soulignement, même au survol : sans `href` — vendeur nommé mais non
+ * identifié — l'élément n'est pas cliquable, et le curseur est le seul indice
+ * qui distingue les deux cas sans mentir sur le second.
+ */
+.item-seller {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.item-seller::before {
+  content: '·';
+  margin: 0 4px;
+}
+
+.item-seller[href]:hover,
+.item-seller[href]:focus-visible {
+  color: var(--accent);
+}
+
+/*
  * Article enregistré depuis une carte : sa fiche est en cours de lecture pour
  * le compléter. L'article est déjà affiché et pleinement manipulable — le
  * clignotement ne porte que sur la ligne de métadonnées, celle qui va changer.

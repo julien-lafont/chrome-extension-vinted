@@ -129,8 +129,14 @@ Rendu côté serveur, sur la fiche article **comme** sur les pages catégorie du
 
 Chaque maillon est une URL de catalogue ouvrable telle quelle — c'est ce qui rend la
 catégorie enregistrée réutilisable. **Le dernier maillon croise la marque**
-(`/brand/53-nike`) : on l'écarte, une recherche relancée depuis là serait restreinte à
-cette marque. La catégorie retenue est donc l'avant-dernier.
+(`/brand/53-nike`) : on l'écarte de la catégorie, une recherche relancée depuis là
+serait restreinte à cette marque. La catégorie retenue est donc l'avant-dernier.
+
+Ce maillon écarté n'est pas jeté pour autant : c'est la **seule occurrence en clair de
+l'identifiant de marque dans le DOM servi**, et sans lui le catalogue ne sait pas
+filtrer par marque (`brand_ids[]` n'accepte pas de nom). `brandIdFromBreadcrumb()` en
+tire le `53`, le flux d'hydratation servant de repli quand l'article n'a pas de maillon
+de marque.
 
 Les slugs varient selon la page (`584-hauts-et-t-shirts` sur une fiche,
 `584-tops-and-t-shirts` sur la page catégorie) ; seul l'identifiant numérique compte,
@@ -149,11 +155,73 @@ self.__next_f.push([1,"…{\"name\":\"favourite\",…,\"data\":{\"item_id\":9497
   \"seller_id\":286459945,\"favourite_count\":1,\"is_favourite\":false}…"])
 ```
 
-`favouriteCountFromHydration()` le lit par expression régulière, bornée à l'objet
-courant (`[^}]`) pour ne pas rattacher à l'article le compteur d'une carte « articles
-similaires ». Le bouton hydraté reste prioritaire quand il porte le nombre.
+`hydrationNumbers()` (`src/shared/hydration.ts`) le lit par expression régulière, bornée
+à l'objet courant (`[^}]`) pour ne pas rattacher à l'article le compteur d'une carte «
+articles similaires ». Le bouton hydraté reste prioritaire quand il porte le nombre.
 `refresh-fixtures` conserve le plus petit script portant un compteur chiffré, ce qui
 garde cette voie sous test.
+
+La même fonction sert de repli à deux autres identifiants, dans un bloc voisin du même
+flux — d'où la lecture en **une seule passe** sur les ~240 scripts de la page :
+
+```js
+self.__next_f.push([1,"…{\"name\":\"breadcrumbs\",…,\"data\":{\"item_id\":9497504182,
+  \"brand_id\":53,\"catalog_id\":584,\"breadcrumbs\":[…]}…"])
+```
+
+### Le vendeur : un lien et un pseudo
+
+Deux ancres complémentaires, toutes deux rendues côté serveur :
+
+```html
+<a href="/member/3165663897">
+  … <span data-testid="profile-username">emma07297</span>
+</a>
+```
+
+L'identifiant vient du **lien**, seul à porter le nombre ; le pseudo du `data-testid`,
+seul endroit où il est isolé du reste de la cellule (avatar, note, évaluations). Le
+motif exige des chiffres après `/member/`, ce qui écarte les `/member/signup/…` que la
+page porte aussi. Repli : `seller_id` dans le flux d'hydratation, présent dans les blocs
+`gallery`, `favourite` et `report`.
+
+### La taille en identifiant n'est nulle part dans la page
+
+Le HTML servi ne contient **aucun `size_id`** — ni dans le DOM (`itemprop="size"` ne
+porte que le libellé, « S »), ni dans le flux d'hydratation (vérifié le 27/07/2026 sur
+une fiche complète : la seule occurrence du terme est un nom de feature flag). Ni la
+fiche, ni la carte, ni l'API `catalog/items`, qui n'expose qu'un `size_title`.
+
+Il se **résout** en revanche par la table des tailles de la catégorie, ci-dessous.
+
+### La table des tailles d'une catégorie
+
+Seule requête d'API du projet, et seul endroit où l'identifiant d'une taille se trouve :
+
+```
+GET /api/v2/size_groups?catalog_ids=584
+{ "size_groups": [ { "description": "Tailles hommes",
+                     "sizes": [ { "id": 208, "title": "M" }, … ] } ] }
+```
+
+Trois relevés font tenir `shared/size-ids.ts`, et sont à refaire si la résolution casse
+:
+
+1. **`catalog_ids`, au pluriel.** Au singulier (`catalog_id`), le paramètre est
+   silencieusement ignoré : l'API rend les 51 groupes du site, où « M » vaut aussi bien
+   208 (vêtements homme) que 1390 (chapeaux) ou 1426 (gants). Le pluriel restreint la
+   réponse aux groupes de la catégorie — un seul, le plus souvent.
+2. **Le libellé de la fiche est celui de l'API, au caractère près**, titres composés
+   compris (« S / 36 / 8 »). Vérifié en comparant `itemprop="size"` au `title` de l'API
+   sur deux catégories : aucune normalisation n'est nécessaire, et aucune ne doit être
+   ajoutée sans refaire la comparaison.
+3. **Une catégorie feuille n'a pas de collision** ; une catégorie large en a. D'où les
+   deux conditions de la résolution : `category.exact`, et un libellé qui ne porte qu'un
+   identifiant.
+
+L'API répond **403 sans cookies** : l'appel n'a donc lieu que depuis le content script,
+où il est same-origin. Le filtre correspondant a été vérifié sur le catalogue web —
+`?catalog[]=584&size_ids[]=210` ne rend que des XL.
 
 ### Les photos : trois sources, une seule qui donne la pleine résolution
 
@@ -270,10 +338,16 @@ catégorie seules). Les paramètres utiles, tous vérifiés sur `vinted.fr` :
 | `price_from` / `price_to` | fourchette      | à accompagner de `currency=EUR`           |
 
 **Les filtres n'acceptent que des identifiants numériques.** Passer « Nike » à
-`brand_ids[]` ne filtre rien. Comme les favoris ne stockent que des libellés, marque et
-taille transitent aujourd'hui par `search_text` — c'est approximatif : « 42 » remonte
-aussi bien une pointure qu'un tour de taille. Stocker `brandId` et `sizeId` à
-l'extraction rendrait le filtrage exact ; `search.ts` les utilise déjà s'ils existent.
+`brand_ids[]` ne filtre rien.
+
+| Critère   | Filtrage | D'où vient l'identifiant                           |
+| --------- | -------- | -------------------------------------------------- |
+| Catégorie | exact    | fil d'Ariane (`/catalog/584-…`)                    |
+| Marque    | exact    | maillon de marque du fil, flux en repli            |
+| Taille    | exact    | résolue par `/api/v2/size_groups` — voir plus haut |
+
+`search_text` n'est donc plus qu'un repli : article enregistré avant la 0.3, marque non
+référencée par Vinted, ou taille non résolue (voir [limitations.md](limitations.md)).
 
 ### Identifiants d'état
 

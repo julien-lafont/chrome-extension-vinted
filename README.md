@@ -73,6 +73,15 @@ Chaque photo s'affiche d'abord en 600×800, puis passe en 1200×1600 dès que la
 résolution est chargée. Les articles enregistrés avant la 0.3 n'ont pas de galerie :
 leur miniature ouvre l'onglet Vinted, comme avant. Les réenregistrer la leur donne.
 
+### Le vendeur
+
+Le pseudo du vendeur s'affiche à côté du prix, et mène à son dressing : c'est avec lui
+qu'on négocie, et c'est le premier endroit où chercher une seconde pièce — les frais de
+port se partagent entre plusieurs articles du même vendeur.
+
+Il n'apparaît que sur les articles dont la fiche a été lue depuis la 0.3. Les autres
+gardent leur ligne de prix telle quelle, jusqu'à ce qu'on les réenregistre.
+
 ### Tri et ordre manuel
 
 Six modes : **Personnalisé**, **Date d'ajout**, **Prix**, **État**, **Likes**,
@@ -112,12 +121,13 @@ marque seule plutôt que de risquer une catégorie erronée.
 
 L'icône loupe d'un article ouvre le catalogue Vinted pré-filtré :
 
-| Critère          | Valeur                                                             |
-| ---------------- | ------------------------------------------------------------------ |
-| Marque et taille | celles de l'article                                                |
-| Catégorie        | celle de l'article, si elle est connue avec certitude              |
-| Prix             | de la **moitié** au **double** du prix enregistré (−50 % / +100 %) |
-| État             | Neuf avec étiquette, Neuf sans étiquette, Très bon état            |
+| Critère   | Valeur                                                             |
+| --------- | ------------------------------------------------------------------ |
+| Marque    | celle de l'article, filtrée par identifiant                        |
+| Taille    | celle de l'article, filtrée par identifiant                        |
+| Catégorie | celle de l'article, si elle est connue avec certitude              |
+| Prix      | de la **moitié** au **double** du prix enregistré (−50 % / +100 %) |
+| État      | Neuf avec étiquette, Neuf sans étiquette, Très bon état            |
 
 Les trois états sont **fixes**, quel que soit celui de l'article d'origine : on cherche
 une bonne affaire, pas son équivalent abîmé.
@@ -126,11 +136,14 @@ Les deux bornes s'ajustent séparément dans `src/sidepanel/search.ts` : `PRICE_
 = −50 %) et `PRICE_UP` (1 = +100 %). Elles sont arrondies vers l'extérieur, pour ne pas
 exclure un article situé pile sur la limite.
 
-Marque et taille passent aujourd'hui par la recherche textuelle : Vinted ne filtre que
-par identifiant numérique, et les favoris ne stockent que des libellés. La recherche est
-donc approximative sur ces deux critères — « 42 » remonte aussi bien une pointure qu'un
-tour de taille. La catégorie corrige beaucoup ce flou quand elle est disponible. Voir
-[vinted-dom.md](docs/vinted-dom.md#url-de-recherche-du-catalogue).
+Vinted ne filtre que par identifiant numérique. Marque et catégorie sont lues sur la
+fiche ; la taille, que Vinted n'écrit nulle part, est résolue depuis son libellé juste
+après l'enregistrement. Les trois critères sont donc exacts — « 42 » ne remonte plus une
+pointure quand on cherchait un tour de taille.
+
+La recherche textuelle subsiste en repli : articles enregistrés avant la 0.3, marque non
+référencée par Vinted, ou taille non résolue. Les réenregistrer suffit à les remettre à
+niveau. Voir [limites connues](docs/limitations.md).
 
 ### Offres au vendeur
 

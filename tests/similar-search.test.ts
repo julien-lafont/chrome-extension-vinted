@@ -104,10 +104,20 @@ describe('recherche d articles similaires', () => {
   });
 
   test('les identifiants de marque et de taille priment sur le texte', () => {
-    const { params, text } = parse({ ...ITEM, brandId: 53, sizeId: 208 });
+    const { params, text } = parse({ ...ITEM, brandId: '53', sizeId: '208' });
     assert.equal(params.get('brand_ids[]'), '53');
     assert.equal(params.get('size_ids[]'), '208');
     assert.equal(text, null, 'plus besoin de recherche textuelle');
+  });
+
+  test('la marque exacte sort la marque du texte, la taille y reste', () => {
+    // Le cas courant depuis la 0.3 : `brandId` est extrait de la fiche, `sizeId`
+    // n'existe nulle part chez Vinted. `search_text` ne porte donc plus que la
+    // taille — d'autant moins de bruit qu'avant. Voir docs/limitations.md.
+    const { params, text } = parse({ ...ITEM, brandId: '53' });
+
+    assert.equal(params.get('brand_ids[]'), '53');
+    assert.equal(text, '42', 'la marque ne doit plus polluer la recherche textuelle');
   });
 
   test('la catégorie est utilisée quand elle décrit l article', () => {
@@ -174,7 +184,7 @@ describe('recherche par marque', () => {
   });
 
   test('l identifiant de marque prime sur le texte', () => {
-    const params = parseBrand({ ...ITEM, brandId: 53, category: CATEGORY });
+    const params = parseBrand({ ...ITEM, brandId: '53', category: CATEGORY });
     assert.equal(params.get('brand_ids[]'), '53');
     assert.equal(params.get('search_text'), null);
   });
@@ -193,7 +203,7 @@ describe('recherche par marque', () => {
   });
 
   test('les crochets restent lisibles', () => {
-    const url = brandSearchUrl({ ...ITEM, brandId: 53, category: CATEGORY });
+    const url = brandSearchUrl({ ...ITEM, brandId: '53', category: CATEGORY });
     assert.ok(url, 'un article avec marque doit produire un lien');
     assert.ok(url.includes('catalog[]=584'));
     assert.ok(!url.includes('%5B%5D'));

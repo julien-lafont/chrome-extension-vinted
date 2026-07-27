@@ -248,6 +248,30 @@ function renderEmpty(message: string, hint: string): void {
   listEl.append(div);
 }
 
+/**
+ * Vendeur, sur la ligne du prix, cliquable vers son dressing.
+ *
+ * Le pseudo commande l'affichage, pas l'identifiant : « 286459945 » sur une
+ * ligne d'article n'apprend rien à personne. L'identifiant, lui, ne sert qu'à
+ * construire le lien — un vendeur nommé mais non identifié (fiche partiellement
+ * lue) reste donc affiché, simplement sans lien.
+ *
+ * Les deux champs n'existent que sur les articles dont la fiche a été lue depuis
+ * la 0.3 : rien ne les recalcule, la ligne reste muette pour les autres.
+ */
+function renderSeller(node: ParentNode, item: SavedItem): void {
+  const name = item.sellerName?.trim();
+  if (!name) return;
+
+  const el = within<HTMLAnchorElement>(node, '.item-seller');
+  el.textContent = name;
+  el.hidden = false;
+
+  if (!item.sellerId) return;
+  el.href = `https://www.vinted.fr/member/${item.sellerId}`;
+  el.title = `Voir le dressing de ${name}`;
+}
+
 function renderItem(item: SavedItem): DocumentFragment {
   const node = template.content.cloneNode(true) as DocumentFragment;
   const article = within<HTMLElement>(node, '.item');
@@ -335,7 +359,8 @@ function renderItem(item: SavedItem): DocumentFragment {
     metaEl.append(loader);
   }
 
-  within(node, '.item-price').textContent = item.price || '';
+  within(node, '.item-price-value').textContent = item.price || '';
+  renderSeller(node, item);
 
   within(node, '.item-similar').addEventListener('click', () => {
     void chrome.tabs.create({ url: similarSearchUrl(item), active: true });

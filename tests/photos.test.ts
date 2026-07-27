@@ -72,8 +72,16 @@ describe('flux d’hydratation', () => {
     assert.deepEqual(photosFromHydration(docOf('item-photos'), '1234567890'), []);
   });
 
-  test('lit aussi une fiche à photo unique', () => {
-    assert.equal(photosFromHydration(docOf('item'), ITEM_ID).length, 1);
+  test('lit aussi la fiche ordinaire, quel que soit son nombre de photos', () => {
+    // `item.html` est le premier article du catalogue du jour : son nombre de
+    // photos change à chaque rafraîchissement. Ce qui se vérifie ici est que le
+    // flux est lu sur une fiche que personne n'a choisie pour ses photos — et
+    // qu'il en dit autant que le DOM, seule comparaison stable d'un
+    // rafraîchissement à l'autre.
+    const flux = photosFromHydration(docOf('item'), ITEM_ID);
+
+    assert.ok(flux.length >= 1, 'flux d’hydratation muet sur une fiche ordinaire');
+    assert.equal(flux.length, photosFromDom(docOf('item')).length, 'les deux sources divergent');
   });
 });
 

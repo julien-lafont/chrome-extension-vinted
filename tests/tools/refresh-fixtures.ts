@@ -17,6 +17,7 @@
  * un test rouge avec des fixtures fraîches signale une vraie régression d'ancres.
  */
 import { JSDOM } from 'jsdom';
+import { errorText } from '../../src/shared/errors.ts';
 import { writeFileSync, readFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -44,6 +45,19 @@ const CATEGORY_URL = 'https://www.vinted.fr/catalog/584-hauts-et-t-shirts';
  * arrive, remplacer l'URL par n'importe quelle fiche à trois photos ou plus.
  */
 const PHOTOS_URL = 'https://www.vinted.fr/items/9504133342-sac-a-dos-nike-rose';
+
+/**
+ * Catalogue de secours, où puiser les cas limites que la recherche principale
+ * n'offre pas toujours.
+ *
+ * Les articles sans taille (sacs, accessoires) sont le cas le plus précieux de
+ * l'extraction — c'est là que le sous-titre se réduit à l'état et qu'un parseur
+ * naïf range « Très bon état » dans la taille. Or une recherche « nike » peut
+ * n'en contenir aucun : le stock change tous les jours, et la fixture perdait
+ * alors le cas sans que ce soit une régression de Vinted. Une recherche de sacs
+ * en fournit à tous les coups.
+ */
+const SPARE_URL = 'https://www.vinted.fr/catalog?search_text=sac+a+main';
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -79,36 +93,59 @@ const cardLabel = (card: Element): string =>
  * Vinted omet la taille sur les accessoires (sacs, porte-clés) et la marque sur
  * certains articles. Ce sont les seules cartes qui exercent les replis
  * d'extraction, et les prendre dans l'ordre de la page ne les inclut que par
- * chance : on complète l'échantillon d'un exemplaire de chaque cas s'il en
- * existe un dans la page.
+ * chance : on complète l'échantillon d'un exemplaire de chaque cas.
+ *
+ * On le cherche d'abord dans la page principale, puis dans le catalogue de
+ * secours — voir SPARE_URL. Sans lui, une journée sans accessoire chez « nike »
+ * suffisait à retirer le cas de la fixture, et le test correspondant échouait
+ * sur un échantillon appauvri plutôt que sur une régression.
+ *
+ * @param spare cartes d'une seconde recherche, où puiser ce qui manque
  */
-function pickCards(cards: Element[]): Element[] {
+function pickCards(cards: Element[], spare: Element[] = []): Element[] {
   const picked = cards.slice(0, CARDS_KEPT);
 
+  // Le second cas exige une taille : c'est ce qui le rend probant. Une carte
+  // sans marque *ni* taille — un sac du catalogue de secours — ne dirait pas si
+  // le titre a été coupé au bon attribut, puisqu'il n'en resterait qu'un.
   const cases: ((label: string) => boolean)[] = [
     (label) => Boolean(label) && !/taille\s*:/i.test(label),
-    (label) => Boolean(label) && !/marque\s*:/i.test(label),
+    (label) => Boolean(label) && !/marque\s*:/i.test(label) && /taille\s*:/i.test(label),
   ];
 
   for (const matches of cases) {
     if (picked.some((card) => matches(cardLabel(card)))) continue;
-    const found = cards.find((card) => matches(cardLabel(card)) && !picked.includes(card));
+
+    const found = [...cards, ...spare].find(
+      (card) => matches(cardLabel(card)) && !picked.includes(card)
+    );
     if (found) picked.push(found);
   }
 
   return picked;
 }
 
+/** Cartes produit d'une page de catalogue, dans l'ordre de la page. */
+function cardsOf(html: string): Element[] {
+  return [...new JSDOM(html).window.document.querySelectorAll('[data-testid="grid-item"]')];
+}
+
 /**
  * @param title titre du document produit
  * @param keep nombre de cartes ; par défaut l'échantillon complet
+ * @param spareHtml catalogue de secours, où puiser les cas limites manquants
  */
-function buildCatalogFixture(html: string, title = 'Fixture catalogue Vinted', keep = 0) {
+function buildCatalogFixture(
+  html: string,
+  title = 'Fixture catalogue Vinted',
+  keep = 0,
+  spareHtml = ''
+) {
   const doc = new JSDOM(html).window.document;
   const all = [...doc.querySelectorAll('[data-testid="grid-item"]')];
   if (!all.length) throw new Error('aucune carte [data-testid="grid-item"] trouvée');
 
-  const cards = keep ? all.slice(0, keep) : pickCards(all);
+  const cards = keep ? all.slice(0, keep) : pickCards(all, spareHtml ? cardsOf(spareHtml) : []);
   const parts = cards.map((card) => card.outerHTML);
 
   // Sur une page catégorie seulement : c'est de ce fil que les cartes tirent
@@ -144,11 +181,22 @@ function buildItemFixture(html: string, title = 'Fixture fiche article Vinted') 
     '[data-testid="item-attributes-status"]',
     '[data-testid="item-attributes-brand-menu-button"]',
     '[data-testid="favourite-button"]',
-    'ul.breadcrumbs', // le fil d'Ariane porte la catégorie de l'article
+    // Le fil d'Ariane porte deux choses : la catégorie de l'article, et
+    // l'identifiant de sa marque dans le maillon final (`/brand/53-nike`).
+    'ul.breadcrumbs',
   ]) {
     const el = doc.querySelector(sel);
     if (el) parts.push(el.outerHTML);
   }
+
+  // La cellule du vendeur, prise depuis son pseudo : c'est le lien qui l'englobe
+  // qui porte l'identifiant (`/member/3165663897`), et les deux se lisent
+  // ensemble. La cellule embarque l'avatar — quelques centaines d'octets, et du
+  // markup authentique de plus.
+  const seller = doc
+    .querySelector('[data-testid="profile-username"]')
+    ?.closest('a[href*="/member/"]');
+  if (seller) parts.push(seller.outerHTML);
 
   // Toutes les photos, pas seulement la première : c'est le repli de la galerie
   // quand le flux d'hydratation ne donne rien.
@@ -171,8 +219,9 @@ function buildItemFixture(html: string, title = 'Fixture fiche article Vinted') 
   // galerie) : le garder deux fois ne ferait qu'alourdir la fixture.
   const favourites = favouriteHydrationScript(doc);
   const gallery = galleryHydrationScript(doc);
+  const identifiers = identifiersHydrationScript(doc);
 
-  for (const script of new Set([favourites, gallery])) {
+  for (const script of new Set([favourites, gallery, identifiers])) {
     if (script) parts.push(script);
   }
 
@@ -197,6 +246,23 @@ function buildItemFixture(html: string, title = 'Fixture fiche article Vinted') 
  */
 function favouriteHydrationScript(doc: Document): string | null {
   const CHIFFRE = /favourite_count\\*":\s*\d/;
+
+  const candidates = [...doc.querySelectorAll('script')]
+    .filter((s) => CHIFFRE.test(s.textContent ?? ''))
+    .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0));
+
+  return candidates[0]?.outerHTML ?? null;
+}
+
+/**
+ * Le bloc `breadcrumbs` du flux, qui porte `brand_id` et `catalog_id`.
+ *
+ * C'est le repli de l'identifiant de marque quand le fil d'Ariane n'a pas de
+ * maillon de marque, et la seconde source de `seller_id`. Sans lui dans la
+ * fixture, ce repli ne serait jamais exercé — et casserait en silence.
+ */
+function identifiersHydrationScript(doc: Document): string | null {
+  const CHIFFRE = /brand_id\\*":\s*\d/;
 
   const candidates = [...doc.querySelectorAll('script')]
     .filter((s) => CHIFFRE.test(s.textContent ?? ''))
@@ -241,7 +307,15 @@ const categoryHtml = categoryArg
 
 mkdirSync(FIXTURES, { recursive: true });
 
-const catalog = buildCatalogFixture(catalogHtml);
+// Le catalogue de secours ne sert qu'à compléter l'échantillon : son échec ne
+// doit pas emporter le rafraîchissement, la fixture sera simplement plus pauvre
+// — et c'est le test du cas manquant qui le dira.
+const spareHtml = await fetchPage(SPARE_URL).catch((err: unknown) => {
+  console.warn(`\n⚠  catalogue de secours indisponible (${errorText(err)}).\n`);
+  return '';
+});
+
+const catalog = buildCatalogFixture(catalogHtml, 'Fixture catalogue Vinted', 0, spareHtml);
 writeFileSync(join(FIXTURES, 'catalog.html'), catalog.html);
 
 const item = buildItemFixture(itemHtml);

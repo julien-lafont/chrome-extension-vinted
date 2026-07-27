@@ -1,5 +1,6 @@
 /**
- * Faux `chrome.storage.local`, en mémoire, avec la sérialisation du vrai.
+ * Faux `chrome.storage.local` (en mémoire, avec la sérialisation du vrai) et
+ * faux `chrome.action`, qui se contente d'enregistrer ce qu'on lui demande.
  *
  * Le `structuredClone` n'est pas décoratif : le vrai storage sérialise, donc
  * l'objet relu n'est jamais celui qui a été écrit. Sans clonage, un test peut
@@ -19,11 +20,25 @@ type ChangeListener = (
   areaName: string
 ) => void;
 
+/**
+ * Journal de ce qui a été posé sur l'icône de la barre d'outils. Les tableaux
+ * gardent l'ordre : c'est lui qui dit si l'icône a bien été rendue *après*
+ * l'animation, et non l'inverse.
+ */
+export type FakeAction = {
+  /** Textes de badge successifs ; `''` efface. */
+  badgeText: string[];
+  badgeColors: string[];
+  /** `'path'` = icône d'origine, `'imageData'` = image d'animation. */
+  icons: ('path' | 'imageData')[];
+};
+
 export type FakeChrome = {
   /** Contenu courant du storage, observable directement par le test. */
   db: FakeStore;
   /** Déclenche les écoutes `onChanged`, comme Chrome le fait pour l'onglet écrivain. */
   listeners: ChangeListener[];
+  action: FakeAction;
 };
 
 /**
@@ -59,6 +74,26 @@ export function installFakeChrome(
     },
   };
 
+  const recorded: FakeAction = { badgeText: [], badgeColors: [], icons: [] };
+
+  const action = {
+    setBadgeText({ text }: { text: string }) {
+      recorded.badgeText.push(text);
+      return Promise.resolve();
+    },
+    setBadgeBackgroundColor({ color }: { color: string }) {
+      recorded.badgeColors.push(color);
+      return Promise.resolve();
+    },
+    setBadgeTextColor() {
+      return Promise.resolve();
+    },
+    setIcon(details: { path?: unknown; imageData?: unknown }) {
+      recorded.icons.push(details.imageData ? 'imageData' : 'path');
+      return Promise.resolve();
+    },
+  };
+
   const fake = {
     storage: {
       local,
@@ -68,13 +103,17 @@ export function installFakeChrome(
         },
       },
     },
+    action,
+    runtime: {
+      getURL: (path: string) => `chrome-extension://test/${path}`,
+    },
   };
 
   // Seul point de contact avec `@types/chrome` : le faux ne couvre que la part
   // de l'API que l'extension utilise réellement.
   (globalThis as { chrome?: unknown }).chrome = fake;
 
-  return { db, listeners };
+  return { db, listeners, action: recorded };
 }
 
 /** À appeler entre deux tests : sans ça, l'état fuit d'un cas au suivant. */
