@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Permet de relancer la chaîne à la demande depuis l'onglet Actions.
+  workflow_dispatch:
+
+# Un push qui en remplace un autre annule la course précédente : inutile de
+# payer deux fois la même vérification sur une branche active.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Vérifications
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Lit .nvmrc : la version de CI suit celle du poste de travail.
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Installer les dépendances
+        run: pnpm install --frozen-lockfile
+
+      # Étapes séparées plutôt que `pnpm check` : sur un échec, l'onglet Actions
+      # montre directement laquelle a lâché, sans dérouler le journal.
+      - name: Types
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Formatage
+        run: pnpm format:check
+
+      - name: Tests
+        run: pnpm test
+
+  package:
+    name: Extension empaquetée
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Installer les dépendances
+        run: pnpm install --frozen-lockfile
+
+      - name: Construire et empaqueter
+        run: pnpm package
+
+      # Artefact téléchargeable depuis la page du run : c'est ainsi que
+      # l'extension se partage sans passer par le Chrome Web Store. Le
+      # destinataire décompresse et charge le dossier via chrome://extensions.
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vinted-favoris-${{ github.sha }}
+          path: artifacts/*.zip
+          if-no-files-found: error
+          retention-days: 30

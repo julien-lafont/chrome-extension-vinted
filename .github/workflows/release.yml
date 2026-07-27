@@ -1,0 +1,67 @@
+name: Release
+
+# Déclenché par un tag `vX.Y.Z` — voir « Publier une version » dans le README.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # nécessaire pour créer la Release et y joindre le zip
+
+jobs:
+  release:
+    name: Publier la version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Installer les dépendances
+        run: pnpm install --frozen-lockfile
+
+      # Le tag et package.json doivent s'accorder : la version du manifeste vient
+      # de package.json, or c'est le tag que voient les utilisateurs. Les laisser
+      # diverger produirait une release « v0.3.0 » contenant une extension 0.2.0.
+      - name: Vérifier que le tag correspond à package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Le tag v$TAG ne correspond pas à package.json ($PKG)."
+            echo "Corrigez package.json, ou supprimez puis recréez le tag."
+            exit 1
+          fi
+          echo "Version $PKG confirmée."
+
+      - name: Vérifications complètes
+        run: pnpm check
+
+      - name: Construire et empaqueter
+        run: pnpm package
+
+      - name: Créer la Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true
+          # Pas de publication sur le Chrome Web Store : l'installation se fait à
+          # la main, ces instructions accompagnent donc chaque version.
+          body: |
+            ## Installation
+
+            1. Télécharger le `.zip` ci-dessous et le décompresser
+            2. Ouvrir `chrome://extensions`
+            3. Activer le **Mode développeur** (en haut à droite)
+            4. **Charger l'extension non empaquetée** → sélectionner le dossier décompressé
+
+            Aucune donnée ne quitte le navigateur : tout est stocké en local.
+
+            ---

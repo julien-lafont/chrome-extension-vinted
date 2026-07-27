@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # Le projet n'a aucune dépendance d'exécution : tout ce qui suit est de
+  # l'outillage. Un regroupement mensuel évite une PR par paquet.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      outillage:
+        patterns: ['*']
+        update-types: [minor, patch]
+    ignore:
+      # typescript-eslint ne supporte pas encore TypeScript 7 : une montée
+      # automatique casserait `pnpm lint`. Voir la note du README.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
