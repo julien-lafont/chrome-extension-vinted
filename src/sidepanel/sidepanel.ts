@@ -225,8 +225,7 @@ function renderSortbar(visibleItems: SavedItem[]): void {
     hintEl.hidden = false;
     hintEl.textContent = notice;
   } else if (isCustom) {
-    hintEl.hidden = false;
-    hintEl.textContent = "Glisse la poignée à gauche d'un article pour le déplacer.";
+    hintEl.hidden = true;
   } else if (missing) {
     hintEl.hidden = false;
     hintEl.textContent = `${missing} article${missing > 1 ? 's' : ''} sans donnée pour ce tri, placé${

@@ -19,7 +19,7 @@ const VINTED_ORIGIN = 'https://www.vinted.fr/*';
 export function buildManifest(version: string): chrome.runtime.ManifestV3 {
   return {
     manifest_version: 3,
-    name: 'Vinted Favoris',
+    name: 'Vinted Smart Bookmarks',
     version,
     description:
       'Enregistre tes articles Vinted préférés en local et retrouve-les dans un panneau latéral.',
@@ -35,7 +35,7 @@ export function buildManifest(version: string): chrome.runtime.ManifestV3 {
     },
 
     action: {
-      default_title: 'Ouvrir mes favoris Vinted',
+      default_title: 'Ouvrir Vinted Smart Bookmarks',
     },
 
     side_panel: {
