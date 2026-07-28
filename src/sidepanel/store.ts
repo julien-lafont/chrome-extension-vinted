@@ -247,3 +247,19 @@ export async function removeItem(itemId: string): Promise<void> {
     return next;
   });
 }
+
+/**
+ * Remet un article retiré par erreur. Utilisé par le « Annuler » du panneau
+ * (fenêtre de quelques secondes après un retrait) : on réécrit l'article tel
+ * quel et on le replace en tête de l'ordre personnalisé de sa collection.
+ */
+export async function restoreItem(item: SavedItem): Promise<void> {
+  await update(ITEMS_KEY, (current) => ({ ...current, [item.id]: item }));
+
+  const collectionId = item.collectionId || DEFAULT_COLLECTION_ID;
+  await update(COLLECTIONS_KEY, (current) => {
+    const collection = current[collectionId];
+    if (!collection || (collection.order || []).includes(item.id)) return current;
+    return { ...current, [collectionId]: { ...collection, order: [item.id, ...collection.order] } };
+  });
+}

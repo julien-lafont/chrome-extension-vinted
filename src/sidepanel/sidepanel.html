@@ -42,6 +42,27 @@
           </svg>
           <span id="sort-dir-label">Croissant</span>
         </button>
+        <button
+          type="button"
+          id="open-all"
+          class="dir"
+          title="Ouvrir tous les articles affichés dans de nouveaux onglets"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+            <path d="M15 3h6v6" />
+            <path d="M10 14L21 3" />
+          </svg>
+          <span id="open-all-label">Tout ouvrir</span>
+        </button>
       </div>
 
       <p class="hint" id="hint" hidden></p>
@@ -84,6 +105,7 @@
                seconde pièce. Masqué tant que la fiche n'a pas été lue. -->
           <p class="item-price">
             <span class="item-price-value"></span>
+            <span class="item-seller-dot" aria-hidden="true" hidden>·</span>
             <a class="item-seller" target="_blank" rel="noreferrer" hidden></a>
           </p>
         </div>

@@ -21,6 +21,7 @@ import {
   moveItemToCollection,
   commitCustomOrder,
   removeItem,
+  restoreItem,
 } from './store.ts';
 
 import {
@@ -66,6 +67,8 @@ const collectionsEl = required('collections');
 const sortEl = required<HTMLSelectElement>('sort');
 const sortDirEl = required<HTMLButtonElement>('sort-dir');
 const sortDirLabelEl = required('sort-dir-label');
+const openAllEl = required<HTMLButtonElement>('open-all');
+const openAllLabelEl = required('open-all-label');
 const hintEl = required('hint');
 const menuEl = required('move-menu');
 const template = required<HTMLTemplateElement>('item-template');
@@ -80,16 +83,26 @@ let filter = '';
 let dragging = false;
 let renderPending = false;
 
+/** Articles actuellement affichés (collection active + filtre de recherche), pour « Tout ouvrir ». */
+let visibleOrdered: SavedItem[] = [];
+
 /** Message transitoire affiché sous la barre de tri, prioritaire sur les indices. */
 let notice = '';
+let noticeUndo: (() => void) | undefined;
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** Affiche un message le temps d'être lu. Survit aux rendus, contrairement au DOM. */
-function flash(message: string): void {
+/**
+ * Affiche un message le temps d'être lu. Survit aux rendus, contrairement au DOM.
+ * Un `undo` optionnel fait apparaître un bouton « Annuler » à côté du message,
+ * actif pendant la même fenêtre de 5 s.
+ */
+function flash(message: string, undo?: () => void): void {
   notice = message;
+  noticeUndo = undo;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     notice = '';
+    noticeUndo = undefined;
     render();
   }, 5000);
   render();
@@ -224,7 +237,23 @@ function renderSortbar(visibleItems: SavedItem[]): void {
   const missing = countMissing(visibleItems, settings.sortMode);
   if (notice) {
     hintEl.hidden = false;
-    hintEl.textContent = notice;
+    hintEl.textContent = '';
+    hintEl.append(document.createTextNode(notice));
+    if (noticeUndo) {
+      hintEl.append(document.createTextNode(' · '));
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'link';
+      undo.textContent = 'Annuler';
+      undo.addEventListener('click', () => {
+        noticeUndo?.();
+        clearTimeout(noticeTimer);
+        notice = '';
+        noticeUndo = undefined;
+        render();
+      });
+      hintEl.append(undo);
+    }
   } else if (isCustom) {
     hintEl.hidden = true;
   } else if (missing) {
@@ -262,6 +291,9 @@ function renderEmpty(message: string, hint: string): void {
 function renderSeller(node: ParentNode, item: SavedItem): void {
   const name = item.sellerName?.trim();
   if (!name) return;
+
+  const dot = within<HTMLElement>(node, '.item-seller-dot');
+  dot.hidden = false;
 
   const el = within<HTMLAnchorElement>(node, '.item-seller');
   el.textContent = name;
@@ -373,6 +405,7 @@ function renderItem(item: SavedItem): DocumentFragment {
   });
   within(node, '.item-remove').addEventListener('click', () => {
     void removeItem(item.id);
+    flash('Article retiré', () => void restoreItem(item));
   });
 
   return node;
@@ -398,6 +431,10 @@ function render(): void {
     settings.sortDir,
     activeCollection()?.order ?? []
   );
+
+  visibleOrdered = ordered;
+  openAllEl.disabled = ordered.length === 0;
+  openAllLabelEl.textContent = ordered.length ? `Tout ouvrir (${ordered.length})` : 'Tout ouvrir';
 
   listEl.textContent = '';
 
@@ -956,6 +993,19 @@ sortDirEl.addEventListener('click', () => {
     settings = next;
     render();
   });
+});
+
+/**
+ * Ouvre dans de nouveaux onglets tous les articles actuellement affichés (collection
+ * active + filtre de recherche) : le geste naturel du chineur qui veut comparer ses
+ * candidats côte à côte. Confirmation au-delà d'un seuil pour éviter d'ouvrir une
+ * grosse collection entière par erreur.
+ */
+openAllEl.addEventListener('click', () => {
+  const toOpen = visibleOrdered;
+  if (!toOpen.length) return;
+  if (toOpen.length > 12 && !confirm(`Ouvrir ${toOpen.length} onglets ?`)) return;
+  for (const item of toOpen) void chrome.tabs.create({ url: item.url, active: false });
 });
 
 required('export').addEventListener('click', exportJson);

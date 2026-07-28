@@ -41,6 +41,9 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     // catégorie inexacte, table ambiguë, ou API muette. Voir completeSizeId().
     sizesResolved: 0,
     sizesUnresolved: 0,
+    // Ajouts depuis une carte annulés parce que la fiche s'avère vendue —
+    // voir enrichFromDetail() / discardSoldItem().
+    soldBlocked: 0,
     lastError: null as string | null,
   };
 
@@ -284,6 +287,19 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     }
 
     return { id, name: text(doc.querySelector('[data-testid="profile-username"]')) };
+  }
+
+  /**
+   * Un article vendu ne doit pas pouvoir être ajouté aux favoris.
+   *
+   * Vinted affiche alors une cellule dédiée en tête de la sidebar :
+   *   <div data-testid="item-status"><div data-testid="item-status--content">Vendu</div></div>
+   * Absente sur un article encore en vente. Elle existe aussi pour "Réservé" —
+   * un état qui reste normalement enregistrable, d'où le texte exact plutôt que
+   * la seule présence de la cellule.
+   */
+  function isSoldDetail(doc: Document): boolean {
+    return /^vendu$/i.test(text(doc.querySelector('[data-testid="item-status--content"]')));
   }
 
   // ---------------------------------------------------------------------------
@@ -707,6 +723,16 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
 
       // DOMParser produit un document inerte : ni script exécuté, ni image chargée.
       const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+
+      // La carte ne sait pas qu'un article est vendu — Vinted continue de le
+      // lister. L'ajout provisoire posé au clic est donc annulé plutôt que
+      // complété, dès que la fiche le révèle.
+      if (isSoldDetail(doc)) {
+        await discardSoldItem(id);
+        debug.soldBlocked += 1;
+        return;
+      }
+
       const detail = extractFromDetail(doc, url);
       if (!detail) throw new Error('extraction vide');
 
@@ -740,6 +766,23 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     delete merged.pending;
 
     current[id] = merged;
+    await chrome.storage.local.set({ [STORAGE_KEY]: current });
+  }
+
+  /**
+   * Retire un ajout provisoire dont la fiche révèle qu'il est vendu.
+   *
+   * Le garde-fou `pending` évite de supprimer autre chose qu'un ajout tout
+   * juste posé depuis une carte : un article déjà complet ne passe jamais par
+   * ici (`enrichFromDetail()` n'est mis en file que pour un ajout fraîchement
+   * fait — voir `activate()`), et s'il a disparu du storage entretemps
+   * (retiré par l'utilisateur), il n'y a rien à faire.
+   */
+  async function discardSoldItem(id: string): Promise<void> {
+    const current = await readItems();
+    if (!current[id]?.pending) return;
+
+    delete current[id];
     await chrome.storage.local.set({ [STORAGE_KEY]: current });
   }
 
@@ -792,22 +835,39 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
 
   function paintButton(btn: HTMLButtonElement, isSaved: boolean): void {
+    const isDetail = btn.classList.contains('vf-detail-btn');
+    // Un article vendu ne peut pas être ajouté — mais s'il l'était déjà avant
+    // de se vendre, il reste consultable et retirable normalement, voir
+    // docs/limitations.md.
+    const blocked = isDetail && btn.dataset.vfSold === 'true' && !isSaved;
+
     // Idempotent, et c'est vital : réécrire innerHTML déclenche le MutationObserver,
     // qui relance un scan, qui repeint… Sans cette garde, la page part en boucle
     // à chaque frame et le bouton devient incliquable (ses enfants sont détruits
     // entre le mousedown et le mouseup, donc aucun événement "click" n'est émis).
-    if (btn.dataset.vfPainted === '1' && btn.dataset.vfSaved === String(isSaved)) return;
+    if (
+      btn.dataset.vfPainted === '1' &&
+      btn.dataset.vfSaved === String(isSaved) &&
+      btn.dataset.vfBlocked === String(blocked)
+    )
+      return;
 
-    const isDetail = btn.classList.contains('vf-detail-btn');
     btn.dataset.vfSaved = String(isSaved);
+    btn.dataset.vfBlocked = String(blocked);
     btn.dataset.vfPainted = '1';
+    btn.disabled = blocked;
     btn.setAttribute('aria-pressed', String(isSaved));
 
     if (isDetail) {
-      btn.innerHTML =
-        (isSaved ? ICON_FILLED : ICON_OUTLINE) +
-        `<span>${isSaved ? 'Enregistré' : 'Enregistrer'}</span>`;
-      btn.title = isSaved ? 'Retirer de mes favoris' : 'Enregistrer dans mes favoris';
+      if (blocked) {
+        btn.innerHTML = `${ICON_OUTLINE}<span>Article vendu</span>`;
+        btn.title = "Cet article est vendu : impossible de l'enregistrer.";
+      } else {
+        btn.innerHTML =
+          (isSaved ? ICON_FILLED : ICON_OUTLINE) +
+          `<span>${isSaved ? 'Enregistré' : 'Enregistrer'}</span>`;
+        btn.title = isSaved ? 'Retirer de mes favoris' : 'Enregistrer dans mes favoris';
+      }
     } else {
       btn.innerHTML = isSaved ? ICON_FILLED : ICON_OUTLINE;
       btn.title = isSaved
@@ -828,6 +888,12 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
       // sans ça, le clic navigue vers l'article.
       event.preventDefault();
       event.stopPropagation();
+
+      // `disabled` supprime "click", pas "pointerdown" — c'est justement ce
+      // dernier qu'on écoute (règle du survol/clic, voir CLAUDE.md). Sans ce
+      // garde, le bouton "Article vendu" restait activable à la souris.
+      if (btn.disabled) return;
+
       debug.clicks += 1;
 
       try {
@@ -925,10 +991,13 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     const item = extractFromDetail();
     if (!item) return;
 
+    const sold = String(isSoldDetail(document));
+
     // Navigation SPA vers un autre article : on recible le bouton existant.
     if (existing) {
       existing.dataset.vfId = item.id;
       existing.dataset.vfPath = location.pathname;
+      existing.dataset.vfSold = sold;
       existing.dataset.vfPainted = ''; // force le repeint pour le nouvel article
       paintButton(existing, Boolean(saved[item.id]));
       return;
@@ -937,6 +1006,7 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
     const btn = createButton('vf-detail-btn', extractFromDetail);
     btn.dataset.vfId = item.id;
     btn.dataset.vfPath = location.pathname;
+    btn.dataset.vfSold = sold;
     paintButton(btn, Boolean(saved[item.id]));
     document.body.appendChild(btn);
   }

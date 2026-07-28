@@ -90,6 +90,12 @@ présents, tient dans une centaine de lignes de `store.ts`.
 
 ### 3.2 La suppression est instantanée et définitive
 
+> **Fait le 27/07/2026.** `flash()` accepte désormais un callback d'annulation, rendu
+> comme bouton `.link` à côté du message. Le clic sur `.item-remove` capture l'article
+> avant `removeItem()` et arme l'annulation ; `restoreItem()` (`store.ts`) réécrit
+> l'article et le replace en tête de l'ordre personnalisé de sa collection. Fenêtre de 5
+> s, comme prévu ci-dessous.
+
 `removeItem()` est câblé directement sur le clic (`sidepanel.ts:327`). Pas de
 confirmation, pas d'annulation. Sur un panneau étroit où les icônes sont serrées, la
 mauvaise ligne part sans recours — et avec elle une pièce qu'on cherchait depuis six
@@ -97,6 +103,8 @@ mois. Un `flash()` « Article retiré · Annuler » de 5 s existe déjà comme m
 (`sidepanel.ts:87`) : il ne reste qu'à y accrocher une restauration.
 
 ### 3.3 La catégorie est extraite avec grand soin… et jamais montrée
+
+> Ignoré
 
 Tout le travail d'`ItemCategory` (fil d'Ariane, `exact`, chemin complet) sert
 **uniquement** à construire des URLs de recherche. La ligne de méta (`renderItem()`,
@@ -106,6 +114,8 @@ ne peut pas être scindée entre bombers et parkas alors que la donnée est là,
 dans le storage.
 
 ### 3.4 La recherche du panneau est trop pauvre pour une grosse liste
+
+> Ignoré
 
 `matches()` (`sidepanel.ts:116`) fait un `includes` sur cinq champs concaténés, **et
 seulement dans la collection active**. Passé 200 articles, il manque : la recherche
@@ -123,6 +133,13 @@ contenant 40.
   fait un par un, au menu contextuel.
 - **Pas de « tout ouvrir »** sur une collection filtrée, alors que le geste naturel du
   chineur est de comparer 8 candidats dans 8 onglets.
+
+  > **Fait le 28/07/2026.** Bouton « Tout ouvrir » dans la barre de tri
+  > (`sidepanel.html`), à côté de l'inversion de sens. Il ouvre dans des onglets
+  > d'arrière-plan exactement les articles affichés — collection active, filtre de
+  > recherche appliqué — via `chrome.tabs.create`, avec confirmation au-delà de 12
+  > onglets pour ne pas vider une grosse collection par erreur.
+
 - **Aucune note personnelle.** « vu en vrai, tissu décevant », « attendre la baisse », «
   mesure épaules à demander » n'ont nulle part où aller.
 
@@ -461,6 +478,49 @@ s'énerve, et parfois le réenregistre. Une empreinte simple (titre normalisé +
 taille + prix, ou URL d'image identique) permet de signaler « déjà dans ta liste sous un
 autre id » et de dédoublonner à l'affichage.
 
+### O. Recherche inversée par image · effort S
+
+**Le besoin.** Deux des trois questions du chineur (§1) débordent du seul Vinted : «
+est-ce que c'est une affaire ? » se limite aujourd'hui au marché Vinted (B), et « est-ce
+que c'est authentique ? » n'a aucune réponse outillée. Une pièce correctement
+photographiée se retrouve souvent ailleurs : même annonce republiée sur Leboncoin ou
+Vestiaire Collective, photo de catalogue officiel de la marque, ou revente identique
+chez un autre vendeur — trois indices que l'œil seul met du temps à rassembler.
+
+**La proposition.** Un bouton **« Chercher ailleurs »** sur un article : ouvre une
+recherche par image inversée Google Lens sur sa photo principale
+(`https://lens.google.com/uploadbyurl?url=<photo>`), et, en repli pour les articles sans
+photo exploitable, une recherche texte Google combinant marque + titre + taille tirés de
+la description. L'extension se contente de construire l'URL et d'ouvrir l'onglet ;
+l'interprétation des résultats reste à l'utilisateur, exactement comme
+`similarSearchUrl` et `brandSearchUrl` aujourd'hui pour Vinted.
+
+**Faisabilité.** Très bonne, et immédiate : les photos de la fiche (`item.images`,
+capturées en `ItemPhoto[]`) portent déjà des URLs publiques hébergées par le CDN Vinted,
+utilisables telles quelles en paramètre `url=` d'un lien Google Lens — aucune extraction
+nouvelle, aucun appel réseau depuis l'extension elle-même. Le même schéma que
+`search.ts` (une fonction pure qui construit une URL, un bouton qui ouvre
+`chrome.tabs.create`) suffit.
+
+**Pièges.**
+
+- **Ce n'est pas le scoring IA écarté en §6.** L'extension ne prononce aucun verdict sur
+  l'authenticité ; elle ouvre une recherche que l'utilisateur lit lui-même. La
+  distinction doit rester nette dans l'implémentation : pas d'interprétation automatique
+  des résultats, un simple raccourci de navigation, à l'initiative explicite d'un clic.
+- **Nuance à assumer sur « rien ne sort du navigateur ».** Le §2 vante l'absence de tout
+  serveur tiers ; ouvrir un lien Google Lens envoie l'URL de la photo — donc son contenu
+  — à Google. Ce n'est pas un renoncement au principe : aucune donnée n'est stockée ni
+  transmise à l'insu de l'utilisateur, le clic est explicite et ponctuel, au même titre
+  que `similarSearchUrl` qui interroge déjà Vinted à la demande — mais ça mérite d'être
+  dit, pas glissé sous le tapis.
+- **URLs signées.** Les photos Vinted portent un paramètre `?s=…` lié à l'URL exacte
+  (`docs/vinted-dom.md`) : vérifier que Google Lens accède bien à l'image telle quelle
+  plutôt que d'exiger une réécriture, ce qui casserait le lien.
+- Sans photo exploitable (article enregistré avant capture des photos, ou `images`
+  absent), replier proprement sur la recherche texte plutôt que de désactiver le bouton
+  sans explication.
+
 ## 5. Améliorations des fonctionnalités existantes
 
 ### 5.1 Capture (content script)
@@ -590,7 +650,8 @@ forte. `D` (masquer vus / vendeurs / mots exclus), `A` (suivi de prix et disponi
 
 **Jalon 3 — décider mieux (≈ 2-3 semaines).** `B` (prix de référence, une fois M livré),
 `H` (suivi des offres, une fois les ancres confirmées), `E` (signal vendeur), `F` (coût
-total), `K` (vue comparaison).
+total), `K` (vue comparaison), `O` (recherche inversée par image — indépendant du reste,
+à caser dès que l'effort libère un créneau).
 
 **Ensuite, selon l'appétit.** `C` (veille sur recherches sauvegardées) et `J`
 (multi-domaine) sont les deux gros morceaux, et les deux qui feraient passer l'outil de

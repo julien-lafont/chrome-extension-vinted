@@ -103,6 +103,20 @@
   background: #125c33;
 }
 
+/* Article vendu, jamais enregistré : le bouton natif `disabled` coupe déjà le
+   clic et le clavier, ce style ne fait que le dire à l'œil. */
+.vf-detail-btn:disabled {
+  background: #9ca3af;
+  color: #fff;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.vf-detail-btn:disabled:hover {
+  background: #9ca3af;
+  box-shadow: none;
+}
+
 /* Le clic doit toujours cibler le <button>, jamais le <svg> ou le <span>. */
 .vf-detail-btn > * {
   pointer-events: none;
