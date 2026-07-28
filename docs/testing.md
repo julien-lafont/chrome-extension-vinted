@@ -5,7 +5,7 @@ pnpm install
 ppnpm test
 ```
 
-193 tests, ~28 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
+216 tests, ~30 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
 pour qu'il lise directement les sources TypeScript. Node 22 minimum.
 
 **Les tests chargent le bundle esbuild, pas le fichier source.** `content.ts` importe du
@@ -19,24 +19,25 @@ le dossier de tests n'y entre jamais.
 
 ## Ce qui est couvert
 
-| Fichier                  | Question posée                                                                            |
-| ------------------------ | ----------------------------------------------------------------------------------------- |
-| `extraction.test.ts`     | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ? |
-| `click-gestures.test.ts` | Les boutons répondent-ils à tous les gestes ?                                             |
-| `repaint-loop.test.ts`   | Le content script se repeint-il en boucle ?                                               |
-| `drag-slots.test.ts`     | Où se pose une carte qu'on fait glisser ?                                                 |
-| `offer-flow.test.ts`     | L'offre et le message partent-ils, et que dit-on si un seul passe ?                       |
-| `collections.test.ts`    | Une collection ne se supprime-t-elle que vide ?                                           |
-| `similar-search.test.ts` | L'URL de recherche est-elle correctement filtrée ?                                        |
-| `photos.test.ts`         | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?          |
-| `gallery.test.ts`        | La visionneuse montre-t-elle la bonne photo ?                                             |
-| `saved-pulse.test.ts`    | L'icône ne confirme-t-elle _que_ les enregistrements ?                                    |
-| `hydration.test.ts`      | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                  |
-| `size-ids.test.ts`       | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?            |
-| `watch.test.ts`          | La logique pure du suivi de prix (historique, verdicts, débit) est-elle correcte ?        |
-| `content-watch.test.ts`  | Le cycle marque-t-il « vendu » sans supprimer, et laisse-t-il un id divergent intact ?    |
-| `watch-lease.test.ts`    | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                 |
-| `watch-render.test.ts`   | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?       |
+| Fichier                     | Question posée                                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `extraction.test.ts`        | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ? |
+| `click-gestures.test.ts`    | Les boutons répondent-ils à tous les gestes ?                                             |
+| `repaint-loop.test.ts`      | Le content script se repeint-il en boucle ?                                               |
+| `drag-slots.test.ts`        | Où se pose une carte qu'on fait glisser ?                                                 |
+| `offer-flow.test.ts`        | L'offre et le message partent-ils, et que dit-on si un seul passe ?                       |
+| `collections.test.ts`       | Une collection ne se supprime-t-elle que vide ?                                           |
+| `similar-search.test.ts`    | L'URL de recherche est-elle correctement filtrée ?                                        |
+| `photos.test.ts`            | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?          |
+| `gallery.test.ts`           | La visionneuse montre-t-elle la bonne photo ?                                             |
+| `saved-pulse.test.ts`       | L'icône ne confirme-t-elle _que_ les enregistrements ?                                    |
+| `hydration.test.ts`         | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                  |
+| `size-ids.test.ts`          | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?            |
+| `watch.test.ts`             | La logique pure du suivi de prix (historique, verdicts, débit) est-elle correcte ?        |
+| `content-watch.test.ts`     | Le cycle marque-t-il « vendu » sans supprimer, et laisse-t-il un id divergent intact ?    |
+| `watch-lease.test.ts`       | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                 |
+| `watch-render.test.ts`      | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?       |
+| `collection-picker.test.ts` | L'appui long range-t-il sans jamais perdre l'article qu'il vient de capturer ?            |
 
 Les trois dernières suites verrouillent les correctifs décrits dans
 [pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber 6
@@ -120,12 +121,15 @@ assert.equal(page.savedCount(), 1);
 
 Helpers de geste, tous attendables (l'écriture en storage est asynchrone) :
 
-| Helper           | Simule                                                           |
-| ---------------- | ---------------------------------------------------------------- |
-| `clickMouse(el)` | geste souris complet — `pointerdown` + `click` avec `detail: 1`  |
-| `pressOnly(el)`  | appui dont le navigateur a **supprimé** le `click`               |
-| `pressKey(el)`   | activation clavier — `click` seul, `detail: 0`                   |
-| `watchChurn(el)` | compte les remplacements d'enfants, révèle une boucle de repeint |
+| Helper             | Simule                                                                       |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `clickMouse(el)`   | geste souris complet — `pointerdown` + `click` avec `detail: 1`              |
+| `pressOnly(el)`    | appui dont le navigateur a **supprimé** le `click`                           |
+| `pressKey(el)`     | activation clavier — `click` seul, `detail: 0`                               |
+| `pressLong(el)`    | appui maintenu au-delà du seuil, puis relâché — ouvre le choix de collection |
+| `pressAndDrag(el)` | appui qui glisse avant le seuil : un scroll, pas un appui long               |
+| `altClick(el)`     | `Alt`+clic — même menu, sans l'attente                                       |
+| `watchChurn(el)`   | compte les remplacements d'enfants, révèle une boucle de repeint             |
 
 **Le stub `chrome.storage.onChanged` notifie l'onglet qui vient d'écrire**, comme le
 vrai Chrome. Ce détail n'est pas cosmétique : une version antérieure le stubbait en
@@ -170,6 +174,7 @@ Cinq fixtures, extraites de vraies pages Vinted :
 | `category.html` (2 cartes, 13 Ko) | `/catalog/584-hauts-et-t-shirts` | la catégorie héritée du fil d'Ariane de la page                    |
 | `item-photos.html` (18 Ko)        | une fiche à trois photos         | la galerie : ordre, pleine résolution, dédoublonnage               |
 | `sold.html`                       | une fiche **vendue**             | `isSoldDetail()`, et le repli sans JSON-LD (absent une fois vendu) |
+| `home.html` (4 cartes, 23 Ko)     | la page d'accueil                | les cartes `feed-item`, dont le testid ne porte pas d'identifiant  |
 
 Les pages brutes pèsent 8 Mo et 2 Mo, presque entièrement du bundle Next.js : on ne
 garde que le markup réellement lu par le content script. Le markup conservé est

@@ -163,22 +163,23 @@ même contenu en fichier.
 
 ## Table de lecture
 
-| Symptôme                                                         | Interprétation                                                                       |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `cardsFound: 0` sur une recherche                                | Vinted a changé ses `data-testid` → [vinted-dom.md](vinted-dom.md)                   |
-| `cardsFound > cardsParsed`                                       | Des cartes ont une structure inattendue                                              |
-| `cardsParsed > cardButtons`                                      | L'injection échoue — conteneur d'image introuvable                                   |
-| `blockCardsFound: 0` alors que le dressing du membre est visible | Le préfixe de testid des cartes de bloc a changé → [vinted-dom.md](vinted-dom.md)    |
-| `blocsArticles: []` sur une fiche                                | Le conteneur `item-page-{plugin}-plugin` a changé de nom                             |
-| `missing.title > 0`                                              | Le format du libellé d'accessibilité a changé                                        |
-| `detailButton: "ABSENT"`                                         | `extractFromDetail()` renvoie `null` — voir `detailExtraction`                       |
-| `detailJsonLd: false`                                            | Le JSON-LD a disparu, on est retombé sur les replis                                  |
-| `clickablePoints` < `9/9`                                        | Un élément Vinted recouvre le bouton → voir `BLOQUÉ_PAR`                             |
-| `debug.clicks` reste à 0 après un clic                           | Le clic n'atteint pas le bouton → [pitfalls.md](pitfalls.md)                         |
-| `debug.clicks > debug.writes`                                    | Le clic arrive mais l'écriture échoue → voir `lastError`                             |
-| `debug.enrichFailed` grimpe                                      | Vinted refuse la lecture des fiches → les articles restent aux données de leur carte |
-| `enAttenteDeFiche` ne redescend pas                              | Requêtes bloquées ou très lentes ; l'article reste utilisable                        |
-| `lastError: "Extension context invalidated"`                     | Extension rechargée sans recharger l'onglet — Cmd+R sur Vinted                       |
+| Symptôme                                                         | Interprétation                                                                         |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `cardsFound: 0` sur une recherche                                | Vinted a changé ses `data-testid` → [vinted-dom.md](vinted-dom.md)                     |
+| `cardsFound > cardsParsed`                                       | Des cartes ont une structure inattendue                                                |
+| `cardsParsed > cardButtons`                                      | L'injection échoue — conteneur d'image introuvable                                     |
+| `blockCardsFound: 0` alors que le dressing du membre est visible | Le préfixe de testid des cartes de bloc a changé → [vinted-dom.md](vinted-dom.md)      |
+| `blocsArticles: []` sur une fiche                                | Le conteneur `item-page-{plugin}-plugin` a changé de nom                               |
+| `missing.title > 0`                                              | Le format du libellé d'accessibilité a changé                                          |
+| `detailButton: "ABSENT"`                                         | `extractFromDetail()` renvoie `null` — voir `detailExtraction`                         |
+| `detailJsonLd: false`                                            | Le JSON-LD a disparu, on est retombé sur les replis                                    |
+| `clickablePoints` < `9/9`                                        | Un élément Vinted recouvre le bouton → voir `BLOQUÉ_PAR`                               |
+| `debug.clicks` reste à 0 après un clic                           | Le clic n'atteint pas le bouton → [pitfalls.md](pitfalls.md)                           |
+| `debug.clicks > debug.writes`                                    | Le clic arrive mais l'écriture échoue → voir `lastError`                               |
+| `debug.longPress` reste à 0 après un appui long                  | Le geste est avalé avant le seuil (glissement, `pointerup` précoce), pas un menu cassé |
+| `debug.enrichFailed` grimpe                                      | Vinted refuse la lecture des fiches → les articles restent aux données de leur carte   |
+| `enAttenteDeFiche` ne redescend pas                              | Requêtes bloquées ou très lentes ; l'article reste utilisable                          |
+| `lastError: "Extension context invalidated"`                     | Extension rechargée sans recharger l'onglet — Cmd+R sur Vinted                         |
 
 ## Étendre le rapport
 

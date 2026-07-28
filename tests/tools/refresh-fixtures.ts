@@ -27,6 +27,16 @@ const FIXTURES = join(HERE, '..', 'fixtures');
 
 const CATALOG_URL = 'https://www.vinted.fr/catalog?search_text=nike';
 
+/**
+ * La page d'accueil, dont le fil est le premier écran d'une session de chine.
+ *
+ * Ses cartes ont le markup du catalogue mais un `data-testid` **fixe**
+ * (`feed-item`, sans identifiant) : c'est le seul endroit du site où l'ID doit
+ * être lu dans l'URL du lien overlay. Sans cette fixture, rien ne le vérifie —
+ * et l'extension y est restée inerte sans que personne le remarque.
+ */
+const HOME_URL = 'https://www.vinted.fr/';
+
 // Une recherche par mots-clés n'a pas de fil d'Ariane, une page catégorie si :
 // c'est là que les cartes reçoivent une catégorie. Les deux fixtures couvrent
 // donc les deux moitiés de `categoryOf()`.
@@ -322,7 +332,7 @@ function firstItemUrl(html: string): string {
   return link.href.split('?')[0] ?? link.href;
 }
 
-const [catalogArg, itemArg, categoryArg, photosArg, soldArg] = process.argv.slice(2);
+const [catalogArg, itemArg, categoryArg, photosArg, soldArg, homeArg] = process.argv.slice(2);
 
 const catalogHtml = catalogArg ? readFileSync(catalogArg, 'utf8') : await fetchPage(CATALOG_URL);
 const itemUrl = firstItemUrl(catalogHtml);
@@ -392,6 +402,15 @@ try {
   );
 }
 
+// Page d'accueil. Quatre cartes suffisent : cette fixture n'est là que pour le
+// `data-testid` sans identifiant, pas pour les cas limites de l'extraction.
+const homeHtml = homeArg ? readFileSync(homeArg, 'utf8') : await fetchPage(HOME_URL);
+const home = buildCatalogFixture(homeHtml, "Fixture page d'accueil Vinted", 4);
+if (!home.html.includes('data-testid="feed-item"')) {
+  throw new Error("aucune carte `feed-item` sur la page d'accueil — le testid a changé");
+}
+writeFileSync(join(FIXTURES, 'home.html'), home.html);
+
 // L'URL de la fiche est nécessaire aux tests : l'ID de l'article s'y trouve.
 writeFileSync(
   join(FIXTURES, 'meta.json'),
@@ -402,6 +421,7 @@ writeFileSync(
       categoryUrl: CATEGORY_URL,
       photosUrl: PHOTOS_URL,
       soldUrl: SOLD_URL,
+      homeUrl: HOME_URL,
       cards: catalog.count,
       refreshedAt: new Date().toISOString(),
     },
@@ -417,6 +437,7 @@ const photoCount = (built: { photos: number; copies: number; gallery: boolean })
 console.log(`catalog.html   ${catalog.count} cartes  ${kb(catalog.html)}`);
 console.log(`item.html      ${item.count} blocs   ${kb(item.html)}  ${photoCount(item)}`);
 console.log(`category.html  ${category.count} cartes  ${kb(category.html)}`);
+console.log(`home.html      ${home.count} cartes  ${kb(home.html)}`);
 if (photos) console.log(`item-photos.html  ${photos.count} blocs   ${photoCount(photos)}`);
 if (sold) console.log(`sold.html      ${sold.count} blocs   ${kb(sold.html)}`);
 console.log(`meta.json      ${itemUrl}`);

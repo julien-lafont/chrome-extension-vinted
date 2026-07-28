@@ -3,21 +3,47 @@
  *
  * Trois clés dans chrome.storage.local :
  *   savedItems  { [id]: item }                        écrit aussi par le content script
- *   collections { [id]: { id, name, createdAt, order } }  order = ordre personnalisé (ids)
+ *   collections { [id]: { id, name, createdAt, order } }  écrit aussi par le content script
  *   settings    { activeCollectionId, sortMode, sortDir, offer }
  *
  * Un article appartient à une collection via `item.collectionId`. Le content
- * script ne renseigne pas ce champ : un article sans collection connue retombe
- * donc sur la collection par défaut, sans migration nécessaire.
+ * script ne renseigne ce champ qu'à la capture avec choix de collection (appui
+ * long) : un article sans collection connue retombe sur la collection par
+ * défaut, sans migration nécessaire.
+ *
+ * Ce qui touche à la clé `collections` vit dans `shared/collections.ts` depuis
+ * que le content script y écrit lui aussi, et n'est que réexporté ici — le
+ * panneau continue de tout importer depuis ce fichier.
  */
 
+import {
+  ARCHIVE_COLLECTION_ID,
+  COLLECTIONS_KEY,
+  DEFAULT_COLLECTION_ID,
+  ITEMS_KEY,
+  assignCollection,
+  collectionOf,
+  createCollection,
+  makeArchiveCollection,
+  makeDefaultCollection,
+  sortCollections,
+} from '../shared/collections.ts';
 import type { Collection, CollectionMap, ItemMap, SavedItem, Settings } from '../shared/types.ts';
 
-export const ITEMS_KEY = 'savedItems';
-export const COLLECTIONS_KEY = 'collections';
+export {
+  ARCHIVE_COLLECTION_ID,
+  COLLECTIONS_KEY,
+  DEFAULT_COLLECTION_ID,
+  ITEMS_KEY,
+  collectionOf,
+  createCollection,
+  sortCollections,
+};
+
 export const SETTINGS_KEY = 'settings';
 
-export const DEFAULT_COLLECTION_ID = 'default';
+/** Le rangement d'un article est le même geste depuis le panneau et depuis une carte. */
+export const moveItemToCollection = assignCollection;
 
 const DEFAULT_SETTINGS: Settings = {
   activeCollectionId: DEFAULT_COLLECTION_ID,
@@ -26,27 +52,6 @@ const DEFAULT_SETTINGS: Settings = {
   offer: { discount: 15, autoMessage: true },
   hideSold: false,
 };
-
-/** Créée à la demande au premier archivage (§6.5), jamais à l'avance. */
-export const ARCHIVE_COLLECTION_ID = 'archives';
-
-function makeArchiveCollection(): Collection {
-  return { id: ARCHIVE_COLLECTION_ID, name: 'Archives', createdAt: Date.now(), order: [] };
-}
-
-function makeDefaultCollection(): Collection {
-  return {
-    id: DEFAULT_COLLECTION_ID,
-    name: 'Mes favoris',
-    createdAt: 0, // toujours en tête de la liste des collections
-    order: [],
-  };
-}
-
-/** Identifiant court, lisible dans le storage : "col-lq3x8f-4b2". */
-function newId(): string {
-  return `col-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
-}
 
 /**
  * `chrome.storage.local.get` renvoie un objet indexé non typé. Toutes les
@@ -95,19 +100,6 @@ export async function readAll(): Promise<Snapshot> {
   };
 }
 
-/** Collections triées : la collection par défaut d'abord, puis par date de création. */
-export function sortCollections(collections: CollectionMap): Collection[] {
-  return Object.values(collections).sort(
-    (a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.name.localeCompare(b.name, 'fr')
-  );
-}
-
-/** La collection d'un article, en retombant sur la collection par défaut. */
-export function collectionOf(item: SavedItem, collections: CollectionMap): string {
-  const id = item.collectionId;
-  return id && collections[id] ? id : DEFAULT_COLLECTION_ID;
-}
-
 // --- Écriture ----------------------------------------------------------------
 
 /**
@@ -130,12 +122,6 @@ export async function saveSettings(patch: Partial<Settings>): Promise<Settings> 
   const next: Settings = { ...DEFAULT_SETTINGS, ...(res[SETTINGS_KEY] || {}), ...patch };
   await chrome.storage.local.set({ [SETTINGS_KEY]: next });
   return next;
-}
-
-export async function createCollection(name: string): Promise<Collection> {
-  const collection = { id: newId(), name: name.trim(), createdAt: Date.now(), order: [] };
-  await update(COLLECTIONS_KEY, (current) => ({ ...current, [collection.id]: collection }));
-  return collection;
 }
 
 export async function renameCollection(id: string, name: string): Promise<void> {
@@ -177,27 +163,6 @@ export async function deleteCollection(id: string): Promise<DeleteResult> {
   // Aucun article à rapatrier : la collection était vide. Une référence résiduelle
   // vers une collection disparue retomberait de toute façon sur celle par défaut.
   return { ok: true };
-}
-
-export async function moveItemToCollection(itemId: string, collectionId: string): Promise<void> {
-  await update(ITEMS_KEY, (current) => {
-    const item = current[itemId];
-    if (!item) return current;
-    return { ...current, [itemId]: { ...item, collectionId } };
-  });
-
-  // L'article quitte l'ordre personnalisé de son ancienne collection.
-  await update(COLLECTIONS_KEY, (current) => {
-    const next: CollectionMap = {};
-    for (const [id, collection] of Object.entries(current)) {
-      const order = (collection.order || []).filter((entry) => entry !== itemId);
-      next[id] =
-        id === collectionId
-          ? { ...collection, order: [itemId, ...order] }
-          : { ...collection, order };
-    }
-    return next;
-  });
 }
 
 /**

@@ -13,6 +13,7 @@
  *   Détail — un <script type="application/ld+json"> schema.org expose tout ;
  *   les data-testid `item-*` servent de repli.
  */
+import { DEFAULT_COLLECTION_ID } from '../shared/collections.ts';
 import { errorText } from '../shared/errors.ts';
 import { hydrationNumbers } from '../shared/hydration.ts';
 import type { ExtensionMessage, WatchStartResponse } from '../shared/messages.ts';
@@ -32,6 +33,12 @@ import {
 import type { CheckOutcome } from '../shared/watch.ts';
 import { DESCRIPTION_MAX } from '../shared/types.ts';
 import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/types.ts';
+import {
+  OVERLAY_SELECTOR,
+  closePicker,
+  isPickerOpen,
+  openCollectionPicker,
+} from './collection-picker.ts';
 
 (() => {
   'use strict';
@@ -46,6 +53,10 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
   const debug = {
     clicks: 0,
     writes: 0,
+    // Gestes d'appui long (ou Alt+clic) qui ont ouvert le choix de collection.
+    // Un compteur à zéro alors que l'utilisateur dit avoir appuyé longuement
+    // désigne un geste avalé, pas un menu cassé — voir docs/diagnostic.md.
+    longPress: 0,
     enriched: 0,
     enrichFailed: 0,
     // Tailles résolues en identifiant de catalogue, et libellés restés sans —
@@ -72,24 +83,49 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
     saved = await readItems();
   }
 
+  /** Ce qu'un geste d'enregistrement a fait, et ce qu'il a écarté au passage. */
+  type ToggleResult = {
+    action: 'added' | 'removed';
+    /**
+     * L'article tel qu'il était **avant** un retrait : sa collection, sa date
+     * d'ajout, son historique de prix. L'appui long en a besoin pour remettre
+     * intact ce que son propre `pointerdown` vient de retirer.
+     */
+    previous?: SavedItem;
+  };
+
   /**
    * Ajoute ou retire un article. On relit le storage juste avant d'écrire
    * pour ne pas écraser ce qu'un autre onglet Vinted aurait enregistré.
-   *
-   * @returns ce que le clic a fait
    */
-  async function toggleItem(item: SavedItem): Promise<'added' | 'removed'> {
+  async function toggleItem(item: SavedItem): Promise<ToggleResult> {
     const current = await readItems();
+    const previous = current[item.id];
 
-    if (current[item.id]) {
+    if (previous) {
       delete current[item.id];
       await chrome.storage.local.set({ [STORAGE_KEY]: current });
-      return 'removed';
+      return { action: 'removed', previous };
     }
 
     current[item.id] = { ...item, savedAt: Date.now() };
     await chrome.storage.local.set({ [STORAGE_KEY]: current });
-    return 'added';
+    return { action: 'added' };
+  }
+
+  /**
+   * Réécrit un article tel qu'il était, sans toucher au reste du storage.
+   *
+   * Sert à l'appui long, qui doit défaire le retrait déclenché par son propre
+   * `pointerdown` — voir `pickCollectionAfter()`. Ne recrée rien si un autre
+   * onglet a réenregistré l'article entre-temps.
+   */
+  async function restoreItem(item: SavedItem): Promise<void> {
+    const current = await readItems();
+    if (current[item.id]) return;
+
+    current[item.id] = item;
+    await chrome.storage.local.set({ [STORAGE_KEY]: current });
   }
 
   /**
@@ -398,14 +434,35 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
    * (`{plugin}-plugin-empty-state`, `{plugin}-items`) ne matche pas, et la carte
    * est ignorée plutôt qu'extraite à vide.
    */
-  function cardId(testid: string | undefined): string | null {
-    const match = String(testid || '').match(/-(\d+)$/);
-    return match?.[1] ?? null;
+  /** Testids de carte qui ne portent pas d'identifiant — voir le repli ci-dessous. */
+  const IDLESS_CARDS = new Set(['feed-item']);
+
+  function cardId(box: HTMLElement): string | null {
+    const testid = box.dataset.testid || '';
+
+    const match = testid.match(/-(\d+)$/);
+    if (match?.[1]) return match[1];
+
+    // Le fil de la page d'accueil fait exception : ses cartes s'appellent
+    // **toutes** `feed-item`, sans identifiant nulle part dans le testid. Seule
+    // l'URL du lien overlay le porte.
+    //
+    // Ce repli est réservé aux testids connus pour ne pas porter d'identifiant,
+    // et n'est surtout pas généralisé : `querySelector` descend dans tout le
+    // sous-arbre, si bien qu'un conteneur qui *contient* des cartes — le voisin
+    // `{plugin}-items` des blocs d'une fiche — passerait pour une carte et
+    // recevrait un bouton en double, sur l'article de sa première carte.
+    if (!IDLESS_CARDS.has(testid)) return null;
+
+    const href = box
+      .querySelector<HTMLAnchorElement>('[data-testid$="--overlay-link"]')
+      ?.getAttribute('href');
+    return href?.match(/\/items\/(\d+)/)?.[1] ?? null;
   }
 
   /** @param box conteneur de carte, ex. [data-testid="product-item-id-{ID}"] */
   function extractFromCard(box: HTMLElement): SavedItem | null {
-    const id = cardId(box.dataset.testid);
+    const id = cardId(box);
     if (!id) return null;
 
     const link =
@@ -1203,13 +1260,78 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
     btn.setAttribute('aria-label', btn.title);
   }
 
+  /** Ce qu'un geste sur un bouton a produit, ou `null` si rien n'a été écrit. */
+  type Activation = (ToggleResult & { item: SavedItem }) | null;
+
+  /**
+   * Durée d'appui qui ouvre le choix de collection.
+   *
+   * 480 ms : au-dessus du clic le plus lent (~300 ms observés sur un geste
+   * appuyé), en dessous du seuil où l'on croit que le bouton ne répond pas.
+   * C'est aussi l'ordre de grandeur du `contextmenu` tactile, qu'on neutralise
+   * pendant l'appui pour ne pas se disputer le geste avec le navigateur.
+   */
+  const LONG_PRESS_MS = 480;
+
+  /**
+   * Au-delà, le geste est un glissement, pas un appui : on désarme.
+   *
+   * Indispensable sur les cartes du catalogue — le doigt ou la souris qui
+   * démarre un scroll sur le bouton ne doit pas ouvrir un menu à l'arrivée.
+   */
+  const LONG_PRESS_SLOP_PX = 10;
+
+  /**
+   * Ouvre le choix de collection à la suite d'un geste d'enregistrement.
+   *
+   * L'appui long veut dire « range cet article », jamais « retire-le ». Or son
+   * propre `pointerdown` a déjà basculé l'état — c'est la règle 1 du projet, et
+   * on n'y touche pas : différer l'écriture jusqu'au seuil rendrait la capture
+   * dépendante d'un `pointerup` que le navigateur supprime une fois sur trois.
+   * Quand le geste vient donc de **retirer** un article, on le remet tel qu'il
+   * était (collection, date d'ajout, historique de prix compris) avant
+   * d'ouvrir le menu.
+   */
+  async function pickCollectionAfter(
+    pending: Promise<Activation>,
+    btn: HTMLButtonElement
+  ): Promise<void> {
+    try {
+      const result = await pending;
+      if (!result) return;
+
+      // `previous` porte les champs que la carte ne connaît pas : c'est lui qui
+      // fait foi dès qu'il existe.
+      const item = result.previous || result.item;
+
+      if (result.action === 'removed') {
+        await restoreItem(item);
+        saved = await readItems();
+        repaintAll();
+      }
+
+      debug.longPress += 1;
+
+      const box = btn.getBoundingClientRect();
+      await openCollectionPicker({
+        itemId: item.id,
+        itemTitle: item.title || '',
+        currentCollectionId: item.collectionId || DEFAULT_COLLECTION_ID,
+        anchor: { top: box.top, bottom: box.bottom, left: box.left, right: box.right },
+      });
+    } catch (err) {
+      debug.lastError = errorText(err);
+      console.error('[Vinted Favoris] choix de collection échoué :', err);
+    }
+  }
+
   /** @param getItem recalcule l'article au moment du clic */
   function createButton(className: string, getItem: () => SavedItem | null): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = className;
 
-    const activate = async (event: Event): Promise<void> => {
+    const activate = async (event: Event): Promise<Activation> => {
       // Sur une carte, le bouton est posé au-dessus du lien overlay :
       // sans ça, le clic navigue vers l'article.
       event.preventDefault();
@@ -1218,7 +1340,7 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
       // `disabled` supprime "click", pas "pointerdown" — c'est justement ce
       // dernier qu'on écoute (règle du survol/clic, voir CLAUDE.md). Sans ce
       // garde, le bouton "Article vendu" restait activable à la souris.
-      if (btn.disabled) return;
+      if (btn.disabled) return null;
 
       debug.clicks += 1;
 
@@ -1226,14 +1348,15 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
         const item = getItem();
         if (!item) {
           debug.lastError = 'extraction vide';
-          return;
+          return null;
         }
 
         // Une carte n'a pas tout : on l'enregistre telle quelle, marquée en
         // attente, et la fiche complétera. L'écriture est immédiate — le panneau
         // affiche l'article dès le clic, pas au retour de la requête.
         const fromCard = item.source === 'catalog';
-        const action = await toggleItem(fromCard ? { ...item, pending: true } : item);
+        const stored = fromCard ? { ...item, pending: true } : item;
+        const result = await toggleItem(stored);
         debug.writes += 1;
 
         // Repeint immédiatement : si le storage échoue silencieusement ou si
@@ -1244,14 +1367,72 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
         // Depuis une carte : toute la fiche est à lire, la taille suivra.
         // Depuis une fiche : tout est déjà là sauf l'identifiant de taille, que
         // seule l'API du site peut donner — voir completeSizeId().
-        if (action === 'added') queueEnrich(item.id, item.url, !fromCard);
+        if (result.action === 'added') queueEnrich(item.id, item.url, !fromCard);
+
+        return { ...result, item: stored };
       } catch (err) {
         // Cas classique : extension rechargée sans recharger l'onglet
         // ("Extension context invalidated") — le clic échoue en silence.
         debug.lastError = errorText(err);
         console.error('[Vinted Favoris] clic échoué :', err);
+        return null;
       }
     };
+
+    // --- Appui long -----------------------------------------------------------
+
+    let pressTimer: number | null = null;
+    let disarm: (() => void) | null = null;
+
+    function cancelLongPress(): void {
+      if (pressTimer !== null) clearTimeout(pressTimer);
+      pressTimer = null;
+      disarm?.();
+      disarm = null;
+      btn.classList.remove('vf-pressing');
+    }
+
+    function armLongPress(event: PointerEvent | MouseEvent, pending: Promise<Activation>): void {
+      cancelLongPress();
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+
+      const onMove = (move: PointerEvent | MouseEvent): void => {
+        if (Math.abs(move.clientX - startX) + Math.abs(move.clientY - startY) > LONG_PRESS_SLOP_PX)
+          cancelLongPress();
+      };
+      const onEnd = (): void => {
+        cancelLongPress();
+      };
+      // Sur tactile, l'appui long lève un `contextmenu` : c'est exactement notre
+      // geste, et le menu natif du navigateur passerait par-dessus le nôtre.
+      const onContextMenu = (menu: Event): void => {
+        menu.preventDefault();
+      };
+
+      // Sur le document, pas sur le bouton : relâcher hors du bouton compte
+      // comme une fin de geste, et un repeint peut avoir remplacé les enfants
+      // du bouton entre-temps.
+      document.addEventListener('pointerup', onEnd, true);
+      document.addEventListener('pointercancel', onEnd, true);
+      document.addEventListener('pointermove', onMove, true);
+      btn.addEventListener('contextmenu', onContextMenu);
+
+      disarm = () => {
+        document.removeEventListener('pointerup', onEnd, true);
+        document.removeEventListener('pointercancel', onEnd, true);
+        document.removeEventListener('pointermove', onMove, true);
+        btn.removeEventListener('contextmenu', onContextMenu);
+      };
+
+      btn.classList.add('vf-pressing');
+
+      pressTimer = setTimeout(() => {
+        cancelLongPress();
+        void pickCollectionAfter(pending, btn);
+      }, LONG_PRESS_MS) as unknown as number;
+    }
 
     // Le déclencheur souris est "pointerdown", pas "click" : un "click" n'est émis
     // que si le navigateur juge le geste comme tel. Il est supprimé quand une
@@ -1260,7 +1441,30 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
     // est inconditionnel.
     // `void` : l'écouteur ne doit rien renvoyer, et personne n'attend l'écriture.
     btn.addEventListener('pointerdown', (event) => {
-      void activate(event);
+      // Un menu déjà ouvert se ferme sur ce geste (voir collection-picker) :
+      // le bouton ne doit pas en profiter pour basculer l'article.
+      if (isPickerOpen()) {
+        closePicker();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      const pending = activate(event);
+      void pending;
+
+      // Bouton secondaire : le geste appartient au navigateur (menu contextuel),
+      // on n'arme rien dessus.
+      if (event.button !== 0 || btn.disabled) return;
+
+      // Alt+clic : même destination que l'appui long, sans l'attente. C'est le
+      // chemin clavier-souris pour qui connaît déjà la fonction.
+      if (event.altKey) {
+        void pickCollectionAfter(pending, btn);
+        return;
+      }
+
+      armLongPress(event, pending);
     });
 
     // Le "click" qui suit ce même geste doit être neutralisé sans re-déclencher.
@@ -1269,8 +1473,15 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
     btn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (event.detail !== 0) return;
+
       // Volontairement non attendu : rien ne dépend de la fin de l'écriture ici.
-      if (event.detail === 0) void activate(event);
+      const pending = activate(event);
+      void pending;
+
+      // Alt+Entrée : le seul accès clavier au choix de collection — un appui
+      // long n'existe pas au clavier, la répétition de touche n'en est pas un.
+      if (event.altKey) void pickCollectionAfter(pending, btn);
     });
 
     return btn;
@@ -1347,6 +1558,19 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
   /** Cartes du catalogue et des pages de recherche. */
   const CATALOG_CARDS = '[data-testid^="product-item-id-"]:not([data-testid*="--"])';
 
+  /**
+   * Cartes du fil de la page d'accueil (`https://www.vinted.fr/`).
+   *
+   * Même markup de carte que le catalogue — `new-item-box__container`, enfants
+   * suffixés `--overlay-link`, `--image--img`, `--price-text` — mais un
+   * `data-testid` **fixe** : les vingt cartes de la page s'appellent
+   * `feed-item`, sans identifiant. Le sélecteur du catalogue ne les voyait donc
+   * pas, et l'extension était inerte sur la page d'accueil, qui est pourtant le
+   * premier écran d'une session de chine. Voir `cardId()` pour la lecture de
+   * l'identifiant.
+   */
+  const FEED_CARDS = '[data-testid="feed-item"]';
+
   /** Conteneur d'un bloc d'articles de fiche : `item-page-{plugin}-plugin`. */
   const BLOCK_TESTID = /^item-page-([a-z_]+)-plugin$/;
 
@@ -1390,7 +1614,11 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
 
   /** Toutes les cartes produit de la page, quel que soit le contexte. */
   function cardBoxes(): HTMLElement[] {
-    return [...document.querySelectorAll<HTMLElement>(CATALOG_CARDS), ...blockCards()];
+    return [
+      ...document.querySelectorAll<HTMLElement>(CATALOG_CARDS),
+      ...document.querySelectorAll<HTMLElement>(FEED_CARDS),
+      ...blockCards(),
+    ];
   }
 
   function scan(): void {
@@ -1418,6 +1646,8 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
         lastUrl = location.href;
         const stale = document.querySelector('.vf-detail-btn');
         if (stale && !isDetailPage()) stale.remove();
+        // Le menu de collection est ancré à un bouton d'une page qu'on quitte.
+        closePicker();
       }
 
       scan();
@@ -1625,13 +1855,27 @@ import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/typ
   void loadSaved().then(() => {
     scan();
 
+    /** Nos propres nœuds : leurs mutations ne doivent jamais relancer un scan. */
+    const OWN = `.vf-card-btn, .vf-detail-btn, ${OVERLAY_SELECTOR}`;
+
+    /**
+     * Le menu de collection et sa confirmation sont posés sur `document.body` :
+     * la mutation a alors pour cible le body, que `closest()` ne rattachera
+     * jamais à nous. On regarde donc aussi ce qui entre et sort.
+     */
+    const ownNodesOnly = (nodes: NodeList): boolean =>
+      [...nodes].every((node) => node instanceof Element && node.matches(OVERLAY_SELECTOR));
+
     // Second garde-fou contre la boucle : on ignore les mutations que nos propres
     // boutons génèrent, pour ne réagir qu'aux changements venant de Vinted.
     const observer = new MutationObserver((mutations) => {
       const fromVinted = mutations.some((m) => {
         const target = m.target;
         if (!(target instanceof Element)) return true;
-        return !target.closest('.vf-card-btn, .vf-detail-btn');
+        if (target.closest(OWN)) return false;
+        if (m.addedNodes.length && ownNodesOnly(m.addedNodes)) return false;
+        if (m.removedNodes.length && ownNodesOnly(m.removedNodes)) return false;
+        return true;
       });
       if (fromVinted) scheduleScan();
     });

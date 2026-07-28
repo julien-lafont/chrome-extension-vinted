@@ -44,13 +44,18 @@ rechargement, `chrome.storage` lève « Extension context invalidated » et les 
   même marque-page apparaît sur les cartes des blocs du bas de page (« Dressing du
   membre », « Articles similaires »).
 - **Panneau latéral** — clic sur l'icône de l'extension.
+- **Appui long** (≈ ½ seconde) sur l'un ou l'autre de ces boutons — ou `Alt`+clic —
+  ouvre le choix de collection : l'article est enregistré comme d'habitude, puis rangé
+  directement dans la collection choisie, sans passer par le panneau. Une collection
+  peut être créée à la volée depuis ce menu. `Échap` referme sans rien ranger.
 
 Les boutons se synchronisent entre tous les onglets Vinted ouverts.
 
 ### Collections
 
-Les onglets en haut du panneau regroupent les articles. Tout nouvel article arrive dans
-**Mes favoris**, la collection par défaut, qui ne peut pas être supprimée.
+Les onglets en haut du panneau regroupent les articles. Sauf capture par appui long
+(ci-dessus), tout nouvel article arrive dans **Mes favoris**, la collection par défaut,
+qui ne peut pas être supprimée.
 
 - `+` crée une collection (« Jeans », « Chemises », « Cadeau Julien »…)
 - clic droit sur un onglet : le renommer

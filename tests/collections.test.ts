@@ -9,7 +9,10 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ARCHIVE_COLLECTION_ID,
   DEFAULT_COLLECTION_ID,
+  archiveSold,
+  sortCollections,
   readAll,
   createCollection,
   deleteCollection,
@@ -113,5 +116,35 @@ describe('suppression d une collection', () => {
     const { collections } = await readAll();
     assert.equal(collections[cadeaux.id]?.name, 'Cadeau Julien');
     assert.ok(collections[DEFAULT_COLLECTION_ID]);
+  });
+});
+
+/**
+ * « Archives » n'est pas une collection parmi d'autres : c'est le dépôt de ce
+ * qui est vendu ou parti. Sa place dans la barre d'onglets ne doit pas dépendre
+ * de sa date de création — qui est celle du premier archivage, donc postérieure
+ * à la plupart des collections mais antérieure à toutes celles créées ensuite.
+ */
+describe('place d’« Archives »', () => {
+  test('elle passe toujours en dernier, quelle que soit sa date', async () => {
+    fakeStorage({ savedItems: { 1: makeItem({ id: '1', status: 'sold' }) } });
+    const vestes = await createCollection('Vestes');
+    await moveItemToCollection('1', vestes.id);
+
+    // Archivage : « Archives » naît ici, donc après « Vestes » mais avant la
+    // collection créée juste en dessous.
+    await archiveSold(vestes.id);
+
+    const bottes = await createCollection('Bottes');
+
+    const { collections } = await readAll();
+    const order = sortCollections(collections).map((c) => c.id);
+
+    assert.equal(order[0], DEFAULT_COLLECTION_ID, 'la collection par défaut reste en tête');
+    assert.equal(order.at(-1), ARCHIVE_COLLECTION_ID, '« Archives » doit fermer la marche');
+    assert.ok(
+      order.indexOf(bottes.id) < order.indexOf(ARCHIVE_COLLECTION_ID),
+      'une collection créée après l’archivage passe quand même avant « Archives »'
+    );
   });
 });

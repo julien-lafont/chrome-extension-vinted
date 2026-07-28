@@ -159,6 +159,26 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+/* Ressort qui pousse « Archives » contre le bord droit. Il se comprime à zéro
+   dès que les onglets remplissent la barre, et l'onglet reprend alors sa place
+   au bout de la file — voir `archiveSpacer()` pour pourquoi ce n'est pas un
+   `margin-left: auto`. */
+.tab-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Onglet « Archives » : une icône, rien d'autre. Le dépôt de ce qui est vendu
+   ou parti n'a pas à occuper la largeur d'un nom ni à afficher un compteur. */
+.tab-archive .tab-select {
+  padding: 5px 8px;
+}
+
+.tab-archive .tab-name {
+  font-size: 13px;
+  line-height: 1;
+}
+
 /* Croix de suppression : présente uniquement sur une collection vide. */
 .tab-delete {
   display: flex;

@@ -31,6 +31,7 @@ type FixtureMeta = {
   catalogUrl: string;
   photosUrl: string;
   soldUrl: string;
+  homeUrl: string;
 } & Record<string, unknown>;
 
 export const meta = JSON.parse(readFileSync(join(FIXTURES, 'meta.json'), 'utf8')) as FixtureMeta;
@@ -131,7 +132,7 @@ export const PHOTOS_ITEM_ID: string = itemIdOf(meta.photosUrl, 'photosUrl');
 export const SOLD_ITEM_ID: string = itemIdOf(meta.soldUrl, 'soldUrl');
 
 /** Nom d'une fixture de markup Vinted présente dans `tests/fixtures/`. */
-export type Fixture = 'catalog' | 'item' | 'category' | 'item-photos' | 'sold';
+export type Fixture = 'catalog' | 'item' | 'category' | 'item-photos' | 'sold' | 'home';
 
 /** L'URL compte : elle décide de la page détail, et du contexte de catégorie. */
 const URLS: Record<Fixture, () => string> = {
@@ -144,6 +145,9 @@ const URLS: Record<Fixture, () => string> = {
   // Une fiche vendue, sans JSON-LD (Vinted le retire) : exerce isSoldDetail()
   // et le repli d'extractFromDetail() en même temps.
   sold: () => meta.soldUrl,
+  // La page d'accueil : mêmes cartes que le catalogue, mais un `data-testid`
+  // fixe et sans identifiant — voir cardId().
+  home: () => meta.homeUrl,
 };
 
 /**
@@ -160,6 +164,9 @@ export type SharedBackend = {
 export function createSharedBackend(saved: Record<string, unknown> = {}): SharedBackend {
   return { store: { savedItems: { ...saved } }, listeners: [] };
 }
+
+/** Ce qu'un test lit d'une collection rangée en storage. */
+type StoredCollection = { id: string; name: string; createdAt: number; order: string[] };
 
 /** @param options état initial du storage, ou un backend partagé entre plusieurs instances */
 export async function loadContentScript(
@@ -272,6 +279,81 @@ export async function loadContentScript(
     cardButtons: (): any[] => [...window.document.querySelectorAll('.vf-card-btn')],
     detailButton: (): any => window.document.querySelector('.vf-detail-btn'),
 
+    // --- Choix de collection (appui long) ---
+
+    /** Collections rangées en storage — écrites par le panneau comme par la page. */
+    collections: (): Record<string, StoredCollection> =>
+      (store.collections as Record<string, StoredCollection>) || {},
+
+    /** Le menu de choix de collection, s'il est ouvert. */
+    picker: (): any => window.document.querySelector('.vf-picker'),
+
+    /** Libellés des collections proposées par le menu, dans l'ordre affiché. */
+    pickerLabels: (): string[] =>
+      [...window.document.querySelectorAll('.vf-picker-item')].map((el: any) => el.textContent),
+
+    /** L'entrée du menu portant ce libellé exact. */
+    pickerItem(name: string): any {
+      return [...window.document.querySelectorAll('.vf-picker-item')].find(
+        (el: any) => el.textContent === name
+      );
+    },
+
+    /** Confirmation affichée après un rangement. */
+    toastText: (): string | null => window.document.querySelector('.vf-toast')?.textContent ?? null,
+
+    /**
+     * Appui maintenu au-delà du seuil, puis relâché — le geste qui doit ouvrir
+     * le choix de collection. Le `click` qui suit est émis comme le ferait le
+     * navigateur : il ne doit pas re-basculer l'article.
+     */
+    async pressLong(el: any, ms = 700) {
+      el.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, detail: 1 }));
+      await settle(ms);
+      window.document.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }));
+      el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+      await settle(200);
+    },
+
+    /**
+     * Appui qui glisse avant le seuil : un scroll démarré sur le bouton, pas un
+     * appui long.
+     */
+    async pressAndDrag(el: any, distance = 40) {
+      el.dispatchEvent(
+        new window.MouseEvent('pointerdown', { bubbles: true, detail: 1, clientX: 0, clientY: 0 })
+      );
+      await settle(120);
+      window.document.dispatchEvent(
+        new window.MouseEvent('pointermove', { bubbles: true, clientX: 0, clientY: distance })
+      );
+      await settle(600);
+      window.document.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }));
+      await settle(150);
+    },
+
+    /** Alt+clic : le raccourci immédiat vers le même menu. */
+    async altClick(el: any) {
+      el.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, altKey: true }));
+      el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1, altKey: true }));
+      await settle(200);
+    },
+
+    /** Active une entrée du menu à la souris (pointerdown + click, comme le navigateur). */
+    async choose(el: any) {
+      el.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, detail: 1 }));
+      el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+      await settle(200);
+    },
+
+    /** Échappe : ferme le menu. */
+    async pressEscape() {
+      window.document.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+      await settle(100);
+    },
+
     // --- Enrichissement d'une carte par sa fiche ---
 
     /** Requêtes de fiche parties et pas encore honorées. */
@@ -377,8 +459,14 @@ export async function loadContentScript(
      *
      * @param {string} [plugin] nom du bloc, tel qu'il apparaît dans
      *   `item-page-{plugin}-plugin`
+     * @param {boolean} [wrapped] enveloppe les cartes dans le conteneur
+     *   `{plugin}-items` que Vinted interpose. Ce conteneur porte un `data-testid`
+     *   du même préfixe **sans identifiant**, et il *contient* des liens
+     *   d'article : c'est exactement ce qu'un repli d'identifiant trop permissif
+     *   prendrait pour une carte. Sans lui, le garde-fou de `cardId()` n'est pas
+     *   exercé et le test correspondant ne peut pas échouer.
      */
-    async appendItemBlock(plugin = 'other_user_items', count = 3) {
+    async appendItemBlock(plugin = 'other_user_items', count = 3, wrapped = false) {
       const catalog = new JSDOM(readFileSync(join(FIXTURES, 'catalog.html'), 'utf8'));
       const cards = [
         ...catalog.window.document.querySelectorAll(
@@ -388,9 +476,12 @@ export async function loadContentScript(
 
       const block = window.document.createElement('div');
       block.setAttribute('data-testid', `item-page-${plugin}-plugin`);
-      block.innerHTML = cards
+
+      const markup = cards
         .map((card) => card.outerHTML.split('product-item-id-').join(`${plugin}-`))
         .join('\n');
+
+      block.innerHTML = wrapped ? `<div data-testid="${plugin}-items">\n${markup}\n</div>` : markup;
 
       window.document.body.appendChild(block);
       await settle(150); // le MutationObserver doit voir le bloc et repeindre

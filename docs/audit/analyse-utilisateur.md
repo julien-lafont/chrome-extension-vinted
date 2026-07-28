@@ -282,6 +282,16 @@ planification. D'où le L.
 
 ### D. Filtrage du bruit dans le catalogue — **le meilleur rapport effort/plaisir** · effort S/M
 
+> **Spécifié le 28/07/2026, pas encore livré** — voir `docs/specs/filtrage-bruit.md`
+> pour le modèle de données, les règles de correspondance, l'interface des deux côtés et
+> l'ordre de mise en œuvre. Deux écarts par rapport à la proposition ci-dessous : le
+> compteur « articles masqués » est une **pastille flottante** plutôt qu'un bandeau en
+> haut de page (aucune ancre stable pour la grille de résultats), et le masquage
+> **replie** la carte par défaut plutôt que de la griser — le grisage devient un mode de
+> révision explicite. Le masquage par vendeur reste suspendu à la vérification que
+> l'audit réclamait (`seller_id` atteignable depuis une carte) : la spec en fait sa
+> deuxième étape et décrit les deux branches.
+
 **Le besoin.** Question n°1 du chineur : « est-ce que c'est nouveau ? ». Aujourd'hui, la
 réponse est dans sa mémoire, et sa mémoire sature à la troisième page.
 
@@ -293,6 +303,10 @@ injecté :
   afficher » en haut de page pour rester réversible ;
 - **« Masquer ce vendeur »**, pour les revendeurs pros qui saturent une niche avec du
   stock réimporté ;
+- **« Masquer cette marque »**, pour pouvoir ignorer facilement les marques jugées peu
+  qualitatives. Tu peux fournir un filtre déjà prêt à l'emploi pour ignorer les marques
+  dites de fash fashion commes Wish, Zara, Shein, H&M, Primark et permettre de rajouter
+  autant de marque que l'utilisateur le souhaite.
 - une **liste de mots exclus** (« style », « inspiré », « réplique », « lot », « enfant
   ») qui grise les cartes correspondantes ;
 - un marquage discret des articles **déjà enregistrés** dans une collection —
@@ -549,9 +563,56 @@ nouvelle, aucun appel réseau depuis l'extension elle-même. Le même schéma qu
 | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Champs manquants : `description`, `color`, `uploadedAt`, `sellerId`, `brandId`, `sizeId` | Tous accessibles sans nouvelle source (JSON-LD, `itemprop`, fil d'Ariane, flux d'hydratation). C'est de la donnée gratuite, déjà sous les yeux du parseur.                                             |
 | Raccourci clavier de capture                                                             | Le chineur scrolle vite ; viser une icône de 24 px casse le rythme.                                                                                                                                    |
-| Capture avec choix de collection                                                         | Aujourd'hui tout tombe dans « Mes favoris » puis se range à la main. Un appui long, ou un `Alt`+clic, ouvrant un choix de collection, supprimerait une corvée entière.                                 |
+| Capture avec choix de collection — **fait le 28/07/2026**, voir ci-dessous               | Aujourd'hui tout tombe dans « Mes favoris » puis se range à la main. Un appui long, ou un `Alt`+clic, ouvrant un choix de collection, supprimerait une corvée entière.                                 |
 | Retour visuel de l'enrichissement sur la carte                                           | Le panneau montre `pending`, la page non.                                                                                                                                                              |
 | Reprise des enrichissements échoués                                                      | `enrichFailed` est compté mais aucun article n'est jamais retenté. Un article dont le `fetch` a échoué reste incomplet à vie. Une nouvelle tentative au prochain démarrage, une seule fois, suffirait. |
+
+> **Capture avec choix de collection — fait le 28/07/2026, en entier.** Un appui de 480
+> ms sur n'importe quel bouton injecté (carte de catalogue, carte de bloc, bouton de
+> fiche) ouvre un menu listant les collections, avec création à la volée ; `Alt`+clic et
+> `Alt`+Entrée y mènent sans l'attente, et `Échap` referme sans rien ranger. Le
+> rangement est confirmé par un bandeau en bas de page, le panneau n'ayant pas besoin
+> d'être ouvert. Nouveaux fichiers : `src/content/collection-picker.ts` (le menu) et
+> `src/shared/collections.ts`, où vit désormais la primitive de rangement — `store.ts`
+> la réexporte sous le nom `moveItemToCollection`, plutôt que de laisser deux
+> implémentations écrire sur la même clé.
+>
+> **La décision de conception qui compte, et son coût.** L'appui long est bâti
+> _au-dessus_ de `pointerdown`, jamais à sa place : le geste enregistre l'article
+> immédiatement, comme avant, et le menu ne fait que le ranger ensuite. Différer
+> l'écriture jusqu'au relâchement aurait rouvert la règle 1 du projet — le `click` que
+> le navigateur supprime dès qu'un pointeur glisse. Conséquence assumée : sur un article
+> **déjà enregistré**, le `pointerdown` du geste commence par le retirer, et c'est une
+> restauration explicite (`restoreItem()`, avec sa collection et sa date d'ajout
+> d'origine) qui le remet avant l'ouverture du menu. Le bouton clignote donc une
+> demi-seconde dans ce cas précis. C'est le point le plus fragile de la fonctionnalité,
+> et celui que `tests/collection-picker.test.ts` verrouille le plus explicitement :
+> neutraliser la restauration fait tomber un test, neutraliser le désarmement au
+> glissement en fait tomber un autre.
+>
+> **« Archives » est écartée du menu** (28/07/2026, sur demande) : c'est le dépôt de ce
+> qui est vendu ou parti, pas une destination de rangement. Dans la foulée, son onglet
+> du panneau est rendu à part — une icône 🗄️ seule, sans nom ni compteur, poussée contre
+> le bord droit de la barre — et `sortCollections()` la place désormais toujours en
+> dernier, sa date de création (celle du premier archivage) la faisant auparavant
+> doubler par toute collection créée ensuite.
+>
+> **Reste ouvert.** Le geste n'a été éprouvé qu'en jsdom : les tests prouvent la
+> mécanique (seuil, glissement, restauration, idempotence du repeint), pas que Vinted ne
+> se dispute pas le geste dans un vrai navigateur — c'est à vérifier à la main sur une
+> page de catalogue et une fiche. `debug.longPress`, ajouté au rapport de diagnostic,
+> distingue le cas « le geste n'atteint jamais le seuil » du cas « le menu ne s'ouvre
+> pas ». Le raccourci clavier de capture, ligne du dessus, reste à faire.
+
+> **Trouvé au passage, corrigé le 28/07/2026 : la page d'accueil était morte.** Ses
+> cartes ont le markup du catalogue mais un `data-testid` **fixe** — `feed-item`,
+> identique pour les vingt cartes, sans identifiant nulle part. `CATALOG_CARDS` ne les
+> voyait pas : aucun bouton n'était injecté sur `https://www.vinted.fr/`,
+> silencieusement, et rien ne le signalait. L'identifiant se lit désormais dans l'URL du
+> lien overlay, **uniquement pour les testids connus pour ne pas en porter** :
+> généraliser ce repli ferait passer pour une carte n'importe quel conteneur qui en
+> contient (le voisin `{plugin}-items` des blocs d'une fiche), qui recevrait alors un
+> bouton en double. Fixture `home.html` et `tests/home-feed.test.ts` à l'appui.
 
 ### 5.2 Panneau et collections
 

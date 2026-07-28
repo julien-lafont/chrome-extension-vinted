@@ -9,7 +9,8 @@ src/
   background/service-worker.ts     ouvre le panneau au clic sur l'icône
   background/saved-pulse.ts        badge + pulsation de l'icône à l'enregistrement
   content/content.ts               extraction + injection des boutons
-  content/content.css              styles des boutons injectés
+  content/content.css              styles des boutons injectés et du menu de collection
+  content/collection-picker.ts     choix de collection à la capture (appui long)
   content/offer-agent.ts           pilotage de la modale d'offre Vinted
   sidepanel/sidepanel.ts           orchestration de l'interface
   sidepanel/store.ts               lecture/écriture chrome.storage.local
@@ -19,6 +20,7 @@ src/
   sidepanel/search.ts              URLs de catalogue (similaires, marque)
   sidepanel/gallery.ts             visionneuse des photos d'un article
   shared/types.ts                  modèle de données (SavedItem, Collection, Settings)
+  shared/collections.ts            clé `collections` : lecture, création, rangement
   shared/messages.ts               protocole panneau ↔ content scripts
   shared/photos.ts                 photos d'une fiche, du flux RSC ou du DOM
   shared/hydration.ts              identifiants lus dans le flux RSC (repli du DOM)
@@ -204,9 +206,14 @@ vit sur la **collection** (`order`).
 
 C'est ce qui permet au content script d'écrire dans `savedItems` sans rien savoir des
 collections. Un article sans `collectionId` — ou pointant vers une collection supprimée
-— retombe sur la collection par défaut, sans migration ni réparation. `order` ne
-référence que les articles déjà réordonnés à la main ; un ajout récent apparaît en tête
-tant qu'on ne l'a pas déplacé.
+— retombe sur la collection par défaut, sans migration ni réparation.
+
+Depuis la capture avec choix de collection (appui long sur un bouton injecté), le
+content script écrit **aussi** sur la clé `collections`. Les deux mondes partagent alors
+la même primitive, `assignCollection()` de `shared/collections.ts`, que `store.ts`
+réexporte sous le nom `moveItemToCollection` : deux implémentations du même rangement
+auraient fini par diverger sur `order`. `order` ne référence que les articles déjà
+réordonnés à la main ; un ajout récent apparaît en tête tant qu'on ne l'a pas déplacé.
 
 **Une collection ne se supprime que vide** (`deleteCollection`), et jamais celle par
 défaut. La vérification est faite dans le storage après relecture, pas seulement à

@@ -10,6 +10,7 @@ import {
   ITEMS_KEY,
   COLLECTIONS_KEY,
   SETTINGS_KEY,
+  ARCHIVE_COLLECTION_ID,
   DEFAULT_COLLECTION_ID,
   readAll,
   sortCollections,
@@ -159,27 +160,38 @@ function renderCollections(): void {
   for (const collection of sortCollections(collections)) {
     const size = counts.get(collection.id) || 0;
 
+    // « Archives » n'est pas une collection parmi d'autres : c'est le dépôt de
+    // ce qui est vendu ou parti. Elle se rend en icône seule, sans compteur —
+    // le nombre d'articles archivés n'est pas une information qu'on pilote — et
+    // `sortCollections()` la place toujours en dernier.
+    const isArchive = collection.id === ARCHIVE_COLLECTION_ID;
+
     // Conteneur plutôt que bouton : un bouton ne peut pas en contenir un autre,
     // et l'onglet accueille la croix de suppression.
     const tab = document.createElement('div');
-    tab.className = 'tab';
+    tab.className = isArchive ? 'tab tab-archive' : 'tab';
     tab.dataset.dropCollection = collection.id;
     if (collection.id === settings.activeCollectionId) tab.classList.add('active');
 
     const select = document.createElement('button');
     select.type = 'button';
     select.className = 'tab-select';
-    select.title = `${collection.name} — clic droit pour renommer`;
+    select.title = isArchive ? 'Archives' : `${collection.name} — clic droit pour renommer`;
 
     const name = document.createElement('span');
     name.className = 'tab-name';
-    name.textContent = collection.name;
+    name.textContent = isArchive ? '🗄️' : collection.name;
+    if (isArchive) select.setAttribute('aria-label', 'Archives');
 
-    const count = document.createElement('span');
-    count.className = 'tab-count';
-    count.textContent = String(size);
+    select.append(name);
 
-    select.append(name, count);
+    if (!isArchive) {
+      const count = document.createElement('span');
+      count.className = 'tab-count';
+      count.textContent = String(size);
+      select.append(count);
+    }
+
     select.addEventListener('click', () => {
       void saveSettings({ activeCollectionId: collection.id }).then((next) => {
         settings = next;
@@ -190,7 +202,9 @@ function renderCollections(): void {
     tab.append(select);
 
     // Supprimable seulement une fois vidée : la collection par défaut, jamais.
-    if (collection.id !== DEFAULT_COLLECTION_ID && size === 0) {
+    // « Archives » non plus — elle est recréée d'elle-même au prochain archivage,
+    // et une croix à côté d'une icône seule ferait un onglet illisible.
+    if (collection.id !== DEFAULT_COLLECTION_ID && !isArchive && size === 0) {
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'tab-delete';
@@ -203,12 +217,19 @@ function renderCollections(): void {
       tab.append(remove);
     }
 
-    tab.addEventListener('contextmenu', (event) => {
-      event.preventDefault();
-      openCollectionMenu(collection, tab);
-    });
+    // Renommer « Archives » n'aurait aucun effet visible : son onglet ne montre
+    // que son icône.
+    if (!isArchive) {
+      tab.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        openCollectionMenu(collection, tab);
+      });
+    }
 
-    collectionsEl.append(tab);
+    // Le `+` reste au bout des collections ordinaires ; « Archives » est poussée
+    // contre le bord droit (voir `.tab-archive` dans la feuille de style).
+    if (isArchive) collectionsEl.append(archiveSpacer(), tab);
+    else collectionsEl.append(tab);
   }
 
   const add = document.createElement('button');
@@ -217,7 +238,27 @@ function renderCollections(): void {
   add.textContent = '+';
   add.title = 'Nouvelle collection';
   add.addEventListener('click', () => openCollectionDialog(null));
-  collectionsEl.append(add);
+
+  // Avant « Archives », qui doit rester le dernier élément de la barre.
+  const archive = collectionsEl.querySelector('.tab-archive');
+  collectionsEl.insertBefore(add, archive?.previousElementSibling ?? null);
+}
+
+/**
+ * Pousse « Archives » contre le bord droit tant que la barre n'est pas pleine.
+ *
+ * Un élément flexible plutôt qu'un `margin-left: auto` sur l'onglet : la barre
+ * défile horizontalement (`overflow-x: auto`), et une marge automatique y
+ * calcule sa place sur la largeur visible, pas sur le contenu — l'onglet
+ * s'échappait hors de la zone de défilement dès que les collections
+ * débordaient. Un ressort, lui, se comprime à zéro et « Archives » reprend
+ * simplement sa place au bout de la file.
+ */
+function archiveSpacer(): HTMLElement {
+  const spacer = document.createElement('span');
+  spacer.className = 'tab-spacer';
+  spacer.setAttribute('aria-hidden', 'true');
+  return spacer;
 }
 
 // --- Rendu : barre de tri -----------------------------------------------------
