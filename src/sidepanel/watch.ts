@@ -7,7 +7,7 @@
  * la progression — pas de port, pas de second message, le panneau écoute déjà
  * `chrome.storage.onChanged`.
  */
-import { isThrottled, orderForCheck, isMeaningfulDrop } from '../shared/watch.ts';
+import { isThrottled, orderForCheck, isMeaningfulDrop, RATE } from '../shared/watch.ts';
 import type { SavedItem, WatchState } from '../shared/types.ts';
 import type { WatchStartResponse } from '../shared/messages.ts';
 
@@ -23,12 +23,11 @@ function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
  * rien ne se passe » : cette console (celle du panneau) montre le côté
  * élection d'onglet / envoi du message ; `[Vinted Favoris][watch]` dans la
  * console de l'onglet Vinted montre ce que le content script en a fait.
+ *
+ * Désactivé (no-op) une fois le diagnostic terminé — les points d'appel
+ * restent en place pour une réactivation rapide en cas de nouveau bug muet.
  */
-function log(...args: unknown[]): void {
-  // `warn` plutôt que `log` : la règle ESLint `no-console` du projet n'autorise
-  // que `warn`/`error`. Ce n'est pas une erreur, seulement un jaune plus visible.
-  console.warn('[VF panneau][watch]', ...args);
-}
+function log(..._args: unknown[]): void {}
 
 /** §5.2 : silencieux, et seulement si le dernier cycle date d'assez loin — plus de plafond d'articles. */
 const SILENT_SWEEP_AFTER_MS = 60 * 60 * 1000;
@@ -282,6 +281,54 @@ export function initWatch(elements: WatchElements, watchHooks: WatchHooks): void
   });
 
   void render();
+}
+
+/**
+ * Remet à zéro tous les garde-fous de débit (§3.2 et §3.5) : seau à jetons
+ * rempli, budget du jour effacé, fenêtre de silence levée et compteur de coups
+ * de frein remis à zéro. Outil de mise au point : sans lui, un backoff de
+ * plusieurs heures (30 min × 2^n) rend le rafraîchissement intestable pour le
+ * reste de la session.
+ *
+ * Ne touche ni au bail ni à `lastSweepAt` : ce ne sont pas des compteurs de
+ * débit, et reprendre un bail tenu par un autre onglet ferait tourner deux
+ * cycles en parallèle — exactement ce que le bail empêche.
+ *
+ * Relit avant d'écrire (règle 6) : un onglet Vinted peut écrire la même clé au
+ * même moment.
+ */
+export async function resetRateLimits(): Promise<{
+  freine: boolean;
+  coupsDeFrein: number;
+  budgetDuJour: number;
+  jetons: number;
+}> {
+  const current = await readWatch();
+  const now = Date.now();
+
+  const before = {
+    freine: current ? isThrottled(current, now) : false,
+    coupsDeFrein: current?.throttleStrikes ?? 0,
+    budgetDuJour: current?.dailyBudget?.used ?? 0,
+    jetons: Math.floor(current?.bucket.tokens ?? RATE.capacity),
+  };
+
+  const next: WatchState = {
+    ...(current ?? { lastSweepAt: 0, bucket: { tokens: RATE.capacity, at: now } }),
+    bucket: { tokens: RATE.capacity, at: now },
+  };
+  // `delete` plutôt que `undefined` : ces clés sont optionnelles, et le storage
+  // sérialise — une clé à `undefined` disparaît de toute façon à la relecture.
+  delete next.throttledUntil;
+  delete next.throttleStrikes;
+  delete next.dailyBudget;
+
+  await chrome.storage.local.set({ [WATCH_KEY]: next });
+  log('compteurs de débit remis à zéro', before);
+
+  // Le repeint du bouton suit tout seul : `initWatch` écoute `onChanged`, qui
+  // se déclenche aussi dans le contexte qui écrit.
+  return before;
 }
 
 /**

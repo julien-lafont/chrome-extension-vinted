@@ -455,6 +455,22 @@ describe('identifiants et vendeur', () => {
     assert.notEqual(detailExtraction.sellerName, detailExtraction.sellerId);
   });
 
+  test('la fiche donne la réputation du vendeur', async () => {
+    const page = await loadContentScript('item');
+    const { detailExtraction, vendeur } = await page.diagnose();
+
+    // Le nombre d'évaluations est un nombre, pas une valeur vraie : un vendeur
+    // sans aucun avis est précisément ce qu'on veut pouvoir lire.
+    assert.equal(typeof detailExtraction.sellerFeedbackCount, 'number', 'évaluations absentes');
+    assert.equal(typeof detailExtraction.sellerRating, 'number', 'note absente');
+    assert.ok(detailExtraction.sellerRating <= 5, 'note hors échelle');
+
+    // Le diagnostic montre les deux sources séparément : celle qui manque dit
+    // laquelle des deux ancres Vinted a bougé. Voir docs/diagnostic.md.
+    assert.equal(typeof vendeur.noteDom, 'number', 'aria-label de la note perdu');
+    assert.equal(typeof vendeur.avisDom, 'number', 'compteur d’évaluations perdu');
+  });
+
   test('la fiche donne la description, tronquée', async () => {
     const page = await loadContentScript('item');
     const { detailExtraction } = await page.diagnose();

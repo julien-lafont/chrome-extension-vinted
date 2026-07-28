@@ -457,14 +457,13 @@ h1 {
 
 /*
  * Prix courant, ancien prix barré et pastille de variation ne doivent jamais
- * céder leur place : entre le pseudo du vendeur et l'information « −20 % », le
- * second gagne (§6.2). Seul le vendeur rétrécit, via `.item-seller` ci-dessous.
+ * céder leur place. Le vendeur a quitté cette ligne pour la sienne : à quatre
+ * informations de plus, c'est le prix qu'il aurait fini par chasser.
  */
 .item-price-value,
 .item-price-was,
 .item-price-delta,
-.item-status-badge,
-.item-seller-dot {
+.item-status-badge {
   flex: 0 0 auto;
 }
 
@@ -539,22 +538,58 @@ h1 {
 }
 
 /*
- * Le vendeur partage la ligne du prix sans en prendre le poids : le prix reste
- * ce que l'œil accroche en balayant la liste. Le point médian est un élément
- * frère du lien, pas un ::before dessus : posé dessus, il aurait fait partie
- * de la zone cliquable et du soulignement au survol malgré lui.
+ * Le vendeur et sa réputation, sous le prix. Cette ligne ne doit jamais peser
+ * autant que celle du prix : même taille que la méta, même gris, aucun accent
+ * de couleur — l'information est brute, c'est au lecteur de la juger.
  *
+ * Note et évaluations suivent le pseudo immédiatement plutôt que d'être
+ * repoussées en bout de ligne : elles décrivent la même personne, pas une
+ * mesure à part. D'où `.item-seller` en `flex: 0 1 auto` — il ne grandit
+ * jamais pour combler l'espace, il ne fait que rétrécir au besoin (ellipse).
+ */
+.item-seller-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/*
+ * Chrome sous Windows n'a pas les glyphes de drapeaux et rend le code en deux
+ * lettres : la largeur n'est donc pas fixée, et le nom du pays reste porté par
+ * `title` / `aria-label`.
+ */
+.item-seller-flag {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.item-seller-rating,
+.item-seller-reviews {
+  flex: 0 0 auto;
+}
+
+/*
+ * Point médian devant chacun des deux : même convention que `.item-meta`
+ * (« Nike · 42 · Neuf avec étiquette »), pas un signe à part pour la
+ * réputation. Il n'appartient à aucun des deux textes, donc pas de `gap`
+ * dédié — la marge est portée par le pseudo-élément lui-même.
+ */
+.item-seller-rating::before,
+.item-seller-reviews::before {
+  content: '· ';
+}
+
+/*
  * Pas de soulignement, même au survol : sans `href` — vendeur nommé mais non
  * identifié — l'élément n'est pas cliquable, et le curseur est le seul indice
  * qui distingue les deux cas sans mentir sur le second.
  */
-.item-seller-dot {
-  color: var(--muted);
-  margin: 0 4px;
-}
-
 .item-seller {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -859,6 +894,13 @@ h1 {
   display: none;
 }
 
+/* Une modale ouverte par-dessus une autre (les écartés, depuis les filtres) :
+   même z-index de base que .overlay, donc départagé par l'ordre du DOM sans
+   ce modificateur — et #filters-dialog, plus loin dans la page, l'emporterait. */
+.overlay--stacked {
+  z-index: 90;
+}
+
 .dialog {
   display: flex;
   flex-direction: column;
@@ -1029,13 +1071,29 @@ h1 {
   cursor: progress;
 }
 
-/* --- Pied de page -------------------------------------------------------- */
+/* --- Pied de page ---------------------------------------------------------
+   Deux bandes, et la séparation est intentionnelle : celle du haut porte les
+   réglages et restera, celle du bas les outils de développement et disparaîtra
+   de la version publiée. Voir docs/specs/filtrage-bruit.md §5.1. */
 
 .footer {
   display: flex;
   gap: 8px;
   padding: 8px 14px;
   border-top: 1px solid var(--border);
+}
+
+/* Bande de développement : en retrait, et retirable d'un bloc. Supprimer ce
+   sélecteur et le <footer> correspondant suffit — rien d'autre n'en dépend. */
+.footer--dev {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-top-style: dashed;
+  opacity: 0.75;
+}
+
+.footer--dev .ghost {
+  font-size: 11px;
 }
 
 .ghost {
@@ -1050,9 +1108,155 @@ h1 {
   cursor: pointer;
 }
 
+/* La bande de réglages n'a qu'un bouton pour l'instant : l'étirer sur 320 px
+   serait un faux départ, il rétrécirait au premier voisin. */
+.ghost-auto {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.ghost-auto svg {
+  width: 14px;
+  height: 14px;
+}
+
 .ghost:hover {
   background: var(--surface);
   color: var(--fg);
+}
+
+/**
+ * Témoin de la bande de réglages : pas un compte, juste « au moins une règle
+ * générale est active ». Rouge = catalogue non filtré, l'état par défaut ;
+ * vert = au moins une règle masque des articles, donc discret (6 px). Les
+ * deux couleurs viennent des variables déjà déclinées clair/sombre en tête de
+ * fichier (--danger, --drop), pas de valeur figée ici.
+ */
+.filters-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.filters-dot.filters-dot--active {
+  background: var(--drop);
+}
+
+/* --- Modale des filtres --------------------------------------------------- */
+
+.filters-section {
+  margin-bottom: 4px;
+}
+
+.filters-section h3 {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.filters-count {
+  color: var(--accent);
+  letter-spacing: normal;
+}
+
+.filters-line {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.filters-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.filters-note {
+  margin-top: 6px;
+}
+
+.filters-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.filters-recent-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.filters-recent-row a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.filters-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.filters-add .input {
+  flex: 1;
+}
+
+.filters-add .ghost {
+  flex: 0 0 auto;
+}
+
+/* Les règles s'enroulent et gardent leur largeur naturelle, contrairement aux
+   `.chip` de la modale d'offre qui se partagent la ligne à parts égales. */
+.chips--wrap {
+  flex-wrap: wrap;
+}
+
+.rule-chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.rule-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rule-chip-remove:hover {
+  background: var(--danger);
+  color: #fff;
 }
 
 .report {

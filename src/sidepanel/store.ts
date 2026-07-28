@@ -1,10 +1,14 @@
 /**
  * Vinted Favoris — accès au stockage.
  *
- * Trois clés dans chrome.storage.local :
+ * Quatre clés dans chrome.storage.local :
  *   savedItems  { [id]: item }                        écrit aussi par le content script
  *   collections { [id]: { id, name, createdAt, order } }  écrit aussi par le content script
  *   settings    { activeCollectionId, sortMode, sortDir, offer }
+ *   noise       règles de filtrage du catalogue       écrit aussi par le content script
+ *
+ * (`watch` est la cinquième, mais elle ne passe pas par ici : le suivi de prix
+ * la lit et l'écrit depuis `sidepanel/watch.ts` et le content script.)
  *
  * Un article appartient à une collection via `item.collectionId`. Le content
  * script ne renseigne ce champ qu'à la capture avec choix de collection (appui
@@ -28,6 +32,9 @@ import {
   makeDefaultCollection,
   sortCollections,
 } from '../shared/collections.ts';
+import { NOISE_KEY, normalizeNoise } from '../shared/noise.ts';
+import type { NoiseFilters } from '../shared/noise.ts';
+import { patchNoise } from '../shared/noise-storage.ts';
 import type { Collection, CollectionMap, ItemMap, SavedItem, Settings } from '../shared/types.ts';
 
 export {
@@ -35,6 +42,7 @@ export {
   COLLECTIONS_KEY,
   DEFAULT_COLLECTION_ID,
   ITEMS_KEY,
+  NOISE_KEY,
   collectionOf,
   createCollection,
   sortCollections,
@@ -51,6 +59,7 @@ const DEFAULT_SETTINGS: Settings = {
   sortDir: 'asc',
   offer: { discount: 15, autoMessage: true },
   hideSold: false,
+  revealHidden: false,
 };
 
 /**
@@ -63,6 +72,7 @@ type StoredShape = {
   [ITEMS_KEY]: ItemMap;
   [COLLECTIONS_KEY]: CollectionMap;
   [SETTINGS_KEY]: Partial<Settings>;
+  [NOISE_KEY]: Partial<NoiseFilters>;
 };
 
 async function read<K extends keyof StoredShape>(...keys: K[]): Promise<Partial<StoredShape>> {
@@ -75,10 +85,11 @@ export type Snapshot = {
   items: SavedItem[];
   collections: CollectionMap;
   settings: Settings;
+  noise: NoiseFilters;
 };
 
 export async function readAll(): Promise<Snapshot> {
-  const res = await read(ITEMS_KEY, COLLECTIONS_KEY, SETTINGS_KEY);
+  const res = await read(ITEMS_KEY, COLLECTIONS_KEY, SETTINGS_KEY, NOISE_KEY);
 
   const collections: CollectionMap = { ...(res[COLLECTIONS_KEY] || {}) };
   if (!collections[DEFAULT_COLLECTION_ID]) {
@@ -97,8 +108,15 @@ export async function readAll(): Promise<Snapshot> {
     items: Object.values(res[ITEMS_KEY] || {}),
     collections,
     settings,
+    noise: normalizeNoise(res[NOISE_KEY]),
   };
 }
+
+/**
+ * Réécriture des règles de filtrage : le même geste depuis le panneau et depuis
+ * une carte, donc la même primitive — voir `shared/noise-storage.ts`.
+ */
+export const updateNoise = patchNoise;
 
 // --- Écriture ----------------------------------------------------------------
 

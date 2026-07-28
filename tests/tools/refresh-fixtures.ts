@@ -250,14 +250,15 @@ export function buildItemFixture(
     if (testid) numbers.add(testid);
   }
 
-  // Les deux blocs voyagent parfois dans le même script (le flux les émet côte à
+  // Les blocs voyagent parfois dans le même script (le flux les émet côte à
   // côte, et le plus petit script portant un compteur peut donc porter aussi la
   // galerie) : le garder deux fois ne ferait qu'alourdir la fixture.
   const favourites = favouriteHydrationScript(doc);
   const gallery = galleryHydrationScript(doc);
   const identifiers = identifiersHydrationScript(doc);
+  const reputation = sellerHydrationScript(doc);
 
-  for (const script of new Set([favourites, gallery, identifiers])) {
+  for (const script of new Set([favourites, gallery, identifiers, reputation])) {
     if (script) parts.push(script);
   }
 
@@ -308,6 +309,58 @@ function identifiersHydrationScript(doc: Document): string | null {
 }
 
 /**
+ * Le bloc `user_info_header` du flux, qui porte la note du vendeur
+ * (`feedback_reputation`, entre 0 et 1) et son nombre d'évaluations.
+ *
+ * C'est la source **principale** de ces deux valeurs, et non un repli : le DOM
+ * ne leur donne aucun `data-testid`, et son seul libellé lisible est traduit
+ * (« Le membre est noté 4.7 sur 5 »). Sans ce script dans la fixture, la voie
+ * réellement empruntée en production ne serait pas testée.
+ */
+function sellerHydrationScript(doc: Document): string | null {
+  const CHIFFRE = /feedback_reputation\\*":\s*[\d.]/;
+
+  const candidates = [...doc.querySelectorAll('script')]
+    .filter((s) => CHIFFRE.test(s.textContent ?? ''))
+    .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0));
+
+  return candidates[0]?.outerHTML ?? null;
+}
+
+/**
+ * Fixture de **page profil** — la seule page hors fiche et catalogue que
+ * l'extension lit, et uniquement pour une chose : le pays du vendeur.
+ *
+ * Deux ancres, celles de `sellerCountryFrom()` : la cellule de localisation du
+ * DOM (« Cenon, France ») et le script du flux qui porte `country_code`, seul à
+ * donner le code ISO que le storage retient.
+ */
+export function buildMemberFixture(html: string, title = 'Fixture page profil Vinted') {
+  const doc = new JSDOM(html).window.document;
+  const parts = [];
+
+  const username = doc.querySelector('[data-testid="profile-username"]');
+  if (username) parts.push(username.outerHTML);
+
+  const location = doc.querySelector('[data-testid="profile-location-info"]');
+  if (location) parts.push(location.outerHTML);
+
+  // Le plus petit script portant un `country_code` chiffré : le flux d'un profil
+  // en compte un seul, mais la page embarque aussi 1 Mo de traductions qui
+  // mentionnent la clé sans valeur.
+  const script = [...doc.querySelectorAll('script')]
+    .filter((s) => /country_code\\*":\s*\\*"[A-Z]{2}/.test(s.textContent ?? ''))
+    .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0))[0];
+  if (script) parts.push(script.outerHTML);
+
+  if (!location && !script) {
+    throw new Error('aucune localisation sur ce profil — en choisir un qui l’expose');
+  }
+
+  return { html: wrap(title, parts.join('\n')), count: parts.length, flux: Boolean(script) };
+}
+
+/**
  * Le bloc `gallery` du flux React Server Components, seul endroit où Vinted
  * livre **toutes** les photos et leur pleine résolution — le DOM plafonne à
  * `f800`, et le JSON-LD n'expose que la photo principale.
@@ -324,6 +377,21 @@ function galleryHydrationScript(doc: Document): string | null {
   return candidates[0]?.outerHTML ?? null;
 }
 
+/**
+ * Profil du vendeur de la fiche, dérivé d'elle plutôt qu'épinglé : les deux
+ * fixtures décrivent ainsi le même vendeur, et l'URL suit automatiquement le
+ * jour où l'article de référence change.
+ */
+function memberUrlOf(itemHtml: string): string {
+  const doc = new JSDOM(itemHtml).window.document;
+
+  for (const link of doc.querySelectorAll('a[href*="/member/"]')) {
+    const id = (link.getAttribute('href') ?? '').match(/\/member\/(\d+)/)?.[1];
+    if (id) return `https://www.vinted.fr/member/${id}`;
+  }
+  throw new Error("aucun lien /member/{id} sur la fiche — l'ancre du vendeur a changé");
+}
+
 /** Première fiche article référencée par la page catalogue. */
 function firstItemUrl(html: string): string {
   const doc = new JSDOM(html).window.document;
@@ -332,7 +400,8 @@ function firstItemUrl(html: string): string {
   return link.href.split('?')[0] ?? link.href;
 }
 
-const [catalogArg, itemArg, categoryArg, photosArg, soldArg, homeArg] = process.argv.slice(2);
+const [catalogArg, itemArg, categoryArg, photosArg, soldArg, homeArg, memberArg] =
+  process.argv.slice(2);
 
 const catalogHtml = catalogArg ? readFileSync(catalogArg, 'utf8') : await fetchPage(CATALOG_URL);
 const itemUrl = firstItemUrl(catalogHtml);
@@ -411,6 +480,13 @@ if (!home.html.includes('data-testid="feed-item"')) {
 }
 writeFileSync(join(FIXTURES, 'home.html'), home.html);
 
+// Page profil du vendeur de la fiche : le pays n'est nulle part ailleurs, et
+// c'est la seule fixture que l'extension lit par requête sans jamais l'afficher.
+const memberUrl = memberUrlOf(itemHtml);
+const memberHtml = memberArg ? readFileSync(memberArg, 'utf8') : await fetchPage(memberUrl);
+const member = buildMemberFixture(memberHtml);
+writeFileSync(join(FIXTURES, 'member.html'), member.html);
+
 // L'URL de la fiche est nécessaire aux tests : l'ID de l'article s'y trouve.
 writeFileSync(
   join(FIXTURES, 'meta.json'),
@@ -422,6 +498,7 @@ writeFileSync(
       photosUrl: PHOTOS_URL,
       soldUrl: SOLD_URL,
       homeUrl: HOME_URL,
+      memberUrl,
       cards: catalog.count,
       refreshedAt: new Date().toISOString(),
     },
@@ -438,6 +515,9 @@ console.log(`catalog.html   ${catalog.count} cartes  ${kb(catalog.html)}`);
 console.log(`item.html      ${item.count} blocs   ${kb(item.html)}  ${photoCount(item)}`);
 console.log(`category.html  ${category.count} cartes  ${kb(category.html)}`);
 console.log(`home.html      ${home.count} cartes  ${kb(home.html)}`);
+console.log(
+  `member.html    ${member.count} blocs   ${kb(member.html)}  flux ${member.flux ? 'capturé' : 'ABSENT'}`
+);
 if (photos) console.log(`item-photos.html  ${photos.count} blocs   ${photoCount(photos)}`);
 if (sold) console.log(`sold.html      ${sold.count} blocs   ${kb(sold.html)}`);
 console.log(`meta.json      ${itemUrl}`);

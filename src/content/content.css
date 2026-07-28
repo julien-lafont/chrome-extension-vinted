@@ -291,3 +291,313 @@
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
   pointer-events: none;
 }
+
+/* --- Filtrage du bruit -----------------------------------------------------
+   docs/specs/filtrage-bruit.md. Trois choses ici : le bouton d'écart posé sur
+   la carte, le masquage lui-même, et les deux surcouches (panneau d'annulation,
+   pastille de comptage). */
+
+/* Le masquage passe par un **attribut**, pas par une classe : React réécrit
+   `className` à chaque rendu d'une carte et emporterait la nôtre, alors qu'il ne
+   touche pas aux `data-*` qu'il ne connaît pas.
+
+   Le `!important` est assumé, et c'est le seul du projet : on est en concurrence
+   avec une feuille de styles qu'on ne contrôle pas, dont l'ordre d'injection
+   n'est pas garanti, sur une propriété où perdre signifie « la fonctionnalité ne
+   marche pas ». */
+html:not(.vf-reveal) [data-vf-hidden]:not([data-vf-hidden='0']) {
+  display: none !important;
+}
+
+/* Mode révision : grisé au lieu d'être retiré. Une seule classe sur <html>
+   bascule les 96 cartes, sans toucher à aucune d'elles. */
+html.vf-reveal [data-vf-hidden]:not([data-vf-hidden='0']) {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+/* Bouton « Écarter », à gauche du marque-page. Plus petit (28 contre 32 px) :
+   le geste fréquent et positif reste le plus gros, et écarter ne doit pas être
+   ce qu'on touche par accident en visant l'autre. */
+.vf-hide-btn {
+  position: absolute;
+  top: 10px;
+  right: 48px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  color: #6b7280;
+  cursor: pointer;
+
+  /* Révélé au survol de la carte, jamais par `display` ni `visibility` : les
+     deux détruisent la cible du survol et produisent l'oscillation que la
+     règle 2 interdit — le `transform` n'est pas le seul moyen de fabriquer ce
+     bug. L'opacité, elle, conserve la géométrie. */
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background-color 0.12s ease,
+    color 0.12s ease;
+  user-select: none;
+}
+
+.vf-host:hover .vf-hide-btn,
+.vf-hide-btn:focus-visible {
+  opacity: 1;
+}
+
+/* Pas de transform au survol — même raison que partout ailleurs dans ce
+   fichier : le bouton sortirait de sa propre zone de survol. */
+.vf-hide-btn:hover {
+  background: #fff;
+  color: #b91c1c;
+}
+
+.vf-hide-btn > * {
+  pointer-events: none;
+}
+
+.vf-hide-btn svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* Article enregistré : le bouton est inerte, et le dit dans son `title`.
+   `disabled` coupe déjà le clic et le clavier ; ce style ne fait que le
+   montrer. */
+.vf-hide-btn:disabled {
+  opacity: 0;
+  cursor: not-allowed;
+}
+
+.vf-host:hover .vf-hide-btn:disabled {
+  opacity: 0.35;
+}
+
+/* Bouton d'écart de la fiche article, à gauche de la pilule « Enregistrer ».
+   Même ligne de flottaison, même z-index. */
+.vf-detail-hide {
+  position: fixed;
+  right: 190px;
+  bottom: 104px;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  color: #4b5563;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+  user-select: none;
+}
+
+.vf-detail-hide:hover {
+  background: #f3f4f6;
+  color: #b91c1c;
+}
+
+.vf-detail-hide > * {
+  pointer-events: none;
+}
+
+.vf-detail-hide svg {
+  width: 19px;
+  height: 19px;
+  display: block;
+}
+
+/* --- Panneau d'annulation --------------------------------------------------
+   La carte n'est jamais vidée ni déplacée : elle est atténuée, et le panneau se
+   superpose. Aucun `remove()`, aucun `innerHTML` sur du DOM Vinted. */
+
+/* Un gris très clair pendant les deux secondes du repli : la place occupée se
+   lit comme « en cours de départ » plutôt que comme un trou blanc dans la
+   grille. Le fond est posé sur l'hôte *et* sur le panneau — la photo de la carte
+   transparaît sous l'opacité 0,15, et du blanc pur par-dessus la ferait
+   ressortir en gris sale. */
+.vf-dimmed {
+  background: #f3f4f6;
+}
+
+.vf-dimmed > *:not(.vf-undo) {
+  opacity: 0.15;
+  filter: grayscale(1);
+}
+
+.vf-undo {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(243, 244, 246, 0.94);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #111827;
+  text-align: left;
+  user-select: none;
+}
+
+.vf-undo-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vf-undo-label {
+  font-weight: 600;
+}
+
+.vf-undo-cancel,
+.vf-undo-rule {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: #09b1ba;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vf-undo-cancel:hover,
+.vf-undo-rule:hover {
+  color: #067d84;
+}
+
+.vf-undo-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+/* La phrase porte l'action, le lien ne porte que la marque ou le vendeur. */
+.vf-undo-rule-row {
+  margin: 0;
+  color: #4b5563;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* Le compte à rebours est une animation CSS, jamais un setInterval qui
+   réécrirait un texte dix fois par seconde : une barre animée par le
+   compositeur coûte zéro mutation, là où un compteur en JavaScript réveillerait
+   le MutationObserver à chaque frame, sur chaque carte écartée. Règle 3.
+
+   La durée double DISMISS_DELAY_MS (noise-ui.ts) : une feuille de style ne peut
+   pas lire une constante TypeScript. Les deux se modifient ensemble. */
+.vf-undo-bar {
+  margin-top: auto;
+  height: 3px;
+  border-radius: 2px;
+  background: #09b1ba;
+  animation: vf-undo-countdown 2s linear forwards;
+}
+
+@keyframes vf-undo-countdown {
+  from {
+    width: 100%;
+  }
+
+  to {
+    width: 0;
+  }
+}
+
+/* --- Pastille de comptage --------------------------------------------------
+   Flottante et non ancrée en tête des résultats : Vinted n'expose aucune ancre
+   stable pour la grille, et une pastille fixe suit le défilement — ce qui compte
+   puisque le compteur monte à mesure que le scroll infini charge des pages. */
+
+.vf-pill {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 2147482999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.92);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  user-select: none;
+}
+
+.vf-pill-icon {
+  opacity: 0.7;
+}
+
+.vf-pill-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: #5eead4;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.vf-pill-toggle:hover {
+  color: #99f6e4;
+}
+
+/* --- Menu de la fiche ------------------------------------------------------ */
+
+.vf-noise-menu {
+  position: fixed;
+  z-index: 2147483001;
+  width: 240px;
+  padding: 6px;
+  border-radius: 12px;
+  background: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  color: #111827;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  user-select: none;
+}
+
+.vf-noise-item {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vf-noise-item:hover,
+.vf-noise-item:focus-visible {
+  background: #f3f4f6;
+}

@@ -32,6 +32,7 @@ type FixtureMeta = {
   photosUrl: string;
   soldUrl: string;
   homeUrl: string;
+  memberUrl: string;
 } & Record<string, unknown>;
 
 export const meta = JSON.parse(readFileSync(join(FIXTURES, 'meta.json'), 'utf8')) as FixtureMeta;
@@ -132,7 +133,7 @@ export const PHOTOS_ITEM_ID: string = itemIdOf(meta.photosUrl, 'photosUrl');
 export const SOLD_ITEM_ID: string = itemIdOf(meta.soldUrl, 'soldUrl');
 
 /** Nom d'une fixture de markup Vinted présente dans `tests/fixtures/`. */
-export type Fixture = 'catalog' | 'item' | 'category' | 'item-photos' | 'sold' | 'home';
+export type Fixture = 'catalog' | 'item' | 'category' | 'item-photos' | 'sold' | 'home' | 'member';
 
 /** L'URL compte : elle décide de la page détail, et du contexte de catégorie. */
 const URLS: Record<Fixture, () => string> = {
@@ -148,6 +149,10 @@ const URLS: Record<Fixture, () => string> = {
   // La page d'accueil : mêmes cartes que le catalogue, mais un `data-testid`
   // fixe et sans identifiant — voir cardId().
   home: () => meta.homeUrl,
+  // Le profil du vendeur de la fiche. L'extension ne s'y injecte jamais : elle
+  // ne le lit que par `fetch()`, pour le pays. Il n'est donc jamais chargé comme
+  // page courante, seulement servi par `respondWithFixture('member')`.
+  member: () => meta.memberUrl,
 };
 
 /**
@@ -278,6 +283,88 @@ export async function loadContentScript(
 
     cardButtons: (): any[] => [...window.document.querySelectorAll('.vf-card-btn')],
     detailButton: (): any => window.document.querySelector('.vf-detail-btn'),
+
+    // --- Filtrage du bruit (docs/specs/filtrage-bruit.md) ---
+
+    /**
+     * Écrit en storage **comme le ferait le panneau** : par `set`, donc en
+     * notifiant les onglets. Poser directement `store.x = …` ne déclenche aucun
+     * `onChanged`, et le content script ne verrait jamais le changement — c'est
+     * précisément le chaînon que ces tests doivent exercer.
+     */
+    async write(obj: Record<string, unknown>) {
+      window.chrome.storage.local.set(obj);
+      await settle(250);
+    },
+
+    /** Range un jeu de règles complet et laisse le content script l'appliquer. */
+    async setNoise(patch: Record<string, unknown>) {
+      await this.write({
+        noise: { hidden: {}, recent: [], sellers: {}, brands: [], words: [], ...patch },
+      });
+    },
+
+    /** Règles de filtrage rangées en storage. */
+    noise: (): any => store.noise,
+
+    hideButtons: (): any[] => [...window.document.querySelectorAll('.vf-hide-btn')],
+
+    /** Le bouton d'écart de la carte portant cet identifiant d'article. */
+    hideButtonOf(id: string): any {
+      return window.document.querySelector(`.vf-hide-btn[data-vf-id="${id}"]`);
+    },
+
+    /**
+     * L'élément qui porte le verdict de filtrage pour cet article.
+     *
+     * Ce n'est **pas** la carte : le verdict est posé sur sa cellule de grille,
+     * pour que la grille se referme au lieu de garder un trou (`hideTargetOf()`).
+     * On part donc de la carte et on remonte au premier ancêtre jugé.
+     */
+    cardBox(id: string): any {
+      const card = [...window.document.querySelectorAll('[data-testid]')].find(
+        (el: any) => el.dataset.testid.endsWith(`-${id}`) && !el.dataset.testid.includes('--')
+      );
+      return card?.closest('[data-vf-hidden]') ?? card;
+    },
+
+    /** Verdict posé sur chaque carte : `'0'` quand elle reste visible. */
+    verdicts: (): string[] =>
+      [...window.document.querySelectorAll('[data-vf-hidden]')].map(
+        (el: any) => el.dataset.vfHidden
+      ),
+
+    /** Cartes effectivement masquées, quel qu'en soit le motif. */
+    hiddenCards: (): any[] => [
+      ...window.document.querySelectorAll('[data-vf-hidden]:not([data-vf-hidden="0"])'),
+    ],
+
+    /** Panneau d'annulation, s'il est affiché. */
+    undoPanel: (): any => window.document.querySelector('.vf-undo'),
+
+    /** Phrases complètes des règles proposées par le panneau d'annulation. */
+    undoRules: (): string[] =>
+      [...window.document.querySelectorAll('.vf-undo-rule-row')].map((el: any) => el.textContent),
+
+    /** Le lien d'une règle du panneau d'annulation, par son libellé exact. */
+    undoRule(label: string): any {
+      return [...window.document.querySelectorAll('.vf-undo-rule')].find(
+        (el: any) => el.textContent === label
+      );
+    },
+
+    undoCancel: (): any => window.document.querySelector('.vf-undo-cancel'),
+
+    /** Pastille de comptage : son texte, ou `null` si elle n'est pas affichée. */
+    pillText: (): string | null =>
+      window.document.querySelector('.vf-pill-count')?.textContent ?? null,
+
+    pillToggle: (): any => window.document.querySelector('.vf-pill-toggle'),
+
+    /** Le bouton d'écart de la fiche, et son menu. */
+    detailHideButton: (): any => window.document.querySelector('.vf-detail-hide'),
+    noiseMenuLabels: (): string[] =>
+      [...window.document.querySelectorAll('.vf-noise-item')].map((el: any) => el.textContent),
 
     // --- Choix de collection (appui long) ---
 

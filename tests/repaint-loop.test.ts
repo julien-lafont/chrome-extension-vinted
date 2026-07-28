@@ -77,3 +77,37 @@ describe('stabilité du DOM', () => {
     assert.equal(page.cardButtons().length, before + 1, 'la nouvelle carte n’a pas été traitée');
   });
 });
+
+/**
+ * Le filtrage ajoute deux surcouches injectées (panneau d'annulation, pastille)
+ * et une écriture d'attribut par carte. Les premières peuvent boucler comme
+ * n'importe quel nœud ; la seconde ne le peut pas — l'observateur ne surveille
+ * pas les attributs — mais c'est justement ce qu'il faut verrouiller, parce que
+ * rien dans le code ne le rappelle. Voir docs/specs/filtrage-bruit.md §6.
+ */
+describe('stabilité du DOM — filtrage du bruit', () => {
+  test('le panneau d’annulation ne relance pas de scan en boucle', async () => {
+    const page = await loadContentScript('catalog');
+    const churn = page.watchChurn(page.document.body);
+
+    await page.clickMouse(page.hideButtons()[0]);
+    await settle(600);
+
+    // Le panneau s'ouvre (1 nœud) et la pastille apparaît (1 nœud). Au-delà,
+    // c'est que leur injection relance un scan qui les réinjecte.
+    assert.ok(
+      churn() <= CHURN_MAX,
+      `${churn()} mutations en 600 ms — le panneau d’annulation boucle`
+    );
+  });
+
+  test('masquer des cartes n’ajoute aucun scan', async () => {
+    const page = await loadContentScript('catalog');
+    await page.setNoise({ brands: ['nike'] });
+
+    const churn = page.watchChurn(page.document.body);
+    await settle(400);
+
+    assert.equal(churn(), 0, 'poser un attribut ne doit réveiller personne');
+  });
+});

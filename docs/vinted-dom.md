@@ -185,6 +185,52 @@ motif exige des chiffres après `/member/`, ce qui écarte les `/member/signup/�
 page porte aussi. Repli : `seller_id` dans le flux d'hydratation, présent dans les blocs
 `gallery`, `favourite` et `report`.
 
+### La note et le nombre d'évaluations : le flux d'abord
+
+La même cellule porte la réputation, mais **sans aucun `data-testid`** :
+
+```html
+<div
+  class="web_ui__Rating__rating"
+  role="group"
+  aria-label="Le membre est noté 4.7 sur 5"
+>
+  …cinq étoiles…
+  <div class="web_ui__Rating__label"><span>39</span></div>
+</div>
+```
+
+C'est le seul endroit du projet où le flux d'hydratation est la source **préférée** et
+le DOM le repli. Le bloc `user_info_header` nomme les deux valeurs, et ne dépend ni de
+la langue ni d'une classe :
+
+```js
+{"name":"user_info_header","section":"sidebar","data":{"item_id":9508569835,
+  "seller_id":237208752,"name":"ramikljk","feedback_count":4,
+  "feedback_reputation":0.8,"badges":[],"business":false}}
+```
+
+Trois relevés qui comptent :
+
+- **`feedback_reputation` est entre 0 et 1**, pas sur 5 : `0.8` vaut 4 étoiles. Le motif
+  d'`hydrationNumbers()` accepte donc les décimales — sans quoi il lirait « 0 », une
+  note nulle silencieusement fausse ;
+- le flux rend parfois `0.9400000000000001`, que Vinted affiche « 4.7 » : les deux voies
+  doivent arrondir pareil, d'où `ratingFromReputation()` ;
+- **le compteur du DOM est le dernier enfant du groupe**, atteint par sa position et non
+  par sa classe `web_ui__Rating__label` — la règle 4 vaut aussi pour les classes que
+  Vinted n'obfusque pas (encore).
+
+L'`aria-label` reste le repli de la note parce qu'il n'est pas une classe ; il est en
+revanche **traduit**, et le motif ne s'accroche donc qu'au nombre et à son séparateur.
+
+### Le pays du vendeur n'est pas sur la fiche — du tout
+
+Vérifié le 28/07/2026 sur quatre fiches : dans les 2,3 Mo servis, les seules occurrences
+de `country_code` sont des chaînes de traduction. Ni le DOM, ni le JSON-LD, ni le flux
+ne portent le pays du vendeur. C'est la seule information de l'extension qui exige une
+**seconde page**.
+
 ### La taille en identifiant n'est nulle part dans la page
 
 Le HTML servi ne contient **aucun `size_id`** — ni dans le DOM (`itemprop="size"` ne
@@ -297,6 +343,35 @@ Deux conséquences pour l'extraction :
   une carte du dressing relève d'un tout autre rayon. On enregistre donc
   `category: null` pour les cartes d'une fiche, et l'enrichissement remplit la vraie
   catégorie depuis la fiche de l'article.
+
+## Page profil `/member/{id}`
+
+Lue par `fetch()` uniquement, jamais injectée, et pour une seule chose : le pays.
+
+```js
+"expose_location":true,"city":"Bad Soden am Taunus","city_id":812,"country_code":"DE"
+```
+
+```html
+<div data-testid="profile-location-info">
+  …
+  <div data-testid="profile-location-info--content">Cenon, France</div>
+</div>
+```
+
+Le flux passe devant ici aussi, mais pour une autre raison qu'au-dessus : il donne le
+**code ISO**, la forme que le storage retient, là où le DOM affiche le nom traduit qu'il
+faut reconvertir (« Tchéquie » selon `Intl`, peut-être « République tchèque » selon
+Vinted — le repli ne reconnaît alors pas le pays, et c'est assumé).
+
+Le pays n'est retenu que si la page n'en désigne **qu'un seul** : mieux vaut aucun
+drapeau qu'un drapeau faux, même précaution que pour les photos et le compteur de
+favoris.
+
+Ce qui figure aussi sur cette page, et qu'on ne lit pas : `positive_feedback_count`,
+`item_count`, `followers_count`, `last_loged_on_ts`. En revanche **l'ancienneté du
+compte n'y est pas** — aucun `created_at` dans le HTML servi, sur les deux profils
+relevés.
 
 ## Modale d'offre
 

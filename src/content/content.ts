@@ -13,12 +13,40 @@
  *   Détail — un <script type="application/ld+json"> schema.org expose tout ;
  *   les data-testid `item-*` servent de repli.
  */
-import { DEFAULT_COLLECTION_ID } from '../shared/collections.ts';
+import { COLLECTIONS_KEY, DEFAULT_COLLECTION_ID } from '../shared/collections.ts';
 import { errorText } from '../shared/errors.ts';
-import { hydrationNumbers } from '../shared/hydration.ts';
+import { hydrationNumbers, hydrationSellerMap } from '../shared/hydration.ts';
+import {
+  NOISE_KEY,
+  addRule,
+  addSeller,
+  emptyNoise,
+  normalizeNoise,
+  pushHidden,
+  unhide,
+  verdictFor,
+} from '../shared/noise.ts';
+import type { NoiseFilters } from '../shared/noise.ts';
+import { patchNoise } from '../shared/noise-storage.ts';
+import {
+  NOISE_OVERLAY_SELECTOR,
+  closeNoiseMenu,
+  hasDismissPanel,
+  isNoiseMenuOpen,
+  openNoiseMenu,
+  renderPill,
+  showDismissPanel,
+} from './noise-ui.ts';
 import type { ExtensionMessage, WatchStartResponse } from '../shared/messages.ts';
 import { extractPhotos, photosFromDom, photosFromHydration } from '../shared/photos.ts';
 import { parsePriceString } from '../shared/price.ts';
+import {
+  ratingFromReputation,
+  readSellerFeedback,
+  sellerCell,
+  sellerCountryFrom,
+} from '../shared/seller.ts';
+import type { SellerFeedback } from '../shared/seller.ts';
 import { sizeIdFor } from '../shared/size-ids.ts';
 import {
   applyCheckResult,
@@ -32,22 +60,37 @@ import {
 } from '../shared/watch.ts';
 import type { CheckOutcome } from '../shared/watch.ts';
 import { DESCRIPTION_MAX } from '../shared/types.ts';
-import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/types.ts';
+import type {
+  CollectionMap,
+  ItemCategory,
+  ItemMap,
+  SavedItem,
+  WatchState,
+} from '../shared/types.ts';
 import {
   OVERLAY_SELECTOR,
   closePicker,
   isPickerOpen,
   openCollectionPicker,
+  toast,
 } from './collection-picker.ts';
 
 (() => {
   'use strict';
 
   const STORAGE_KEY = 'savedItems';
+  const SETTINGS_KEY = 'settings';
   const BTN_FLAG = 'vfInjected'; // dataset posé sur les cartes déjà traitées
 
   /** Cache local du contenu du storage : { [id]: item }. */
   let saved: ItemMap = {};
+
+  /**
+   * Les collections, lues pour une seule raison : annoncer « Déjà dans Vestes »
+   * au survol du marque-page. Quelques centaines d'octets, tenus à jour par le
+   * même écouteur `onChanged` que le reste.
+   */
+  let collections: CollectionMap = {};
 
   /** Télémétrie de debug, remontée par le diagnostic du panneau latéral. */
   const debug = {
@@ -63,9 +106,18 @@ import {
     // catégorie inexacte, table ambiguë, ou API muette. Voir completeSizeId().
     sizesResolved: 0,
     sizesUnresolved: 0,
+    // Profils vendeur lus pour en tirer le pays, et lectures restées sans —
+    // profil sans localisation exposée, ou requête échouée. Voir
+    // completeSellerCountry().
+    sellerProfiles: 0,
+    sellerProfilesEmpty: 0,
     // Ajouts depuis une carte annulés parce que la fiche s'avère vendue —
     // voir enrichFromDetail() / discardSoldItem().
     soldBlocked: 0,
+    // Cartes écartées à la main depuis cette page, et cartes masquées par une
+    // règle au dernier scan — voir docs/specs/filtrage-bruit.md.
+    dismissed: 0,
+    hiddenCards: 0,
     lastError: null as string | null,
   };
 
@@ -310,10 +362,13 @@ import {
   }
 
   /**
-   * Vendeur de l'article : identifiant et pseudo.
+   * Vendeur de l'article : identifiant, pseudo, et sa réputation telle que le
+   * DOM la porte.
    *
-   * Deux ancres complémentaires, toutes deux rendues côté serveur :
-   *   <a href="/member/3165663897">…<span data-testid="profile-username">emma07297</span>
+   * Trois ancres complémentaires, toutes rendues côté serveur :
+   *   <a href="/member/3165663897">
+   *     <span data-testid="profile-username">emma07297</span>
+   *     <div role="group" aria-label="Le membre est noté 4.7 sur 5">…</div>
    *
    * L'identifiant vient du lien plutôt que du `data-testid`, parce que c'est lui
    * qui porte le nombre ; le pseudo vient du `data-testid`, seul endroit où il
@@ -321,8 +376,17 @@ import {
    *
    * `/member/signup/...` traîne aussi dans la page (liens d'inscription) : le
    * motif exige des chiffres, ce qui les écarte sans avoir à les énumérer.
+   *
+   * La note et le compteur d'évaluations ne sont ici qu'un **repli** du flux
+   * d'hydratation — contrairement au reste de l'extraction. Voir
+   * `shared/seller.ts` : le DOM ne leur donne aucun `data-testid`, et son
+   * libellé dépend de la langue de la page.
    */
-  function readSeller(doc: Document): { id: string | null; name: string } {
+  function readSeller(doc: Document): {
+    id: string | null;
+    name: string;
+    feedback: SellerFeedback;
+  } {
     let id: string | null = null;
 
     for (const link of doc.querySelectorAll('a[href*="/member/"]')) {
@@ -333,7 +397,11 @@ import {
       }
     }
 
-    return { id, name: text(doc.querySelector('[data-testid="profile-username"]')) };
+    return {
+      id,
+      name: text(doc.querySelector('[data-testid="profile-username"]')),
+      feedback: readSellerFeedback(sellerCell(doc)),
+    };
   }
 
   /**
@@ -589,9 +657,20 @@ import {
    *                    avant ;
    *   brand_id         repli du fil d'Ariane, qui n'a de maillon de marque que
    *                    si l'article en a une de référencée ;
-   *   seller_id        repli du lien `/member/{id}`.
+   *   seller_id        repli du lien `/member/{id}` ;
+   *   feedback_count   nombre d'évaluations du vendeur, et
+   *   feedback_reputation  sa note entre 0 et 1 — les deux dans le bloc
+   *                    `user_info_header`. Ici le flux passe **devant** le DOM,
+   *                    qui n'a pour ces deux valeurs ni `data-testid` ni libellé
+   *                    indépendant de la langue (voir `shared/seller.ts`).
    */
-  const HYDRATED_KEYS = ['favourite_count', 'brand_id', 'seller_id'] as const;
+  const HYDRATED_KEYS = [
+    'favourite_count',
+    'brand_id',
+    'seller_id',
+    'feedback_count',
+    'feedback_reputation',
+  ] as const;
 
   /**
    * Extraction complète d'une fiche article — **la seule source de vérité**.
@@ -644,6 +723,17 @@ import {
     // suffit déjà à construire le lien vers le profil.
     const sellerName = seller.name && seller.name !== sellerId ? seller.name : null;
 
+    // Réputation : flux d'abord, DOM en repli — l'inverse du reste, et pour la
+    // raison donnée avec HYDRATED_KEYS. `??` et non `||` : zéro évaluation est
+    // une valeur, et c'est même celle qui compte le plus.
+    const sellerFeedbackCount = hydrated.feedback_count ?? seller.feedback.count;
+    const rating = ratingFromReputation(hydrated.feedback_reputation) ?? seller.feedback.rating;
+
+    // Un compte sans aucune évaluation n'a pas une note de 0 : il n'en a pas.
+    // Vinted rend pourtant `feedback_reputation: 0`, qu'afficher tel quel
+    // accuserait un vendeur neuf d'être un mauvais vendeur.
+    const sellerRating = sellerFeedbackCount === 0 ? null : rating;
+
     // Les deux branches ci-dessous partagent la galerie : le JSON-LD ne porte
     // que la photo principale (une chaîne, pas un tableau, même à trois photos).
     const images = extractPhotos(doc, id);
@@ -678,6 +768,8 @@ import {
         brandId,
         sellerId,
         sellerName,
+        sellerRating,
+        sellerFeedbackCount,
         // Le JSON-LD est la seule source de la description : la fiche ne porte
         // pas d'`itemprop="description"` (vérifié), et le bloc affiché est rendu
         // par React après hydratation.
@@ -706,6 +798,8 @@ import {
       brandId,
       sellerId,
       sellerName,
+      sellerRating,
+      sellerFeedbackCount,
       // Sans JSON-LD, la description n'est nulle part dans le HTML servi : on la
       // laisse absente plutôt que d'écraser celle d'une lecture précédente.
       description: null,
@@ -736,7 +830,8 @@ import {
    *
    * `sizeOnly` distingue les deux provenances : un article venu d'une **carte**
    * a toute sa fiche à lire, un article enregistré **depuis sa fiche** n'a plus
-   * qu'à faire résoudre sa taille — voir `completeSizeId()`. Les deux passent par
+   * qu'à faire résoudre sa taille et lire le profil de son vendeur — voir
+   * `completeSizeId()` et `completeSellerCountry()`. Les deux passent par
    * la même file, pour que ces requêtes de fond restent sérialisées entre elles.
    */
   type EnrichJob = { id: string; url: string; sizeOnly?: boolean };
@@ -771,6 +866,9 @@ import {
       try {
         if (!job.sizeOnly) await enrichFromDetail(job.id, job.url);
         await completeSizeId(job.id);
+        // En dernier : c'est la seule étape qui lise une **autre** page que la
+        // fiche, et la moins urgente des trois.
+        await completeSellerCountry(job.id);
       } catch (err) {
         debug.lastError = `enrichissement ${job.id} : ${errorText(err)}`;
         debug.enrichFailed += 1;
@@ -893,6 +991,87 @@ import {
     debug.sizesResolved += 1;
   }
 
+  /**
+   * Pays des vendeurs déjà consultés pendant la vie de cette page.
+   *
+   * Chiner, c'est ouvrir cinq pièces du même dressing : sans ce cache, chacune
+   * relirait le même profil. Il vit en mémoire et pas en storage — le pays est
+   * déjà écrit sur chaque article, et une clé de plus à maintenir (et à purger)
+   * ne rachèterait qu'une requête par session.
+   *
+   * Une entrée peut valoir `null` : profil lu, localisation non exposée. C'est
+   * une réponse, pas un échec — on ne la redemande pas.
+   */
+  const sellerCountries = new Map<string, string | null>();
+
+  /**
+   * Lit `/member/{id}` pour en tirer le pays du vendeur.
+   *
+   * @returns le code ISO, `null` si le profil n'expose pas sa localisation, et
+   *   `undefined` si la lecture a échoué — seul cas où l'on réessaiera plus tard
+   */
+  async function fetchSellerCountry(sellerId: string): Promise<string | null | undefined> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ENRICH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`https://www.vinted.fr/member/${sellerId}`, {
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      if (!response.ok) return undefined;
+
+      const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+      return sellerCountryFrom(doc);
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Complète un article par le pays de son vendeur.
+   *
+   * **Écriture séparée, après celle de la fiche**, pour la même raison que
+   * `completeSizeId()` : c'est une requête de plus, et l'article ne doit pas
+   * rester en attente pour une information secondaire. La fiche ne porte le pays
+   * nulle part — voir `shared/seller.ts`.
+   *
+   * **Le pays d'un compte ne change pas** : un article qui a déjà la réponse
+   * n'en redemande jamais, `null` compris. Seul `undefined` — profil jamais lu —
+   * déclenche la requête, ce qui laisse aussi une seconde chance aux articles
+   * dont la lecture avait échoué.
+   */
+  async function completeSellerCountry(id: string): Promise<void> {
+    const current = await readItems();
+    const item = current[id];
+
+    if (!item?.sellerId || item.sellerCountry !== undefined) return;
+    const sellerId = item.sellerId;
+
+    let country: string | null | undefined;
+    if (sellerCountries.has(sellerId)) {
+      country = sellerCountries.get(sellerId);
+    } else {
+      country = await fetchSellerCountry(sellerId);
+      if (country === undefined) return; // requête échouée : rien à écrire
+      sellerCountries.set(sellerId, country);
+    }
+
+    // Relecture : la requête a laissé le temps à un autre onglet d'écrire, et à
+    // l'utilisateur de retirer l'article.
+    const fresh = await readItems();
+    const target = fresh[id];
+    if (!target) return;
+
+    fresh[id] = { ...target, sellerCountry: country ?? null };
+    await chrome.storage.local.set({ [STORAGE_KEY]: fresh });
+
+    if (country) debug.sellerProfiles += 1;
+    else debug.sellerProfilesEmpty += 1;
+  }
+
   // ---------------------------------------------------------------------------
   // Suivi de prix et de disponibilité — docs/specs/suivi-prix.md
   //
@@ -910,12 +1089,11 @@ import {
    * et rien ne se passe » : la console de l'onglet Vinted (pas celle du
    * panneau) montre chaque décision du cycle, notamment celles qui ne sont
    * pas des erreurs — bail perdu, débit épuisé, aucun article éligible…
+   *
+   * Désactivé (no-op) une fois le diagnostic terminé — les points d'appel
+   * restent en place pour une réactivation rapide en cas de nouveau bug muet.
    */
-  function watchLog(...args: unknown[]): void {
-    // `warn` plutôt que `log` : la règle ESLint `no-console` du projet n'autorise
-    // que `warn`/`error`. Ce n'est pas une erreur, seulement un jaune plus visible.
-    console.warn('[Vinted Favoris][watch]', ...args);
-  }
+  function watchLog(..._args: unknown[]): void {}
 
   /**
    * Identifiant de cette instance de content script, pas un vrai id d'onglet
@@ -1209,6 +1387,222 @@ import {
   }
 
   // ---------------------------------------------------------------------------
+  // Filtrage du bruit — docs/specs/filtrage-bruit.md
+  // ---------------------------------------------------------------------------
+
+  let noise: NoiseFilters = emptyNoise();
+
+  /**
+   * Incrémenté à chaque arrivée de nouvelles règles.
+   *
+   * Sans lui, une carte jugée visible sous les anciennes règles ne serait jamais
+   * réévaluée : la garde d'idempotence sortirait avant même de calculer le
+   * verdict, et masquer une marque n'aurait d'effet que sur les cartes chargées
+   * après coup.
+   */
+  let noiseRev = 0;
+
+  /** Réglage d'affichage, pas une règle : il vit dans `settings`. */
+  let revealHidden = false;
+
+  /**
+   * `item_id → seller_id` du flux d'hydratation, calculé une fois par page.
+   *
+   * Peut légitimement rester vide — voir `hydrationSellerMap()` et §7 de la spec.
+   * On ne le recalcule qu'au premier besoin, et jamais sur une fiche : là, le
+   * vendeur se lit dans le DOM, proprement.
+   */
+  let cardSellers: Map<string, string> | null = null;
+
+  function sellerOfCard(id: string): string | null {
+    cardSellers ??= hydrationSellerMap(document);
+    return cardSellers.get(id) ?? null;
+  }
+
+  async function loadNoise(): Promise<void> {
+    try {
+      const res: { [NOISE_KEY]?: Partial<NoiseFilters> } =
+        await chrome.storage.local.get(NOISE_KEY);
+      noise = normalizeNoise(res[NOISE_KEY]);
+    } catch (err) {
+      // Extension rechargée sans recharger l'onglet : le filtrage se tait plutôt
+      // que de faire tomber l'injection des boutons, qui compte davantage.
+      debug.lastError = errorText(err);
+    }
+  }
+
+  async function loadCollections(): Promise<void> {
+    try {
+      const res: { [COLLECTIONS_KEY]?: CollectionMap } =
+        await chrome.storage.local.get(COLLECTIONS_KEY);
+      collections = res[COLLECTIONS_KEY] || {};
+    } catch (err) {
+      debug.lastError = errorText(err);
+    }
+  }
+
+  /** Le seul réglage du panneau que le content script lise : le mode révision. */
+  async function loadReveal(): Promise<void> {
+    try {
+      const res: { [SETTINGS_KEY]?: { revealHidden?: boolean } } =
+        await chrome.storage.local.get(SETTINGS_KEY);
+      revealHidden = Boolean(res[SETTINGS_KEY]?.revealHidden);
+    } catch (err) {
+      debug.lastError = errorText(err);
+    }
+  }
+
+  /**
+   * Applique le mode révision. Une **seule** écriture d'attribut, sur `<html>` —
+   * un élément que le MutationObserver ne surveille même pas (il observe
+   * `document.body`, et sans `attributes`). Révéler 96 cartes coûte donc zéro
+   * mutation et zéro scan.
+   */
+  function applyRevealClass(): void {
+    document.documentElement.classList.toggle('vf-reveal', revealHidden);
+  }
+
+  /**
+   * L'élément à masquer pour que la grille se referme d'elle-même.
+   *
+   * La carte (`product-item-id-…`) est enfouie **trois niveaux** sous sa cellule
+   * de grille (`grid-item`, ancre documentée dans `docs/vinted-dom.md`). Masquer
+   * la carte laissait donc la cellule en place, vide : la grille gardait un trou,
+   * et une ligne ne se refermait que lorsque ses quatre cartes étaient masquées.
+   * En masquant la cellule, l'auto-placement CSS Grid fait remonter les suivantes
+   * sans qu'on ait rien à calculer.
+   *
+   * On ne remonte que si la cellule ne porte qu'une carte : deux cartes dans la
+   * même cellule et l'on emporterait la voisine. Le résultat est mémoïsé — la
+   * structure d'une carte ne change pas de sa vie, et `closest()` sur 96 cartes à
+   * chaque scan est du travail répété pour rien.
+   */
+  const hideTargets = new WeakMap<HTMLElement, HTMLElement>();
+
+  function hideTargetOf(box: HTMLElement): HTMLElement {
+    const known = hideTargets.get(box);
+    if (known) return known;
+
+    const cell = box.closest<HTMLElement>('[data-testid="grid-item"]');
+    const target = cell && cell.querySelectorAll(CATALOG_CARDS).length === 1 ? cell : box;
+
+    hideTargets.set(box, target);
+    return target;
+  }
+
+  /**
+   * Pose le verdict de filtrage sur une carte, et rend le compte des masquées.
+   *
+   * Le masquage passe par un **attribut**, pas par une classe : React réécrit
+   * `className` à chaque rendu de la carte et emporterait la nôtre, alors qu'il
+   * ne touche pas aux `data-*` qu'il ne connaît pas. C'est aussi le mécanisme le
+   * plus économe — les mutations d'attributs ne sont pas observées, donc le
+   * masquage ne peut pas boucler (règle 3).
+   *
+   * La garde compare **l'état réel** à l'état voulu, et pas seulement un drapeau
+   * « déjà traité » : si Vinted re-rend une carte et emporte nos attributs, les
+   * deux lectures rendent `undefined`, le verdict est reposé, et la carte ne
+   * reste pas visible pour toujours sans que rien ne le signale.
+   */
+  function applyFilters(): void {
+    let hiddenCount = 0;
+
+    for (const box of cardBoxes()) {
+      const id = cardId(box);
+      if (!id) continue;
+
+      const hideBtn = box.querySelector<HTMLButtonElement>('.vf-hide-btn');
+      if (hideBtn) paintHideButton(hideBtn, Boolean(saved[id]), Boolean(noise.hidden[id]));
+
+      // Une carte en cours de repli garde son panneau d'annulation : la masquer
+      // tout de suite escamoterait le « Annuler » avant qu'on l'ait lu.
+      if (hasDismissPanel(box)) {
+        hiddenCount += 1;
+        continue;
+      }
+
+      const decision = verdictFor(
+        {
+          id,
+          title: cardTitle(box),
+          brand: text(box.querySelector('[data-testid$="--description-title"]')),
+          sellerId: sellerOfCard(id),
+        },
+        noise,
+        saved
+      );
+
+      if (decision.verdict !== '0') hiddenCount += 1;
+
+      const target = hideTargetOf(box);
+      if (
+        target.dataset.vfRev === String(noiseRev) &&
+        target.dataset.vfHidden === decision.verdict
+      ) {
+        continue;
+      }
+
+      target.dataset.vfHidden = decision.verdict;
+      target.dataset.vfRev = String(noiseRev);
+
+      // Le motif se lit au survol en mode révision. On ne pose le `title` que
+      // lorsqu'on masque, et on le retire sinon : écraser celui de Vinted sur
+      // une carte visible serait un effet de bord gratuit.
+      if (decision.verdict === '0') target.removeAttribute('title');
+      else target.title = `Masqué : ${decision.reason}`;
+    }
+
+    debug.hiddenCards = hiddenCount;
+
+    // Le basculement est **transitoire et local à la page** : rien n'est écrit en
+    // storage. Le réglage durable vit dans le panneau — un « tout afficher »
+    // global qu'on oublie d'éteindre donne une extension qui semble avoir perdu
+    // ses réglages.
+    renderPill(hiddenCount, revealHidden, () => {
+      revealHidden = !revealHidden;
+      applyRevealClass();
+      applyFilters();
+    });
+  }
+
+  /** Le titre d'une carte, tel que le lit `extractFromCard()`, sans tout ré-extraire. */
+  function cardTitle(box: HTMLElement): string {
+    const link =
+      box.querySelector<HTMLAnchorElement>('[data-testid$="--overlay-link"]') ||
+      box.querySelector<HTMLAnchorElement>('a[href*="/items/"]');
+    const img =
+      box.querySelector<HTMLImageElement>('[data-testid$="--image--img"]') ||
+      box.querySelector('img');
+    const label = link?.title || img?.alt || '';
+    return parseTitleFromLabel(label) || titleFromUrl(link?.href || '');
+  }
+
+  /** Écarte un article, et rend de quoi l'annuler. Écriture immédiate. */
+  async function dismissItem(id: string, title: string): Promise<void> {
+    noise = await patchNoise((current) => pushHidden(current, { id, title, at: Date.now() }));
+    noiseRev += 1;
+    debug.dismissed += 1;
+  }
+
+  async function restoreDismissed(id: string): Promise<void> {
+    noise = await patchNoise((current) => unhide(current, id));
+    noiseRev += 1;
+    applyFilters();
+  }
+
+  async function muteBrand(brand: string): Promise<void> {
+    noise = await patchNoise((current) => addRule(current, 'brands', brand));
+    noiseRev += 1;
+    applyFilters();
+  }
+
+  async function muteSeller(id: string, name: string): Promise<void> {
+    noise = await patchNoise((current) => addSeller(current, id, name));
+    noiseRev += 1;
+    applyFilters();
+  }
+
+  // ---------------------------------------------------------------------------
   // Rendu des boutons
   // ---------------------------------------------------------------------------
 
@@ -1217,12 +1611,30 @@ import {
   const ICON_FILLED =
     '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
 
+  /**
+   * Le nom de la collection où l'article est rangé, pour l'annoncer au survol.
+   *
+   * `''` quand l'article n'est pas enregistré, qu'il est dans la collection par
+   * défaut (le dire n'apprendrait rien), ou que les collections n'ont pas encore
+   * été lues.
+   */
+  function collectionNameOf(id: string): string {
+    const item = saved[id];
+    if (!item?.collectionId || item.collectionId === DEFAULT_COLLECTION_ID) return '';
+    return collections[item.collectionId]?.name || '';
+  }
+
   function paintButton(btn: HTMLButtonElement, isSaved: boolean): void {
     const isDetail = btn.classList.contains('vf-detail-btn');
     // Un article vendu ne peut pas être ajouté — mais s'il l'était déjà avant
     // de se vendre, il reste consultable et retirable normalement, voir
     // docs/limitations.md.
     const blocked = isDetail && btn.dataset.vfSold === 'true' && !isSaved;
+
+    // Le nom de la collection entre dans la garde ci-dessous : sans lui, le
+    // `title` d'un article déplacé d'une collection à l'autre ne se mettrait
+    // jamais à jour, et rien ne le signalerait.
+    const collection = isSaved && btn.dataset.vfId ? collectionNameOf(btn.dataset.vfId) : '';
 
     // Idempotent, et c'est vital : réécrire innerHTML déclenche le MutationObserver,
     // qui relance un scan, qui repeint… Sans cette garde, la page part en boucle
@@ -1231,15 +1643,20 @@ import {
     if (
       btn.dataset.vfPainted === '1' &&
       btn.dataset.vfSaved === String(isSaved) &&
-      btn.dataset.vfBlocked === String(blocked)
+      btn.dataset.vfBlocked === String(blocked) &&
+      btn.dataset.vfCol === collection
     )
       return;
 
     btn.dataset.vfSaved = String(isSaved);
     btn.dataset.vfBlocked = String(blocked);
+    btn.dataset.vfCol = collection;
     btn.dataset.vfPainted = '1';
     btn.disabled = blocked;
     btn.setAttribute('aria-pressed', String(isSaved));
+
+    // « Déjà dans Vestes » : la seule chose que l'icône pleine ne dit pas.
+    const where = collection ? `Déjà dans « ${collection} » — ` : '';
 
     if (isDetail) {
       if (blocked) {
@@ -1249,12 +1666,12 @@ import {
         btn.innerHTML =
           (isSaved ? ICON_FILLED : ICON_OUTLINE) +
           `<span>${isSaved ? 'Enregistré' : 'Enregistrer'}</span>`;
-        btn.title = isSaved ? 'Retirer de mes favoris' : 'Enregistrer dans mes favoris';
+        btn.title = isSaved ? `${where}retirer de mes favoris` : 'Enregistrer dans mes favoris';
       }
     } else {
       btn.innerHTML = isSaved ? ICON_FILLED : ICON_OUTLINE;
       btn.title = isSaved
-        ? 'Retirer de mes favoris (extension)'
+        ? `${where}retirer de mes favoris (extension)`
         : 'Enregistrer dans mes favoris (extension)';
     }
     btn.setAttribute('aria-label', btn.title);
@@ -1487,6 +1904,123 @@ import {
     return btn;
   }
 
+  /**
+   * Œil barré : le bouton « Écarter ». Plus petit que le marque-page (28 contre
+   * 32 px) et révélé au survol de la carte — le geste fréquent et positif reste
+   * le plus gros, et le catalogue reste visuellement calme.
+   */
+  const ICON_HIDE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.9 5.1A9.5 9.5 0 0 1 12 4.9c5 0 9 4.6 9 7.1a9 9 0 0 1-2 3.6M6.3 6.7C3.9 8.2 3 10.6 3 12c0 2.5 4 7.1 9 7.1 1.8 0 3.4-.6 4.7-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/></svg>';
+
+  /** Œil ouvert : le même bouton, quand il sert à **remettre** un article écarté. */
+  const ICON_SHOW =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12s3.6-7.1 9-7.1 9 7.1 9 7.1-3.6 7.1-9 7.1S3 12 3 12z"/><circle cx="12" cy="12" r="2.6"/></svg>';
+
+  /**
+   * Le bouton d'écart d'une carte.
+   *
+   * Il ne réutilise pas `createButton()` — celui-ci porte tout le protocole
+   * d'enregistrement (appui long, choix de collection, enrichissement) qui n'a
+   * rien à voir ici. Les règles 1 et 2 sont en revanche reprises telles quelles :
+   * `pointerdown` pour la souris, `click` pour le seul clavier.
+   */
+  function createHideButton(box: HTMLElement, host: HTMLElement): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'vf-hide-btn';
+    btn.innerHTML = ICON_HIDE;
+
+    const run = (): void => {
+      const id = cardId(box);
+      if (!id) return;
+
+      // Un article enregistré n'est jamais masqué : le bouton le dit plutôt que
+      // de ne rien faire en silence.
+      if (saved[id]) return;
+
+      // Article déjà écarté : le même bouton le remet. C'est le geste inverse au
+      // même endroit — utile surtout en mode révision, où les cartes masquées
+      // sont à l'écran et où l'on veut en repêcher une sans ouvrir le panneau.
+      if (noise.hidden[id]) {
+        void restoreDismissed(id);
+        return;
+      }
+
+      const title = cardTitle(box);
+      const brand = text(box.querySelector('[data-testid$="--description-title"]'));
+      const sellerId = sellerOfCard(id);
+
+      void dismissItem(id, title).catch((err: unknown) => {
+        debug.lastError = errorText(err);
+      });
+
+      showDismissPanel({
+        card: box,
+        host,
+        brand,
+        // Le pseudo n'est pas lisible depuis une carte : seul l'identifiant l'est.
+        seller: sellerId ? { id: sellerId, name: '' } : null,
+        onUndo: () => {
+          void restoreDismissed(id);
+        },
+        onExpire: applyFilters,
+        onMuteBrand: () => {
+          void muteBrand(brand);
+        },
+        onMuteSeller: () => {
+          if (sellerId) void muteSeller(sellerId, '');
+        },
+      });
+    };
+
+    btn.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (btn.disabled) return;
+      run();
+    });
+
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.detail === 0 && !btn.disabled) run();
+    });
+
+    return btn;
+  }
+
+  /**
+   * Met à jour le bouton d'écart : inerte sur un article enregistré, inversé sur
+   * un article déjà écarté.
+   *
+   * Idempotent pour la même raison que `paintButton()` — réécrire un attribut
+   * sans condition à chaque scan est ce qui fabrique les boucles de repeint. Et
+   * comme lui, la garde compare **tous** les états qui décident du rendu : oublier
+   * `dismissed` laisserait un œil barré sur une carte qu'un clic remettrait.
+   *
+   * Un article masqué par une **règle** (marque, mot, vendeur) n'est pas
+   * concerné : le bouton ne connaît que l'écart individuel, et une règle se
+   * retire depuis le panneau. Le `title` le dit plutôt que de laisser un clic
+   * sans effet.
+   */
+  function paintHideButton(btn: HTMLButtonElement, isSaved: boolean, dismissed: boolean): void {
+    if (btn.dataset.vfSaved === String(isSaved) && btn.dataset.vfDismissed === String(dismissed)) {
+      return;
+    }
+    btn.dataset.vfSaved = String(isSaved);
+    btn.dataset.vfDismissed = String(dismissed);
+
+    btn.disabled = isSaved;
+    btn.innerHTML = dismissed ? ICON_SHOW : ICON_HIDE;
+
+    if (isSaved) btn.title = 'Article enregistré — retire-le de tes favoris pour l’écarter';
+    else if (dismissed) btn.title = 'Remettre cet article dans le catalogue';
+    else btn.title = 'Écarter cet article du catalogue';
+
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-pressed', String(dismissed));
+  }
+
   function injectCardButton(box: HTMLElement): void {
     if (box.dataset[BTN_FLAG]) return;
 
@@ -1501,6 +2035,9 @@ import {
     if (getComputedStyle(host).position === 'static') {
       host.style.position = 'relative';
     }
+    // Cible du survol qui révèle le bouton d'écart : la carte entière, pas le
+    // bouton lui-même — un bouton invisible ne peut pas être visé.
+    host.classList.add('vf-host');
 
     box.dataset[BTN_FLAG] = '1';
 
@@ -1508,6 +2045,11 @@ import {
     btn.dataset.vfId = item.id;
     paintButton(btn, Boolean(saved[item.id]));
     host.appendChild(btn);
+
+    const hide = createHideButton(box, host);
+    hide.dataset.vfId = item.id;
+    paintHideButton(hide, Boolean(saved[item.id]), Boolean(noise.hidden[item.id]));
+    host.appendChild(hide);
   }
 
   function injectDetailButton(): void {
@@ -1548,10 +2090,85 @@ import {
     document.body.appendChild(btn);
   }
 
+  /**
+   * Le bouton d'écart de la fiche : il ouvre un menu au lieu d'agir directement.
+   *
+   * La fiche est le seul endroit où l'identifiant du vendeur est **certain**
+   * (lien `/member/{id}` + `profile-username`), et elle a la place pour trois
+   * entrées là où une carte n'en a pas.
+   */
+  function injectDetailHideButton(): void {
+    const existing = document.querySelector<HTMLButtonElement>('.vf-detail-hide');
+
+    if (!isDetailPage()) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'vf-detail-hide';
+    btn.innerHTML = ICON_HIDE;
+    btn.title = 'Masquer…';
+    btn.setAttribute('aria-label', btn.title);
+
+    const run = (): void => {
+      // Un menu déjà ouvert se ferme sur ce geste, comme le choix de collection.
+      if (isNoiseMenuOpen()) {
+        closeNoiseMenu();
+        return;
+      }
+
+      const item = extractFromDetail();
+      if (!item) return;
+
+      const seller = readSeller(document);
+      openNoiseMenu({
+        anchor: btn.getBoundingClientRect(),
+        brand: item.brand || '',
+        seller: seller.id ? { id: seller.id, name: seller.name } : null,
+        onDismiss: () => {
+          void dismissItem(item.id, item.title).then(() => {
+            toast('Article écarté du catalogue');
+          });
+        },
+        onMuteBrand: () => {
+          void muteBrand(item.brand || '').then(() => {
+            toast(`Marque « ${item.brand} » masquée`);
+          });
+        },
+        onMuteSeller: () => {
+          if (!seller.id) return;
+          void muteSeller(seller.id, seller.name).then(() => {
+            toast(`${seller.name || 'Vendeur'} masqué`);
+          });
+        },
+      });
+    };
+
+    btn.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      run();
+    });
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.detail === 0) run();
+    });
+
+    document.body.appendChild(btn);
+  }
+
   /** Resynchronise l'état visuel de tous les boutons déjà en place. */
   function repaintAll(): void {
     document.querySelectorAll<HTMLButtonElement>('.vf-card-btn, .vf-detail-btn').forEach((btn) => {
       paintButton(btn, Boolean(btn.dataset.vfId && saved[btn.dataset.vfId]));
+    });
+    document.querySelectorAll<HTMLButtonElement>('.vf-hide-btn').forEach((btn) => {
+      const id = btn.dataset.vfId;
+      paintHideButton(btn, Boolean(id && saved[id]), Boolean(id && noise.hidden[id]));
     });
   }
 
@@ -1626,6 +2243,11 @@ import {
       injectCardButton(box);
     });
     injectDetailButton();
+    injectDetailHideButton();
+
+    // Après l'injection : une carte tout juste apparue doit être jugée dans le
+    // même passage, sinon elle clignote — visible une frame, masquée la suivante.
+    applyFilters();
   }
 
   // ---------------------------------------------------------------------------
@@ -1646,8 +2268,14 @@ import {
         lastUrl = location.href;
         const stale = document.querySelector('.vf-detail-btn');
         if (stale && !isDetailPage()) stale.remove();
-        // Le menu de collection est ancré à un bouton d'une page qu'on quitte.
+        // Les menus sont ancrés à un bouton d'une page qu'on quitte.
         closePicker();
+        closeNoiseMenu();
+
+        // Le flux d'hydratation appartient au document servi : après une
+        // navigation SPA, il ne décrit plus les cartes affichées. Le garder
+        // rattacherait à un article le vendeur d'un autre.
+        cardSellers = null;
       }
 
       scan();
@@ -1674,10 +2302,30 @@ import {
     debug: typeof debug;
     sample: SavedItem | null;
 
+    // --- Filtrage du bruit, voir docs/specs/filtrage-bruit.md ---
+    regles: Record<string, number>;
+    cartesMasquees: number;
+    /**
+     * Comptage **par motif**. C'est la ligne qui rend une plainte diagnosticable
+     * en une seconde : « pourquoi ce truc a disparu ? » se répond par un 20 en
+     * face de `brand`. Sans elle, la seule voie est de vider les règles une par
+     * une.
+     */
+    motifs: Record<string, number>;
+    /**
+     * Taux de résolution du vendeur sur les cartes — la question laissée ouverte
+     * par §7 de la spec. `0/48` dit que le flux d'hydratation d'une page de
+     * catalogue ne porte pas les vendeurs, et donc que « masquer ce vendeur » ne
+     * mord que depuis une fiche.
+     */
+    vendeursSurCartes: string;
+
     blocsArticles?: string[];
     blockCardsFound?: number;
     photos?: { flux: number; dom: number };
     identifiants?: Record<string, string | number | null>;
+    /** Réputation du vendeur, ses deux sources côte à côte — voir diagnose(). */
+    vendeur?: Record<string, string | number | null>;
     detailJsonLd?: boolean;
     detailExtraction?: SavedItem | null;
     detailButton?: string;
@@ -1716,6 +2364,16 @@ import {
     // n'apprendrait rien — on montre la valeur.
     const category = readBreadcrumbCategory(document);
 
+    const motifs: Record<string, number> = { item: 0, seller: 0, brand: 0, word: 0 };
+    for (const box of boxes) {
+      // Le verdict est posé sur la cellule de grille, pas sur la carte — voir
+      // hideTargetOf().
+      const verdict = hideTargetOf(box).dataset.vfHidden;
+      if (verdict && verdict !== '0') motifs[verdict] = (motifs[verdict] ?? 0) + 1;
+    }
+
+    const sellersResolved = items.filter((item) => sellerOfCard(item.id)).length;
+
     const report: DiagnoseReport = {
       url: location.href,
       isDetailPage: isDetailPage(),
@@ -1727,6 +2385,19 @@ import {
       savedCount: Object.keys(saved).length,
       debug: { ...debug },
       sample: items[0] || null,
+
+      regles: {
+        ecartes: Object.keys(noise.hidden).length,
+        vendeurs: Object.keys(noise.sellers).length,
+        marques: noise.brands.length,
+        mots: noise.words.length,
+      },
+      cartesMasquees: boxes.filter((box) => {
+        const verdict = hideTargetOf(box).dataset.vfHidden;
+        return verdict !== undefined && verdict !== '0';
+      }).length,
+      motifs,
+      vendeursSurCartes: `${sellersResolved}/${items.length}`,
     };
 
     if (!isDetailPage()) return report;
@@ -1767,6 +2438,18 @@ import {
       vendeurFlux: hydrated.seller_id ?? null,
       vendeurPseudo: seller.name || null,
       taille: 'non exposée par Vinted — voir docs/limitations.md',
+    };
+
+    // Réputation du vendeur, ses deux sources côte à côte pour la même raison :
+    // un flux muet avec un DOM fourni dit que le bloc `user_info_header` a changé
+    // de nom, pas que le vendeur n'a pas d'avis. Le pays n'apparaît pas ici : il
+    // n'est sur aucune fiche, il vient de `/member/{id}` — voir shared/seller.ts.
+    report.vendeur = {
+      noteFlux: ratingFromReputation(hydrated.feedback_reputation),
+      noteDom: seller.feedback.rating,
+      avisFlux: hydrated.feedback_count ?? null,
+      avisDom: seller.feedback.count,
+      paysLus: `${debug.sellerProfiles} profil(s), ${debug.sellerProfilesEmpty} sans localisation`,
     };
 
     if (btn) {
@@ -1846,25 +2529,63 @@ import {
   // ---------------------------------------------------------------------------
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    const change = changes[STORAGE_KEY];
-    if (area !== 'local' || !change) return;
-    saved = (change.newValue as ItemMap | undefined) || {};
-    repaintAll();
+    if (area !== 'local') return;
+
+    const items = changes[STORAGE_KEY];
+    if (items) {
+      saved = (items.newValue as ItemMap | undefined) || {};
+      repaintAll();
+      // Un article enregistré n'est plus masqué, et un article retiré des favoris
+      // redevient masquable : le verdict dépend de `saved`, il doit être rejoué.
+      noiseRev += 1;
+      applyFilters();
+    }
+
+    // Les règles peuvent venir du panneau, ou d'un autre onglet Vinted. Aucun
+    // message n'est échangé : le storage est le seul canal (§1 de la spec).
+    // Un article rangé ailleurs change le « Déjà dans… » de son marque-page.
+    const cols = changes[COLLECTIONS_KEY];
+    if (cols) {
+      collections = (cols.newValue as CollectionMap | undefined) || {};
+      repaintAll();
+    }
+
+    const rules = changes[NOISE_KEY];
+    if (rules) {
+      noise = normalizeNoise(rules.newValue as Partial<NoiseFilters> | undefined);
+      noiseRev += 1;
+      applyFilters();
+    }
+
+    const settings = changes[SETTINGS_KEY];
+    if (settings) {
+      const next = Boolean(
+        (settings.newValue as { revealHidden?: boolean } | undefined)?.revealHidden
+      );
+      if (next !== revealHidden) {
+        revealHidden = next;
+        applyRevealClass();
+        applyFilters();
+      }
+    }
   });
 
-  void loadSaved().then(() => {
+  void Promise.all([loadSaved(), loadCollections(), loadNoise(), loadReveal()]).then(() => {
+    applyRevealClass();
     scan();
 
     /** Nos propres nœuds : leurs mutations ne doivent jamais relancer un scan. */
-    const OWN = `.vf-card-btn, .vf-detail-btn, ${OVERLAY_SELECTOR}`;
+    const OWN = `.vf-card-btn, .vf-detail-btn, .vf-hide-btn, .vf-detail-hide, ${OVERLAY_SELECTOR}, ${NOISE_OVERLAY_SELECTOR}`;
 
     /**
      * Le menu de collection et sa confirmation sont posés sur `document.body` :
      * la mutation a alors pour cible le body, que `closest()` ne rattachera
      * jamais à nous. On regarde donc aussi ce qui entre et sort.
      */
+    const BODY_OVERLAYS = `${OVERLAY_SELECTOR}, .vf-pill, .vf-noise-menu, .vf-detail-hide`;
+
     const ownNodesOnly = (nodes: NodeList): boolean =>
-      [...nodes].every((node) => node instanceof Element && node.matches(OVERLAY_SELECTOR));
+      [...nodes].every((node) => node instanceof Element && node.matches(BODY_OVERLAYS));
 
     // Second garde-fou contre la boucle : on ignore les mutations que nos propres
     // boutons génèrent, pour ne réagir qu'aux changements venant de Vinted.

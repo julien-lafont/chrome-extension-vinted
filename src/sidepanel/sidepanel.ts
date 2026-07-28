@@ -10,6 +10,7 @@ import {
   ITEMS_KEY,
   COLLECTIONS_KEY,
   SETTINGS_KEY,
+  NOISE_KEY,
   ARCHIVE_COLLECTION_ID,
   DEFAULT_COLLECTION_ID,
   readAll,
@@ -41,9 +42,10 @@ import { enableDragAndDrop } from './dnd.ts';
 import { initGallery, openGallery } from './gallery.ts';
 import { similarSearchUrl, brandSearchUrl } from './search.ts';
 import { composeMessage, suggestPrice, submitOffer, formatEuro } from './offer.ts';
-import { initWatch, maybeStartSilentSweep } from './watch.ts';
+import { initWatch, maybeStartSilentSweep, resetRateLimits } from './watch.ts';
 import { initPriceHistory } from './price-history.ts';
-import { renderPriceAndStatus } from './item-render.ts';
+import { renderPriceAndStatus, renderSeller } from './item-render.ts';
+import { setFilters } from './filters.ts';
 
 import type { CollectionMap, Collection, SavedItem, Settings, SortMode } from '../shared/types.ts';
 
@@ -125,6 +127,9 @@ async function reload(): Promise<void> {
   items = data.items;
   collections = data.collections;
   settings = data.settings;
+  // La modale des filtres suit l'état global plutôt que de relire le storage de
+  // son côté : une seule source, un seul moment de lecture.
+  setFilters(data.noise, data.settings);
   render();
 }
 
@@ -384,33 +389,6 @@ function renderEmpty(message: string, hint: string): void {
   strong.textContent = message;
   div.append(strong, document.createTextNode(hint));
   listEl.append(div);
-}
-
-/**
- * Vendeur, sur la ligne du prix, cliquable vers son dressing.
- *
- * Le pseudo commande l'affichage, pas l'identifiant : « 286459945 » sur une
- * ligne d'article n'apprend rien à personne. L'identifiant, lui, ne sert qu'à
- * construire le lien — un vendeur nommé mais non identifié (fiche partiellement
- * lue) reste donc affiché, simplement sans lien.
- *
- * Les deux champs n'existent que sur les articles dont la fiche a été lue depuis
- * la 0.3 : rien ne les recalcule, la ligne reste muette pour les autres.
- */
-function renderSeller(node: ParentNode, item: SavedItem): void {
-  const name = item.sellerName?.trim();
-  if (!name) return;
-
-  const dot = within<HTMLElement>(node, '.item-seller-dot');
-  dot.hidden = false;
-
-  const el = within<HTMLAnchorElement>(node, '.item-seller');
-  el.textContent = name;
-  el.hidden = false;
-
-  if (!item.sellerId) return;
-  el.href = `https://www.vinted.fr/member/${item.sellerId}`;
-  el.title = `Voir le dressing de ${name}`;
 }
 
 function renderItem(item: SavedItem): DocumentFragment {
@@ -1143,9 +1121,35 @@ required('diagnose').addEventListener('click', () => {
   void runDiagnostic();
 });
 
+/**
+ * Remise à zéro des garde-fous de débit. Le rapport affiche ce qui a été levé —
+ * sans lui, le bouton n'aurait aucun retour visible quand rien ne freinait, et
+ * on ne saurait pas distinguer « c'était débloqué » de « le clic n'a rien fait ».
+ */
+required('reset-rate').addEventListener('click', () => {
+  void resetRateLimits().then((before) => {
+    reportEl.hidden = false;
+    reportEl.textContent = JSON.stringify(
+      {
+        message:
+          'Compteurs de débit remis à zéro (le bail et la date du dernier cycle sont intacts).',
+        avant: {
+          freine: before.freine,
+          coupsDeFreinConsecutifs: before.coupsDeFrein,
+          fichesLuesAujourdHui: before.budgetDuJour,
+          jetonsRestants: before.jetons,
+        },
+      },
+      null,
+      2
+    );
+  });
+});
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes[ITEMS_KEY] || changes[COLLECTIONS_KEY] || changes[SETTINGS_KEY]) void reload();
+  if (changes[ITEMS_KEY] || changes[COLLECTIONS_KEY] || changes[SETTINGS_KEY] || changes[NOISE_KEY])
+    void reload();
 });
 
 void reload();

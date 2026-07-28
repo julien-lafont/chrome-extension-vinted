@@ -165,7 +165,7 @@ marche pas — les rAF et observateurs encore en vol échouent sur une fenêtre 
 
 ## Fixtures
 
-Cinq fixtures, extraites de vraies pages Vinted :
+Sept fixtures, extraites de vraies pages Vinted :
 
 | Fixture                           | Page d'origine                   | Ce qu'elle seule couvre                                            |
 | --------------------------------- | -------------------------------- | ------------------------------------------------------------------ |
@@ -175,6 +175,7 @@ Cinq fixtures, extraites de vraies pages Vinted :
 | `item-photos.html` (18 Ko)        | une fiche à trois photos         | la galerie : ordre, pleine résolution, dédoublonnage               |
 | `sold.html`                       | une fiche **vendue**             | `isSoldDetail()`, et le repli sans JSON-LD (absent une fois vendu) |
 | `home.html` (4 cartes, 23 Ko)     | la page d'accueil                | les cartes `feed-item`, dont le testid ne porte pas d'identifiant  |
+| `member.html` (7 Ko)              | le profil du vendeur de la fiche | le pays, qui n'est **sur aucune fiche** — voir `shared/seller.ts`  |
 
 Les pages brutes pèsent 8 Mo et 2 Mo, presque entièrement du bundle Next.js : on ne
 garde que le markup réellement lu par le content script. Le markup conservé est
@@ -183,7 +184,13 @@ authentique, jamais réécrit à la main.
 L'échantillon de cartes n'est pas seulement « les 8 premières » : `pickCards()` ajoute
 au besoin une carte sans taille et une carte sans marque, seules à exercer les replis
 d'extraction. La fiche embarque en plus le bouton favori, le fil d'Ariane, ses photos et
-les fragments du flux d'hydratation qui portent le compteur de favoris et la galerie.
+les fragments du flux d'hydratation qui portent le compteur de favoris, la galerie et la
+réputation du vendeur.
+
+`member.html` est la seule fixture d'une page que l'extension **n'affiche jamais** :
+elle n'est lue que par `fetch()`, pour le seul pays du vendeur. Son URL se dérive du
+lien `/member/{id}` de `item.html`, de sorte que les deux fixtures décrivent le même
+vendeur sans qu'aucune URL soit épinglée à la main.
 
 **Les quinze `<img>` d'`item-photos.html` ne sont pas une négligence** : Vinted rend le
 carrousel cinq fois, et c'est exactement ce que le dédoublonnage doit absorber. Une
@@ -201,7 +208,7 @@ Vendu » autrement qu'en pointant une vraie fiche dans cet état. Même filet de
 l'article finira par disparaître du tout, le refresh le signale et conserve la fixture
 existante plutôt que de faire échouer les quatre autres.
 
-`fixtures/meta.json` porte les URLs des cinq pages (l'ID de l'article se lit dans celle
+`fixtures/meta.json` porte les URLs des sept pages (l'ID de l'article se lit dans celle
 de la fiche) et le nombre de cartes, que les tests lisent au lieu de coder ces valeurs
 en dur. **L'URL compte** : c'est elle qui décide si le content script se croit sur une
 fiche, et dans quel contexte de catégorie.
@@ -211,7 +218,7 @@ fiche, et dans quel contexte de catégorie.
 ```bash
 pnpm refresh-fixtures                                    # télécharge depuis vinted.fr
 tsx tests/tools/refresh-fixtures.ts cat.html item.html \
-  cat2.html photos.html                                  # depuis des pages capturées
+  cat2.html photos.html sold.html home.html member.html  # depuis des pages capturées
 ```
 
 Les pages Vinted étant rendues côté serveur, aucune session n'est nécessaire.

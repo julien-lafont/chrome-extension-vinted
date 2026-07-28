@@ -11,6 +11,7 @@ src/
   content/content.ts               extraction + injection des boutons
   content/content.css              styles des boutons injectés et du menu de collection
   content/collection-picker.ts     choix de collection à la capture (appui long)
+  content/noise-ui.ts              filtrage : annulation, pastille, menu de la fiche
   content/offer-agent.ts           pilotage de la modale d'offre Vinted
   sidepanel/sidepanel.ts           orchestration de l'interface
   sidepanel/store.ts               lecture/écriture chrome.storage.local
@@ -19,11 +20,16 @@ src/
   sidepanel/offer.ts               composition du message + pilotage de l'onglet
   sidepanel/search.ts              URLs de catalogue (similaires, marque)
   sidepanel/gallery.ts             visionneuse des photos d'un article
+  sidepanel/filters.ts             modale de gestion des règles de filtrage
   shared/types.ts                  modèle de données (SavedItem, Collection, Settings)
   shared/collections.ts            clé `collections` : lecture, création, rangement
+  shared/noise.ts                  règles de filtrage du catalogue (pur, testé)
+  shared/noise-storage.ts          clé `noise` : relecture puis écriture
   shared/messages.ts               protocole panneau ↔ content scripts
   shared/photos.ts                 photos d'une fiche, du flux RSC ou du DOM
   shared/hydration.ts              identifiants lus dans le flux RSC (repli du DOM)
+  shared/seller.ts                 réputation du vendeur ; pays, lu sur son profil
+  shared/countries.ts              code pays → drapeau et nom (aucune table de noms)
   shared/size-ids.ts               libellé de taille → identifiant de catalogue
   shared/price.ts                  lecture d'un prix affiché par Vinted
   shared/errors.ts                 message lisible d'une erreur attrapée
@@ -72,8 +78,9 @@ l'enregistrement des favoris de fonctionner.
 
 ## Stockage
 
-Quatre clés dans `chrome.storage.local` : `savedItems`, `collections`, `settings`, et
-`watch` (état du cycle de rafraîchissement — voir `docs/specs/suivi-prix.md`).
+Cinq clés dans `chrome.storage.local` : `savedItems`, `collections`, `settings`, `watch`
+(état du cycle de rafraîchissement — voir `docs/specs/suivi-prix.md`) et `noise` (règles
+de filtrage du catalogue — voir `docs/specs/filtrage-bruit.md`).
 
 ```js
 savedItems = {
@@ -109,12 +116,17 @@ savedItems = {
         dominantColor: '#cd98c1',
       },
     ],
-    // Les quatre champs suivants ne viennent que de la fiche : absents tant
-    // qu'elle n'a pas été lue, et sur les articles enregistrés avant la 0.3.
+    // Les champs suivants ne viennent que de la fiche : absents tant qu'elle
+    // n'a pas été lue, et sur les articles enregistrés avant la 0.3 (0.4 pour
+    // ceux du vendeur). Seul `sellerCountry` fait exception : la fiche ne le
+    // porte nulle part, il vient d'une lecture de /member/{id}.
     brandId: '53', // seul filtre de marque accepté par le catalogue
     sizeId: '208', // résolu après coup, voir shared/size-ids.ts
     sellerId: '3165663897', // le profil est /member/{sellerId}
     sellerName: 'emma07297',
+    sellerRating: 4.7, // note sur 5 ; null quand le vendeur n'a aucun avis
+    sellerFeedbackCount: 39, // 0 est une valeur, null veut dire « pas lu »
+    sellerCountry: 'FR', // ISO alpha-2 ; lu sur /member/{id}, jamais relu
     description: 'Veste Nike Dri-FIT…', // tronquée, encore inexploitée
     savedAt: 1753500000000,
     source: 'catalog', // ou "detail"
@@ -146,6 +158,7 @@ settings = {
   sortDir: 'asc',
   offer: { discount: 15, autoMessage: true },
   hideSold: false,
+  revealHidden: false, // mode révision du filtrage — préférence, pas une règle
 };
 
 // État du cycle de rafraîchissement, écrit par le content script d'un onglet
@@ -153,6 +166,17 @@ settings = {
 watch = {
   lastSweepAt: 1753500000000,
   bucket: { tokens: 12, at: 1753500000000 },
+};
+
+// Écrit par le panneau (modale « Filtres ») comme par la page (bouton d'écart).
+// `hidden` est borné et évincé par ancienneté : c'est le seul endroit du projet
+// où perdre une donnée est sans conséquence.
+noise = {
+  hidden: { 9496908003: 1753500000000 },
+  recent: [{ id: '9496908003', title: 'Veste Barbour', at: 1753500000000 }],
+  sellers: { 286459945: { name: 'destock_pro', at: 1753500000000 } },
+  brands: ['shein', 'zara'],
+  words: ['lot', 'inspire'],
 };
 ```
 
@@ -264,8 +288,29 @@ fil d'Ariane sert son référencement — là où le flux d'hydratation n'est qu
 d'implémentation de son rendu React, libre de changer sans préavis. Le repli existe
 quand même : un article sans marque référencée n'a pas de maillon de marque.
 
-Les trois clés du flux (`favourite_count`, `brand_id`, `seller_id`) sont lues en **une
-seule passe** par `shared/hydration.ts` : une fiche porte ~240 scripts, dont un de 1 Mo.
+**La réputation du vendeur inverse cet ordre**, et c'est la seule exception :
+
+| Champ                 | Source préférée                      | Repli                          |
+| --------------------- | ------------------------------------ | ------------------------------ |
+| `sellerRating`        | `feedback_reputation` du flux (0..1) | `aria-label` du bloc d'étoiles |
+| `sellerFeedbackCount` | `feedback_count` du flux             | dernier enfant du même bloc    |
+
+Le DOM ne leur donne ici aucun `data-testid` : la note ne se lit que dans un libellé
+d'accessibilité traduit (« Le membre est noté 4.7 sur 5 »), et le compteur dans un nœud
+qui n'est identifiable que par sa classe — ce que la règle 4 interdit. Le flux, lui,
+nomme les deux valeurs et ne dépend pas de la langue.
+
+Les cinq clés du flux (`favourite_count`, `brand_id`, `seller_id`, `feedback_count`,
+`feedback_reputation`) sont lues en **une seule passe** par `shared/hydration.ts` : une
+fiche porte ~240 scripts, dont un de 1 Mo.
+
+`sellerCountry` n'a, lui, **aucune source sur la fiche** : le pays n'est ni dans le DOM,
+ni dans le JSON-LD, ni dans le flux. Il se lit sur `/member/{sellerId}`, dans une
+requête séparée faite après l'enrichissement — même principe que `sizeId`, l'article
+n'attend pas ce champ pour être complet. Le pays d'un compte ne changeant pas, il n'est
+**jamais relu** : un article qui a déjà la réponse (`null` compris, profil sans
+localisation) ne redemande rien, et un cache mémoire évite de relire le même profil pour
+cinq pièces du même dressing. Voir `shared/seller.ts` et `completeSellerCountry()`.
 
 `brandId` n'est pas un confort d'affichage : c'est le seul filtre de marque que le
 catalogue accepte (`brand_ids[]` ignore un nom), donc la condition pour que « rechercher

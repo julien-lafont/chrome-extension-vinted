@@ -57,10 +57,9 @@ Le [Diagnostic](diagnostic.md) compte les deux issues sous `debug.sizesResolved`
 200 caractères, et n'est ni affichée ni cherchable. C'est une capture d'avance : la
 relire plus tard supposerait de recharger toutes les fiches.
 
-**Le vendeur n'est connu que par son identifiant et son pseudo.** Ni note, ni nombre
-d'évaluations, ni ancienneté — ces blocs de la fiche n'ont pas d'ancre relevée. Le
-pseudo est affiché à côté du prix, cliquable vers le dressing ; les articles enregistrés
-avant la 0.3 n'en ont pas, et rien ne le recalcule.
+**Le vendeur est connu par son identifiant, son pseudo, sa note, son nombre
+d'évaluations et son pays** — voir la section « Vendeur » plus bas pour ce qui manque
+encore, et ce que rien ne rétro-remplit.
 
 ## Catégorie
 
@@ -95,6 +94,31 @@ les deux.
 Un article sans donnée exploitable pour le tri courant finit **toujours** en bas de
 liste, dans les deux sens : une donnée manquante ne doit pas remonter artificiellement
 en tête. L'en-tête du panneau indique combien d'articles sont dans ce cas.
+
+## Vendeur
+
+**Le pays coûte une requête, et n'arrive pas toujours.** Il n'est sur aucune fiche : il
+faut lire `/member/{id}`, ce qui se fait après l'enregistrement, en tâche de fond. Trois
+cas où le drapeau n'apparaît pas, et ils ne se distinguent pas à l'œil : le membre
+n'expose pas sa localisation, la requête a échoué, ou l'article date d'avant la 0.4.
+Seul le [Diagnostic](diagnostic.md) les sépare (`debug.sellerProfiles` /
+`sellerProfilesEmpty`).
+
+**Le pays n'est jamais rafraîchi**, délibérément : celui d'un compte ne change pas, et
+relire un profil par article coûterait une requête pour rien.
+
+**Pas de drapeaux sous Windows.** Chrome n'y embarque pas les glyphes d'indicateurs
+régionaux et affiche le code en deux lettres (« DE »). Le nom complet du pays reste dans
+l'infobulle, dans les deux cas.
+
+**Ancienneté du compte et délai de réponse ne sont pas capturés.** Le premier n'est
+servi nulle part (aucun `created_at` dans le HTML de la fiche ni du profil) ; le second
+n'existe qu'après hydratation côté client, hors de portée d'une lecture par `fetch()`.
+
+**Note et évaluations ne sont pas rétro-remplies.** Comme la galerie et les
+identifiants, elles n'arrivent qu'aux articles enregistrés depuis la 0.4. Le cycle de
+veille relit pourtant ces fiches — propager la réputation au passage ne coûterait aucune
+requête, et reste à faire.
 
 ## Galerie de photos
 

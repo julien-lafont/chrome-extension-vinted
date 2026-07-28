@@ -117,16 +117,23 @@
           <a class="item-title" target="_blank" rel="noreferrer"></a>
           <p class="item-meta"></p>
 
-          <!-- Le vendeur partage la ligne du prix : c'est avec lui qu'on
-               négocie, et son dressing est le premier endroit où chercher une
-               seconde pièce. Masqué tant que la fiche n'a pas été lue. -->
           <p class="item-price">
             <span class="item-price-value"></span>
             <s class="item-price-was" hidden></s>
             <button type="button" class="item-price-delta" hidden></button>
             <span class="item-status-badge" hidden></span>
-            <span class="item-seller-dot" aria-hidden="true" hidden>·</span>
-            <a class="item-seller" target="_blank" rel="noreferrer" hidden></a>
+          </p>
+
+          <!-- Le vendeur a sa propre ligne : sur une pièce rare, il compte
+               autant que l'article, et les quatre informations (pays, pseudo,
+               note, évaluations) ne tiennent pas sur la ligne du prix sans en
+               chasser le prix lui-même. Masquée tant que la fiche n'a pas été
+               lue. -->
+          <p class="item-seller-line" hidden>
+            <span class="item-seller-flag" hidden></span>
+            <a class="item-seller" target="_blank" rel="noreferrer"></a>
+            <span class="item-seller-rating" hidden></span>
+            <span class="item-seller-reviews" hidden></span>
           </p>
         </div>
 
@@ -342,9 +349,134 @@
       </div>
     </div>
 
+    <!-- Modale : articles écartés un par un. Séparée des filtres, dont elle
+         occupait la moitié de la hauteur pour un usage bien plus rare.
+
+         `overlay--stacked` : elle s'ouvre **par-dessus** #filters-dialog, donc
+         pendant qu'il est visible. Les deux sont des `.overlay` de même z-index
+         (80) ; sans ce modificateur, l'ordre du DOM les départage et
+         #filters-dialog — plus loin dans la page — peint par-dessus, rendant
+         "Gérer" muet en apparence alors que la modale s'ouvre bien. -->
+    <div id="hidden-dialog" class="overlay overlay--stacked" hidden>
+      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="hidden-title">
+        <h2 id="hidden-title">Articles écartés</h2>
+
+        <p class="filters-line" id="hidden-summary"></p>
+        <div class="filters-recent" id="hidden-recent"></div>
+        <p class="hint filters-note" id="hidden-note"></p>
+
+        <div class="dialog-actions">
+          <button type="button" class="primary" data-close>Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modale : filtres du catalogue -->
+    <div id="filters-dialog" class="overlay" hidden>
+      <div class="dialog dialog-lg" role="dialog" aria-modal="true" aria-labelledby="filters-title">
+        <h2 id="filters-title">Filtres du catalogue</h2>
+
+        <!-- Une ligne, pas une section : la liste des écartés est longue et
+             consultée rarement, elle a sa propre modale (#hidden-dialog). -->
+        <section class="filters-section">
+          <h3>Articles écartés</h3>
+          <p class="filters-line" id="filters-hidden"></p>
+        </section>
+
+        <section class="filters-section">
+          <h3>Marques masquées <span class="filters-count" id="filters-brands-count"></span></h3>
+          <div class="chips chips--wrap" id="filters-brands"></div>
+          <form class="filters-add" id="filters-brand-form">
+            <input
+              type="text"
+              class="input"
+              id="filters-brand-input"
+              maxlength="40"
+              placeholder="Ajouter une marque…"
+              autocomplete="off"
+            />
+            <button type="submit" class="ghost">Ajouter</button>
+          </form>
+          <button type="button" class="link" id="filters-fast-fashion">
+            + Ajouter le jeu « fast fashion »
+          </button>
+        </section>
+
+        <section class="filters-section">
+          <h3>Vendeurs masqués <span class="filters-count" id="filters-sellers-count"></span></h3>
+          <div class="chips chips--wrap" id="filters-sellers"></div>
+          <!-- Pas de champ d'ajout : un vendeur s'identifie par un nombre, jamais
+               par un pseudo saisi à la main. Ils n'entrent dans la liste que
+               depuis une page Vinted, où l'identifiant est connu. -->
+        </section>
+
+        <section class="filters-section">
+          <h3>Mots exclus <span class="filters-count" id="filters-words-count"></span></h3>
+          <div class="chips chips--wrap" id="filters-words"></div>
+          <form class="filters-add" id="filters-word-form">
+            <input
+              type="text"
+              class="input"
+              id="filters-word-input"
+              maxlength="40"
+              placeholder="Ajouter un mot…"
+              autocomplete="off"
+            />
+            <button type="submit" class="ghost">Ajouter</button>
+          </form>
+        </section>
+
+        <label class="check">
+          <input type="checkbox" id="filters-reveal" />
+          <span>Afficher les articles masqués (grisés au lieu d'être retirés)</span>
+        </label>
+
+        <p class="offer-status" id="filters-status" hidden></p>
+
+        <div class="dialog-actions">
+          <button type="button" class="primary" data-close>Fermer</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bande des réglages : permanente, et prévue pour accueillir d'autres
+         boutons (import, coût total, cadence du suivi). -->
     <footer class="footer">
+      <button type="button" id="filters" class="ghost ghost-auto">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3 5h18M6 12h12M10 19h4" />
+        </svg>
+        <span>Filtres Vinted</span>
+        <!-- Pas un compte : un simple témoin allumé quand au moins une règle
+             générale (marque, mot ou vendeur) est active. Les articles écartés
+             un par un ne l'allument pas — voir filters.ts, hasActiveRules(). -->
+        <span class="filters-dot" id="filters-dot" aria-hidden="true"></span>
+      </button>
+    </footer>
+
+    <!-- Bande de développement : outils de mise au point, vouée à disparaître de
+         la version publiée. Elle se retire en supprimant ce seul <footer> et son
+         bloc `.footer--dev` dans sidepanel.css — ne pas la refusionner avec la
+         bande de réglages ci-dessus, c'est tout l'intérêt de la séparation. -->
+    <footer class="footer footer--dev">
       <button type="button" id="export" class="ghost">Exporter en JSON</button>
       <button type="button" id="diagnose" class="ghost">Diagnostic</button>
+      <button
+        type="button"
+        id="reset-rate"
+        class="ghost"
+        title="Seau à jetons, budget du jour et fenêtre de silence après un 429"
+      >
+        Débloquer le débit
+      </button>
     </footer>
 
     <div id="report" class="report" hidden></div>

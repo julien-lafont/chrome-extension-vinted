@@ -239,6 +239,13 @@ Trois décisions de placement, chacune motivée :
   la cible du survol et produisent exactement l'oscillation que la règle 2 interdit — le
   `transform` n'est pas le seul moyen de fabriquer ce bug.
 
+**Le bouton est un interrupteur.** Sur une carte déjà écartée il montre un œil ouvert et
+le clic la remet — le geste inverse au même endroit. Sans cela, le mode révision (§4.4)
+ne servait qu'à regarder : on voyait les cartes masquées sans pouvoir en repêcher une
+sans ouvrir le panneau. Un article masqué par une **règle** (marque, mot, vendeur) n'est
+pas concerné : le bouton ne connaît que l'écart individuel, et une règle se retire
+depuis le panneau — le `title` le dit plutôt que de laisser un clic sans effet.
+
 Le bouton respecte les règles 1 et 2 du `CLAUDE.md` sans exception : déclenché sur
 `pointerdown`, `click` réservé au clavier (`event.detail === 0`), `user-select: none`,
 `pointer-events: none` sur les enfants, et aucun `transform` au survol. Il réutilise
@@ -248,17 +255,18 @@ passer par lui plutôt que d'écrire un second créateur.
 ### 4.2 Le clic : un repli différé, pas une disparition
 
 Un clic ne fait pas disparaître la carte tout de suite. Elle se replie sur un panneau
-d'annulation qui occupe sa place pendant **6 secondes** :
+d'annulation qui occupe sa place pendant **2 secondes** :
 
 ```
 ┌───────────────────────────────┐
-│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│  la carte : opacité 0,15 + grayscale
+│░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│  la carte : opacité 0,15, sur fond gris clair
 │░ ┌──────────────────────────┐░│  le panneau : superposé, jamais substitué
 │░ │ Écarté          Annuler  │░│
 │░ │                          │░│
-│░ │ Masquer aussi            │░│
-│░ │  ▸ la marque Zara        │░│
-│░ │  ▸ ce vendeur            │░│  ← seulement si le vendeur est connu (§7)
+│░ │ Masquer tous les produits│░│
+│░ │ Zara                     │░│  ← la phrase porte l'action, le lien la cible
+│░ │ Masquer tous les produits│░│
+│░ │ de ce vendeur            │░│  ← seulement si le vendeur est connu (§7)
 │░ ├──────────────────────────┤░│
 │░ │██████████░░░░░░░░░░░░░░░░│░│  ← compte à rebours, animation CSS pure
 │░ └──────────────────────────┘░│
@@ -274,8 +282,13 @@ d'avoir à ouvrir un écran de réglages pour la formuler, ce que personne ne fa
 Ce même panneau règle le piège identifié par l'audit (« prévoir le cas j'ai écarté par
 erreur ») sans mécanisme supplémentaire.
 
-Trois détails d'implémentation qui ne sont pas cosmétiques :
+Quatre détails qui ne sont pas cosmétiques :
 
+- **la fenêtre est courte, et c'est voulu.** Elle vise le clic de travers, pas la
+  délibération : à ce stade la décision est déjà prise, et un trou de six secondes dans
+  la grille pendant qu'on parcourt la page coûte plus qu'il ne rattrape. Les regrets
+  tardifs ont leur propre chemin — la liste des récents dans la modale du panneau
+  (§5.2), qui n'a pas de date de péremption ;
 - **le compte à rebours est une animation CSS** (`@keyframes` sur la largeur), pas un
   `setInterval` qui réécrirait un texte dix fois par seconde. Une barre animée par le
   compositeur coûte zéro mutation ; un compteur en JavaScript réveillerait le
@@ -284,6 +297,10 @@ Trois détails d'implémentation qui ne sont pas cosmétiques :
 - **la carte n'est jamais vidée ni déplacée.** Le panneau est un enfant de plus dans
   l'hôte, comme le bouton ; la carte de Vinted est seulement atténuée par une règle CSS.
   Aucun `remove()`, aucun `innerHTML` sur du DOM Vinted ;
+- **un fond gris très clair** (`#f3f4f6`) occupe la place pendant le repli, posé sur
+  l'hôte _et_ sur le panneau : la photo transparaît sous l'opacité 0,15, et du blanc pur
+  par-dessus la ferait ressortir en gris sale. La place se lit comme « en cours de
+  départ », pas comme un trou ;
 - **à l'expiration**, l'attribut de masquage est posé (§6) et le panneau retiré. Si
   l'utilisateur a fait défiler la page entre-temps, rien ne change : le repli est une
   question de temps, pas de visibilité.
@@ -319,6 +336,20 @@ Le `!important` est assumé : on est en concurrence avec une feuille de styles q
 contrôle pas, dont l'ordre d'injection n'est pas garanti, et sur une propriété où perdre
 signifie « la fonctionnalité ne marche pas ». C'est le seul `!important` du projet, et
 il mérite son commentaire dans `content.css`.
+
+**C'est la cellule de grille qui disparaît, pas la carte.** La carte
+(`product-item-id-…`) est enfouie **trois niveaux** sous sa cellule
+(`[data-testid="grid-item"]`, ancre déjà documentée). Masquer la carte laisse la cellule
+en place, vide : la grille garde un trou blanc, et une ligne ne se referme que lorsque
+ses quatre cartes sont masquées — exactement le symptôme observé à la première
+livraison. En masquant la cellule, l'auto-placement CSS Grid fait remonter les suivantes
+sans qu'on ait rien à calculer, et le rendu reste fluide au fil des écarts.
+
+`hideTargetOf()` remonte donc à la cellule, **à condition qu'elle ne porte qu'une
+carte** — deux cartes dans la même cellule et l'on emporterait la voisine. Le résultat
+est mémoïsé : la structure d'une carte ne change pas de sa vie. À défaut de cellule
+(blocs d'une fiche, fil d'accueil), on retombe sur la carte elle-même, où le problème ne
+se pose pas.
 
 **Repli et non grisage, par défaut.** L'audit hésitait entre les deux ; le repli gagne
 parce que le gain recherché est de la place à l'écran : une grille de cartes grisées se
@@ -431,20 +462,50 @@ jamais à jour après un déplacement — silencieux, évidemment. La garde gagn
 
 ## 5. Interface — le panneau latéral
 
-### 5.1 L'entrée
+### 5.1 L'entrée — et la séparation du pied de page en deux bandes
 
-Un troisième bouton dans le pied de page, entre les deux existants, avec le compte total
-de règles quand il y en a :
+Le pied de page actuel mélange deux natures de boutons qui n'ont pas la même espérance
+de vie. « Exporter en JSON » et « Diagnostic » sont des **outils de développement** :
+utiles pendant la mise au point, ils ont vocation à disparaître de la version que voit
+l'utilisateur (`docs/audit/analyse-utilisateur.md` §5.7 le dit déjà du diagnostic — « un
+outil de développeur affiché à l'utilisateur »). « Filtres » est un **réglage**, il
+restera aussi longtemps que la fonctionnalité.
+
+Les mélanger dans la même rangée oblige à démonter la bande le jour où l'on retire le
+debug. On les sépare donc dès maintenant, en deux bandes empilées :
 
 ```
-┌──────────────────────────────────────────────────┐
-│  [ Exporter en JSON ]  [ Filtres 12 ]  [ Diagnostic ] │
-└──────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────┐
+│                                                    │
+│   … liste des articles …                           │
+│                                                    │
+├────────────────────────────────────────────────────┤
+│  [ ⚙ Filtres 12 ]                                  │  ← réglages, permanente
+├────────────────────────────────────────────────────┤
+│  [ Exporter en JSON ]        [ Diagnostic ]        │  ← debug, temporaire
+└────────────────────────────────────────────────────┘
 ```
 
-Le pied de page est le bon endroit : ce sont des réglages qu'on ouvre rarement et qu'on
-ne consulte pas en chinant. La barre de tri, elle, est déjà pleine (tri, sens, tout
-ouvrir, rafraîchir) et n'accueillera rien de plus.
+- **La bande de réglages** (`<footer class="footer">`) est celle du haut, et c'est la
+  seule qui restera. Elle n'a pour l'instant qu'un bouton, qui n'occupe donc pas toute
+  la largeur : elle est prévue pour en accueillir d'autres (import, préférences de coût
+  total, cadence du suivi) et un bouton étiré sur 320 px qu'on rétrécira au premier
+  voisin est un faux départ. Alignement à gauche, largeur naturelle.
+- **La bande de debug** (`<footer class="footer footer--dev">`) est tout en bas,
+  visuellement en retrait : texte plus petit, couleur `--muted`, séparateur plus
+  discret. Elle se supprime le jour venu **en retirant un seul élément du HTML** et son
+  bloc de CSS, sans toucher à quoi que ce soit d'autre. C'est tout l'intérêt de la
+  séparation, et la raison pour laquelle elle mérite un commentaire dans
+  `sidepanel.html` — sinon la prochaine session « nettoiera » en refusionnant les deux
+  bandes.
+
+Le pied de page reste le bon endroit pour les filtres : ce sont des réglages qu'on ouvre
+rarement et qu'on ne consulte pas en chinant. La barre de tri, elle, est déjà pleine
+(tri, sens, tout ouvrir, rafraîchir) et n'accueillera rien de plus.
+
+Le bouton porte le compte total de règles quand il y en a — `Filtres 12` — ce qui est le
+seul rappel permanent que des articles sont masqués quelque part. Sans lui, un filtre
+oublié devient un bug incompréhensible six mois plus tard.
 
 ### 5.2 La modale
 
@@ -456,12 +517,8 @@ fermeture par `Échap` et par le fond. Aucun nouveau mécanisme de superposition
 │ Filtres du catalogue                       │
 │                                            │
 │ Articles écartés                           │
-│   128 articles · Tout réafficher           │
-│   Récemment :                              │
-│     Veste Barbour Bedale C40          ×    │
-│     Sweat Nike vintage                ×    │
-│     Jean Levis 501 W32                ×    │
-│                                            │
+│   128 articles · Gérer  ─────────────┐     │
+│                                      │     │
 │ Marques masquées                       6   │
 │   [Zara ×] [Shein ×] [H&M ×] [Primark ×]   │
 │   ┌──────────────────────┐  ┌──────────┐   │
@@ -490,10 +547,15 @@ Quelques partis pris :
 - **les règles sont des puces (`.chip`)**, style déjà présent dans la modale d'offre.
   Une puce, une croix, une suppression : c'est la forme la plus dense pour une liste de
   courts libellés, et la seule qui tienne dans 320 px ;
-- **pas de liste des 128 articles écartés.** On ne stocke que leurs ids (§2) : afficher
-  `9497504182` n'apprend rien. Les 20 derniers ont un titre et sont donc nommés ;
-  au-delà, seuls le compte et le « Tout réafficher » sont offerts, ce qui est honnête
-  sur ce que l'extension sait ;
+- **les articles écartés ont leur propre modale.** La liste occupait la moitié de la
+  hauteur des filtres pour l'usage le plus rare de l'écran ; il n'en reste ici qu'un
+  compte et un « Gérer » qui ouvre `#hidden-dialog`, par-dessus. `Échap` ferme la plus
+  haute des deux, une à la fois — fermer les deux d'un coup renverrait à la liste
+  d'articles alors qu'on venait consulter une sous-liste ;
+- **on ne stocke que des ids** (§2) : afficher `9497504182` n'apprend rien. Les 20
+  derniers ont un titre et sont donc nommés dans la modale dédiée ; au-delà, seuls le
+  compte et le « Tout réafficher » sont offerts, et une ligne le dit explicitement
+  plutôt que de laisser croire la liste complète ;
 - **il n'y a pas de bouton « Ajouter un vendeur ».** Un pseudo se saisit mal et
   s'identifie par un nombre : les vendeurs n'entrent dans la liste que depuis une page
   Vinted (§4.2, §4.5), où l'identifiant est connu. La modale ne sait qu'en retirer ;
@@ -530,6 +592,10 @@ export const FAST_FASHION = [
   'prettylittlething',
 ];
 ```
+
+Le bouton **disparaît une fois le jeu complet** : il n'aurait plus rien à proposer, et
+un bouton qui ne fait rien est pire qu'un bouton absent. Retirer une seule de ces
+marques le ramène.
 
 Le clic ajoute ce qui manque et ne dédouble rien. Une fois ajoutées, ce sont des règles
 comme les autres : rien ne distingue « Zara venu du jeu » de « Zara ajouté à la main »,
@@ -650,7 +716,7 @@ La table de lecture correspondante va dans `docs/diagnostic.md`.
 | `src/content/content.css`                    | `.vf-hide-btn`, `.vf-undo`, `.vf-pill`, `.vf-menu`, `[data-vf-hidden]`, `html.vf-reveal`                                                    |
 | `src/sidepanel/filters.ts` _(nouveau)_       | la modale : rendu des puces, ajout/retrait, jeu fast fashion                                                                                |
 | `src/sidepanel/store.ts`                     | lecture/écriture de `noise`, avec la relecture préalable de la règle 6                                                                      |
-| `src/sidepanel/sidepanel.{ts,html,css}`      | bouton de pied de page, modale, compteur                                                                                                    |
+| `src/sidepanel/sidepanel.{ts,html,css}`      | pied de page scindé en deux bandes (§5.1), bouton « Filtres » et son compteur, modale                                                       |
 | `src/shared/messages.ts`                     | **rien** — tout passe par le storage (§1)                                                                                                   |
 | `src/manifest.ts`                            | **rien** — aucune permission nouvelle                                                                                                       |
 | `docs/architecture.md`, `docs/diagnostic.md` | la cinquième clé, la table de lecture du diagnostic                                                                                         |

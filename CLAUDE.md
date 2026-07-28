@@ -9,7 +9,7 @@ rien ne sort du navigateur.
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 216 tests, ~28 s, runner Node natif via tsx
+pnpm test         # 321 tests, ~29 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-favoris-<version>.zip
 ```
@@ -24,9 +24,10 @@ toute modification : `pnpm build` (ou laisser `pnpm dev` tourner), ↻ dans
 ```
 src/content/content.ts       injection des boutons + extraction   ← le cœur, testé
 src/content/collection-picker.ts  menu de collection ouvert par l'appui long
+src/content/noise-ui.ts      filtrage : bouton d'écart, annulation, pastille, menu
 src/content/offer-agent.ts   pilotage de la modale d'offre Vinted
 src/sidepanel/               panneau : sidepanel, store, sorting, dnd, offer, search, gallery
-src/shared/                  modèle de données, messages, prix, photos, erreurs
+src/shared/                  modèle de données, messages, prix, photos, vendeur, erreurs
 src/background/              ouvre le panneau ; badge + pulsation à l'enregistrement
 src/manifest.ts              manifeste typé ; la version vient de package.json
 scripts/                     build, empaquetage (build-config.ts = source unique)

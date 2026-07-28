@@ -332,6 +332,8 @@ la fiche seule.
 
 ### E. Signal de confiance vendeur · effort M
 
+> Implémenté de manière simplifié
+
 **Le besoin.** Sur une pièce rare à 150 €, le vendeur compte autant que l'article. Note
 moyenne, nombre d'évaluations, ancienneté du compte, pays (frais et délais de douane),
 délai de réponse : tout est sur la fiche vendeur, aucun de ces éléments n'est capturé.
@@ -339,9 +341,9 @@ Et le trio « marque désirable + prix anormalement bas + compte récent sans é
 est le signal de contrefaçon le plus fiable qui soit.
 
 **La proposition.** Capturer à l'enrichissement le bloc vendeur de la fiche (nom, note,
-nombre d'avis, pays), l'afficher en ligne de méta secondaire, et permettre de
-trier/filtrer dessus. Puis, sur cette base, un **avertissement discret** — jamais une
-accusation — quand prix, marque et profil vendeur se combinent mal.
+nombre d'avis, pays), l'afficher en ligne de méta secondaire. Pas d'avertissement ou de
+signal de confiance, juste afficher les informations brutes. Utiliser les emoji pays
+pour afficher le pays.
 
 **Faisabilité.** Moyenne : ce sont de nouvelles ancres DOM à relever sur une vraie
 fiche, avec la fragilité que ça implique. À traiter comme le compteur de favoris :

@@ -33,6 +33,30 @@ champs doivent rester à 0 : ce sont les quatre entrées du tri (`price`/`priceV
 `condition`, `favouriteCount`, `size`). `priceValue` et `favouriteCount` sont comptés
 sur leur type, pas sur leur valeur — 0 favori est une donnée, pas une absence.
 
+### `regles`, `motifs`, `vendeursSurCartes` — le filtrage du bruit
+
+```json
+{
+  "regles": { "ecartes": 128, "vendeurs": 2, "marques": 6, "mots": 4 },
+  "cartesMasquees": 34,
+  "motifs": { "item": 8, "seller": 3, "brand": 20, "word": 3 },
+  "vendeursSurCartes": "0/48"
+}
+```
+
+`motifs` est la ligne à lire en premier quand un article a « disparu » : elle dit par
+quelle nature de règle, et évite de vider les filtres un par un pour trouver le
+coupable.
+
+`vendeursSurCartes` répond à la question ouverte par
+[filtrage-bruit.md](specs/filtrage-bruit.md) §7 :
+
+| Ce qu'on lit                      | Interprétation                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `n/n` ou presque                  | le flux d'hydratation porte les vendeurs → « masquer ce vendeur » marche depuis le catalogue      |
+| `0/n` sur une page de catalogue   | il ne les porte pas → la règle ne mord que sur les fiches et les articles déjà enregistrés        |
+| `0/n` alors que ça marchait avant | le bloc du flux a changé de forme → voir `hydrationSellerMap()` et [vinted-dom.md](vinted-dom.md) |
+
 ## Sur une fiche article
 
 ```json
@@ -87,6 +111,36 @@ deux a lâché plutôt que de conclure à l'absence de donnée.
 `taille` rappelle que Vinted n'écrit ce identifiant nulle part : il est résolu par
 requête, et ce sont `debug.sizesResolved` / `debug.sizesUnresolved` qui disent si cela
 fonctionne.
+
+### `vendeur`
+
+Même principe pour la réputation, à ceci près que c'est le **flux** qui est la source
+préférée et le DOM le repli — voir [architecture.md](architecture.md).
+
+```json
+{
+  "vendeur": {
+    "noteFlux": 4.7,
+    "noteDom": 4.7,
+    "avisFlux": 39,
+    "avisDom": 39,
+    "paysLus": "3 profil(s), 1 sans localisation"
+  }
+}
+```
+
+| Ce qu'on lit                   | Interprétation                                                                     |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| `noteFlux: null`, `noteDom` ok | le bloc `user_info_header` a changé de nom ; le repli tient                        |
+| `noteFlux: 0.8` au lieu de `4` | la conversion réputation → note est cassée (`ratingFromReputation`)                |
+| les deux à `null`              | les deux ancres ont sauté → [vinted-dom.md](vinted-dom.md)                         |
+| `avisDom: null`, `noteDom` ok  | la structure du bloc d'étoiles a bougé : le compteur n'est plus son dernier enfant |
+| `paysLus: "0 profil(s)"`       | aucun profil lu depuis le chargement de la page — normal sans enregistrement       |
+
+Le pays n'apparaît pas parmi ces sources : il n'est sur aucune fiche, il vient d'une
+lecture de `/member/{id}`. `paysLus` compte ces lectures depuis le chargement de la
+page, et sépare celles qui ont donné un pays de celles où le membre n'expose pas sa
+localisation — les deux sont des réponses normales.
 
 ## Blocs supplémentaires
 
@@ -180,6 +234,11 @@ même contenu en fichier.
 | `debug.enrichFailed` grimpe                                      | Vinted refuse la lecture des fiches → les articles restent aux données de leur carte   |
 | `enAttenteDeFiche` ne redescend pas                              | Requêtes bloquées ou très lentes ; l'article reste utilisable                          |
 | `lastError: "Extension context invalidated"`                     | Extension rechargée sans recharger l'onglet — Cmd+R sur Vinted                         |
+| `cartesMasquees` proche de `cardsFound`                          | Une règle trop large — lire `motifs` pour savoir laquelle                              |
+| `motifs.word` élevé et inattendu                                 | Un mot exclu attrape plus large que prévu → le retirer depuis « Filtres »              |
+| `vendeursSurCartes: "0/n"`                                       | Le vendeur n'est pas lisible sur une carte ; c'est un état connu, pas une panne        |
+| `vendeur.noteFlux` et `noteDom` tous deux à `null`               | Les deux ancres de la note ont sauté → [vinted-dom.md](vinted-dom.md)                  |
+| `debug.sellerProfilesEmpty` monte seul                           | Les profils sont lus mais n'ont plus de pays → l'ancre `country_code` a changé         |
 
 ## Étendre le rapport
 

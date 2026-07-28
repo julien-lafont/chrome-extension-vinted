@@ -100,6 +100,32 @@ export type SavedItem = {
   sellerName?: string | null;
 
   /**
+   * Note du vendeur sur 5, une décimale. `null` quand elle n'a pas pu être lue,
+   * et **aussi quand le vendeur n'a aucune évaluation** : une note de 0 sur un
+   * compte tout neuf se lirait comme un mauvais vendeur, alors qu'elle ne dit
+   * rien du tout. Voir `shared/seller.ts`.
+   */
+  sellerRating?: number | null;
+
+  /**
+   * Nombre d'évaluations reçues. **`0` est une valeur** — un compte sans aucun
+   * avis est précisément ce qu'on veut voir — là où `null` veut dire « pas lu ».
+   * Même distinction que `favouriteCount`.
+   */
+  sellerFeedbackCount?: number | null;
+
+  /**
+   * Pays du vendeur, code ISO 3166-1 alpha-2 en majuscules (`FR`, `DE`).
+   *
+   * Il ne vient pas de la fiche — elle ne le porte nulle part — mais d'une
+   * lecture de `/member/{sellerId}`, faite une fois après l'enregistrement.
+   * **Jamais relu ensuite** : le pays d'un compte ne change pas, et `null`
+   * (profil sans localisation exposée) est une réponse définitive au même titre
+   * qu'un code. Seul `undefined` signifie « profil jamais lu ».
+   */
+  sellerCountry?: string | null;
+
+  /**
    * Description rédigée par le vendeur, tronquée à {@link DESCRIPTION_MAX}.
    *
    * Enregistrée mais **encore inexploitée** : c'est là que vivent les mesures
@@ -236,6 +262,13 @@ export type Settings = {
   offer: OfferSettings;
   /** Masque les articles `sold`/`gone` de la liste, sans les compter pour autant (§6.5). */
   hideSold: boolean;
+  /**
+   * Mode révision du filtrage : les cartes masquées du catalogue sont grisées au
+   * lieu d'être retirées. C'est une préférence d'affichage, pas une règle — d'où
+   * sa place ici plutôt que dans la clé `noise`. Voir
+   * `docs/specs/filtrage-bruit.md` §4.4.
+   */
+  revealHidden: boolean;
 };
 
 /** Les deux clés du storage sont indexées par id, pas stockées en tableau. */
