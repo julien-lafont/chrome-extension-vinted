@@ -54,6 +54,27 @@ export type OfferDiagnoseReport = {
 
 export type DiagnoseRequest = { type: 'VF_DIAGNOSE' };
 
+/**
+ * Lance un cycle de vérification sur les articles donnés. Le content script
+ * répond tout de suite (accepté ou non) ; la progression et le résultat se
+ * lisent ensuite dans `chrome.storage.local` (clé `watch`), jamais par un
+ * second message — voir `docs/specs/suivi-prix.md` §2.
+ */
+export type WatchStartRequest = { type: 'VF_WATCH_START'; ids: string[] };
+export type WatchCancelRequest = { type: 'VF_WATCH_CANCEL' };
+
+export type WatchStartResponse = {
+  accepted: boolean;
+  /** Raison du refus, en français : sert directement à l'affichage du bouton. */
+  reason?: string;
+};
+
 /** Union de tout ce qu'un content script peut recevoir. */
 export type ExtensionMessage =
-  OfferPing | MakeOfferRequest | SendMessageRequest | OfferDiagnoseRequest | DiagnoseRequest;
+  | OfferPing
+  | MakeOfferRequest
+  | SendMessageRequest
+  | OfferDiagnoseRequest
+  | DiagnoseRequest
+  | WatchStartRequest
+  | WatchCancelRequest;

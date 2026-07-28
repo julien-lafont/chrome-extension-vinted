@@ -15,12 +15,23 @@
  */
 import { errorText } from '../shared/errors.ts';
 import { hydrationNumbers } from '../shared/hydration.ts';
-import type { ExtensionMessage } from '../shared/messages.ts';
+import type { ExtensionMessage, WatchStartResponse } from '../shared/messages.ts';
 import { extractPhotos, photosFromDom, photosFromHydration } from '../shared/photos.ts';
 import { parsePriceString } from '../shared/price.ts';
 import { sizeIdFor } from '../shared/size-ids.ts';
+import {
+  applyCheckResult,
+  nextDelay,
+  nextThrottle,
+  orderForCheck,
+  takeDailyBudget,
+  takeToken,
+  isThrottled,
+  RATE,
+} from '../shared/watch.ts';
+import type { CheckOutcome } from '../shared/watch.ts';
 import { DESCRIPTION_MAX } from '../shared/types.ts';
-import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
+import type { ItemCategory, ItemMap, SavedItem, WatchState } from '../shared/types.ts';
 
 (() => {
   'use strict';
@@ -826,6 +837,321 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
   }
 
   // ---------------------------------------------------------------------------
+  // Suivi de prix et de disponibilité — docs/specs/suivi-prix.md
+  //
+  // Le rafraîchissement tourne ici, jamais dans le service worker (§1 de la
+  // spec) : cookies de session first-party, Referer cohérent, rien qui signe un
+  // automate. Un seul rafraîchisseur à la fois entre plusieurs onglets Vinted,
+  // via un bail dans `watch.lease` — voir `acquireOrRenewLease()`.
+  // ---------------------------------------------------------------------------
+
+  const WATCH_KEY = 'watch';
+  const LEASE_MS = 60000;
+
+  /**
+   * Journal de bord temporaire pour diagnostiquer « je clique sur Rafraîchir
+   * et rien ne se passe » : la console de l'onglet Vinted (pas celle du
+   * panneau) montre chaque décision du cycle, notamment celles qui ne sont
+   * pas des erreurs — bail perdu, débit épuisé, aucun article éligible…
+   */
+  function watchLog(...args: unknown[]): void {
+    // `warn` plutôt que `log` : la règle ESLint `no-console` du projet n'autorise
+    // que `warn`/`error`. Ce n'est pas une erreur, seulement un jaune plus visible.
+    console.warn('[Vinted Favoris][watch]', ...args);
+  }
+
+  /**
+   * Identifiant de cette instance de content script, pas un vrai id d'onglet
+   * Chrome — inaccessible depuis un content script. Il ne sert qu'à distinguer
+   * « c'est moi qui tiens le bail » d'un autre onglet, ce qui suffit au bail.
+   */
+  const instanceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+  let watchRunning = false;
+  let watchCancelled = false;
+
+  function defaultWatch(): WatchState {
+    return { lastSweepAt: 0, bucket: { tokens: RATE.capacity, at: Date.now() } };
+  }
+
+  async function readWatch(): Promise<WatchState> {
+    const res: { watch?: WatchState } = await chrome.storage.local.get(WATCH_KEY);
+    return res.watch || defaultWatch();
+  }
+
+  /** Relit puis réécrit `watch`, comme toute écriture partagée entre onglets (règle 6). */
+  async function patchWatch(mutate: (current: WatchState) => WatchState): Promise<WatchState> {
+    const current = await readWatch();
+    const next = mutate(current);
+    await chrome.storage.local.set({ [WATCH_KEY]: next });
+    return next;
+  }
+
+  /**
+   * Prend ou renouvelle le bail. Refuse si un autre onglet le tient encore —
+   * un bail expiré (onglet fermé en plein cycle) est repris sans condition.
+   */
+  async function acquireOrRenewLease(now: number): Promise<boolean> {
+    let ok = false;
+    await patchWatch((current) => {
+      if (current.lease && current.lease.until > now && current.lease.tabId !== instanceId) {
+        ok = false;
+        return current;
+      }
+      ok = true;
+      return { ...current, lease: { tabId: instanceId, until: now + LEASE_MS } };
+    });
+    return ok;
+  }
+
+  async function consumeToken(now: number): Promise<boolean> {
+    let ok = false;
+    await patchWatch((current) => {
+      const result = takeToken(current.bucket, now);
+      ok = result.ok;
+      return { ...current, bucket: result.bucket };
+    });
+    return ok;
+  }
+
+  async function consumeDailyBudget(now: number): Promise<boolean> {
+    let ok = false;
+    await patchWatch((current) => {
+      const result = takeDailyBudget(current.dailyBudget, now);
+      ok = result.ok;
+      return ok ? { ...current, dailyBudget: result.budget } : current;
+    });
+    return ok;
+  }
+
+  /** 429, 403, ou challenge : arrêt immédiat et fenêtre de silence — §3.5. */
+  async function enterThrottle(): Promise<void> {
+    await patchWatch((current) => {
+      const strikes = (current.throttleStrikes ?? 0) + 1;
+      return {
+        ...current,
+        throttledUntil: nextThrottle(Date.now(), strikes - 1),
+        throttleStrikes: strikes,
+      };
+    });
+  }
+
+  /**
+   * Une réponse dont le HTML ne porte aucune ancre connue est un challenge
+   * (Cloudflare) plutôt qu'une fiche : aucune des trois sources qu'on lit par
+   * ailleurs (JSON-LD, prix affiché, titre) n'y figure.
+   */
+  function looksLikeChallenge(doc: Document): boolean {
+    if (readJsonLd(doc)) return false;
+    if (doc.querySelector('[data-testid="item-price"]')) return false;
+    if (doc.querySelector('h1')) return false;
+    return true;
+  }
+
+  type CheckStep = { outcome: CheckOutcome; block?: boolean };
+
+  /**
+   * Vérifie un article suivi. Reprend les mêmes ancres que `enrichFromDetail()`
+   * (badge « Vendu », garde-fou d'id divergent) : c'est la même fiche, lue pour
+   * un motif différent.
+   */
+  async function checkOne(item: SavedItem): Promise<CheckStep> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ENRICH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(item.url, { credentials: 'include', signal: controller.signal });
+
+      // Signal de freinage : arrêt du cycle entier, jamais interprété par article.
+      if (response.status === 429 || response.status === 403) {
+        return { outcome: { kind: 'failure' }, block: true };
+      }
+      if (response.status === 404 || response.status === 410)
+        return { outcome: { kind: 'notFound' } };
+      if (!response.ok) return { outcome: { kind: 'failure' } };
+
+      const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (looksLikeChallenge(doc)) return { outcome: { kind: 'failure' }, block: true };
+
+      if (isSoldDetail(doc)) return { outcome: { kind: 'sold' } };
+
+      const detail = extractFromDetail(doc, item.url);
+      const servedId = detail ? extractIdFromUrl(detail.url) : null;
+      if (servedId && servedId !== item.id) return { outcome: { kind: 'idMismatch' } };
+
+      const price = detail?.priceValue ?? parsePriceValue(detail?.price);
+      if (!detail || price == null) return { outcome: { kind: 'failure' } };
+
+      // Le texte affiché suit le nombre : sans lui, `.item-price-value` resterait
+      // figé sur le prix d'enregistrement même après un changement détecté.
+      const priceText = detail.price || formatPrice(price, undefined);
+
+      return { outcome: { kind: 'active', price, priceText } };
+    } catch {
+      return { outcome: { kind: 'failure' } };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Relit `savedItems` juste avant d'écrire : l'utilisateur a pu retirer l'article entretemps. */
+  async function writeCheckResult(id: string, outcome: CheckOutcome, now: number): Promise<void> {
+    const current = await readItems();
+    const item = current[id];
+    if (!item) return;
+
+    const patch = applyCheckResult(item, outcome, now);
+    if (Object.keys(patch).length === 0) return;
+
+    current[id] = { ...item, ...patch };
+    await chrome.storage.local.set({ [STORAGE_KEY]: current });
+  }
+
+  const wait = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+
+  /**
+   * Cycle de vérification sur les articles donnés. S'arrête — sans backoff — dès
+   * que le bail est perdu, le débit ou le budget du jour épuisé, l'onglet passe
+   * en arrière-plan (§3.6) ou une annulation est demandée ; s'arrête avec
+   * backoff sur un signal de freinage (§3.5). `lastSweepAt` n'avance que si la
+   * file entière a été parcourue — c'est ce qui déclenche §5.2.
+   */
+  async function runWatchQueue(ids: string[]): Promise<void> {
+    const idSet = new Set(ids);
+    const candidates = Object.values(saved).filter((item) => idSet.has(item.id));
+    const queue = orderForCheck(candidates);
+    const total = queue.length;
+    const startedAt = Date.now();
+
+    watchLog(
+      `file constituée : ${total}/${ids.length} article(s) éligible(s)` +
+        (total < ids.length
+          ? ' (les autres sont en attente de fiche, déjà vendus, ou déjà disparus)'
+          : '')
+    );
+
+    if (!total) {
+      watchLog('rien à vérifier, cycle terminé immédiatement');
+    }
+
+    let done = 0;
+    let completed = true;
+    let hitBlock = false;
+
+    await patchWatch((w) => ({ ...w, progress: { done: 0, total, startedAt } }));
+
+    for (const item of queue) {
+      if (watchCancelled) {
+        watchLog('arrêt : annulation demandée');
+        completed = false;
+        break;
+      }
+      if (document.visibilityState !== 'visible') {
+        watchLog('arrêt : onglet passé en arrière-plan (§3.6)');
+        completed = false;
+        break;
+      }
+
+      const now = Date.now();
+
+      if (!(await acquireOrRenewLease(now))) {
+        watchLog('arrêt : bail perdu au profit d’un autre onglet');
+        completed = false;
+        break;
+      }
+      if (!(await consumeDailyBudget(now))) {
+        watchLog('arrêt : plafond quotidien de requêtes atteint');
+        completed = false;
+        break;
+      }
+      if (!(await consumeToken(now))) {
+        watchLog('arrêt : seau à jetons vide, débit déjà consommé');
+        completed = false;
+        break;
+      }
+
+      const fresh = (await readItems())[item.id];
+      if (!fresh) {
+        watchLog(`article ${item.id} retiré entretemps, ignoré`);
+      } else {
+        watchLog(`vérification de l’article ${item.id} (${fresh.url})`);
+        const step = await checkOne(fresh);
+        watchLog(`→ résultat pour ${item.id} :`, step.outcome, step.block ? '(freinage)' : '');
+
+        if (step.block) {
+          hitBlock = true;
+          completed = false;
+          await enterThrottle();
+          watchLog('arrêt : signal de freinage (429/403/challenge), fenêtre de silence posée');
+          break;
+        }
+
+        await writeCheckResult(item.id, step.outcome, Date.now());
+      }
+
+      done += 1;
+      await patchWatch((w) => ({ ...w, progress: { done, total, startedAt } }));
+
+      if (done < total) await wait(nextDelay());
+    }
+
+    watchLog(
+      `cycle terminé : ${done}/${total} vérifiés, ${completed ? 'file entièrement parcourue' : 'interrompu avant la fin'}`
+    );
+
+    await patchWatch((w) => ({
+      ...w,
+      ...(completed ? { lastSweepAt: Date.now() } : {}),
+      ...(hitBlock ? {} : { throttleStrikes: 0 }),
+      progress: undefined,
+      // Ne libère que le bail qu'on tient encore soi-même : un autre onglet a
+      // pu le reprendre après qu'on l'a perdu plus haut dans la boucle.
+      lease: w.lease?.tabId === instanceId ? undefined : w.lease,
+    }));
+  }
+
+  function cancelWatch(): void {
+    watchCancelled = true;
+  }
+
+  async function startWatch(ids: string[]): Promise<WatchStartResponse> {
+    watchLog(`VF_WATCH_START reçu pour ${ids.length} article(s) :`, ids);
+
+    if (watchRunning) {
+      watchLog('refusé : un cycle tourne déjà dans cet onglet');
+      return { accepted: false, reason: 'déjà en cours dans cet onglet' };
+    }
+
+    const now = Date.now();
+    const current = await readWatch();
+
+    if (isThrottled(current, now)) {
+      const remaining = Math.round(((current.throttledUntil ?? now) - now) / 60000);
+      watchLog(
+        `refusé : encore freiné ${remaining} min (throttledUntil = ${current.throttledUntil})`
+      );
+      return { accepted: false, reason: 'Vinted a limité les requêtes récemment.' };
+    }
+
+    if (!(await acquireOrRenewLease(now))) {
+      watchLog('refusé : bail déjà tenu par un autre onglet', current.lease);
+      return { accepted: false, reason: 'Un autre onglet Vinted rafraîchit déjà.' };
+    }
+
+    watchLog('bail acquis, lancement du cycle');
+    watchRunning = true;
+    watchCancelled = false;
+    void runWatchQueue(ids).finally(() => {
+      watchRunning = false;
+    });
+
+    return { accepted: true };
+  }
+
+  // ---------------------------------------------------------------------------
   // Rendu des boutons
   // ---------------------------------------------------------------------------
 
@@ -1265,9 +1591,23 @@ import type { ItemCategory, ItemMap, SavedItem } from '../shared/types.ts';
 
   chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
     const message = raw as ExtensionMessage | null;
+
     if (message?.type === 'VF_DIAGNOSE') {
       sendResponse(diagnose());
+      return false;
     }
+
+    if (message?.type === 'VF_WATCH_START') {
+      void startWatch(message.ids).then(sendResponse);
+      return true; // réponse asynchrone : le canal doit rester ouvert
+    }
+
+    if (message?.type === 'VF_WATCH_CANCEL') {
+      cancelWatch();
+      sendResponse({ accepted: true });
+      return false;
+    }
+
     return false;
   });
 

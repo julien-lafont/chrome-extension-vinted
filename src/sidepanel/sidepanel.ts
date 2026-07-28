@@ -22,6 +22,8 @@ import {
   commitCustomOrder,
   removeItem,
   restoreItem,
+  archiveSold,
+  restoreArchived,
 } from './store.ts';
 
 import {
@@ -38,6 +40,9 @@ import { enableDragAndDrop } from './dnd.ts';
 import { initGallery, openGallery } from './gallery.ts';
 import { similarSearchUrl, brandSearchUrl } from './search.ts';
 import { composeMessage, suggestPrice, submitOffer, formatEuro } from './offer.ts';
+import { initWatch, maybeStartSilentSweep } from './watch.ts';
+import { initPriceHistory } from './price-history.ts';
+import { renderPriceAndStatus } from './item-render.ts';
 
 import type { CollectionMap, Collection, SavedItem, Settings, SortMode } from '../shared/types.ts';
 
@@ -69,6 +74,10 @@ const sortDirEl = required<HTMLButtonElement>('sort-dir');
 const sortDirLabelEl = required('sort-dir-label');
 const openAllEl = required<HTMLButtonElement>('open-all');
 const openAllLabelEl = required('open-all-label');
+const refreshEl = required<HTMLButtonElement>('refresh');
+const refreshLabelEl = required('refresh-label');
+const watchNoticeEl = required('watch-notice');
+const watchbarEl = required('watchbar');
 const hintEl = required('hint');
 const menuEl = required('move-menu');
 const template = required<HTMLTemplateElement>('item-template');
@@ -266,6 +275,65 @@ function renderSortbar(visibleItems: SavedItem[]): void {
   }
 }
 
+/**
+ * Ligne d'état des vendus (§6.5) : n'apparaît que lorsque la collection
+ * affichée contient au moins un vendu ou disparu — une case à cocher
+ * permanente ne servirait à rien 90 % du temps dans une barre déjà chargée.
+ */
+function renderWatchbar(gone: SavedItem[]): void {
+  if (!gone.length) {
+    watchbarEl.hidden = true;
+    return;
+  }
+
+  watchbarEl.hidden = false;
+  watchbarEl.textContent = '';
+  watchbarEl.append(
+    document.createTextNode(
+      `${gone.length} vendu${gone.length > 1 ? 's' : ''} dans cette collection`
+    )
+  );
+
+  watchbarEl.append(document.createTextNode(' · '));
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'link';
+  // Le compte reste visible : masquer n'est pas oublier.
+  toggle.textContent = settings.hideSold ? 'Afficher' : 'Masquer';
+  toggle.addEventListener('click', () => {
+    void saveSettings({ hideSold: !settings.hideSold }).then((next) => {
+      settings = next;
+      render();
+    });
+  });
+  watchbarEl.append(toggle);
+
+  watchbarEl.append(document.createTextNode(' · '));
+  const archive = document.createElement('button');
+  archive.type = 'button';
+  archive.className = 'link';
+  archive.textContent = 'Archiver';
+  archive.addEventListener('click', () => {
+    void archiveSoldFromButton();
+  });
+  watchbarEl.append(archive);
+}
+
+/**
+ * Déplace les vendus de la collection active vers « Archives ». Pas une
+ * suppression : `flash()` offre 5 s pour l'annuler, sur le modèle exact du
+ * retrait d'un article.
+ */
+async function archiveSoldFromButton(): Promise<void> {
+  const result = await archiveSold(settings.activeCollectionId);
+  if (!result.movedIds.length) return;
+
+  const count = result.movedIds.length;
+  flash(`${count} article${count > 1 ? 's' : ''} archivé${count > 1 ? 's' : ''}`, () => {
+    void restoreArchived(result);
+  });
+}
+
 // --- Rendu : liste ------------------------------------------------------------
 
 function renderEmpty(message: string, hint: string): void {
@@ -391,7 +459,7 @@ function renderItem(item: SavedItem): DocumentFragment {
     metaEl.append(loader);
   }
 
-  within(node, '.item-price-value').textContent = item.price || '';
+  renderPriceAndStatus(node, article, item);
   renderSeller(node, item);
 
   within(node, '.item-similar').addEventListener('click', () => {
@@ -420,10 +488,14 @@ function render(): void {
   renderCollections();
 
   const inCollection = itemsOfActiveCollection();
-  const visible = inCollection.filter(matches);
+  const isGone = (item: SavedItem) => item.status === 'sold' || item.status === 'gone';
+  const visible = inCollection
+    .filter(matches)
+    .filter((item) => !settings.hideSold || !isGone(item));
   countEl.textContent = String(inCollection.length);
 
   renderSortbar(inCollection);
+  renderWatchbar(inCollection.filter(isGone));
 
   const ordered = sortItems(
     visible,
@@ -860,6 +932,23 @@ initGallery({
   prev: required<HTMLButtonElement>('gallery-prev'),
   next: required<HTMLButtonElement>('gallery-next'),
 });
+
+// --- Suivi de prix et de disponibilité -----------------------------------------
+
+initPriceHistory(required('price-history'));
+
+initWatch(
+  { button: refreshEl, label: refreshLabelEl, notice: watchNoticeEl },
+  {
+    visibleIds: () => visibleOrdered.map((item) => item.id),
+    getItems: () => items,
+    onSweepSummary: (message) => flash(message),
+  }
+);
+
+// Silencieux : si aucun onglet Vinted n'est ouvert, ou si le dernier cycle est
+// récent, ne fait rien et ne le signale pas (§5.2).
+void maybeStartSilentSweep();
 
 // --- Fermeture des modales ----------------------------------------------------
 

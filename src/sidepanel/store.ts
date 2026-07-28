@@ -24,7 +24,15 @@ const DEFAULT_SETTINGS: Settings = {
   sortMode: 'custom',
   sortDir: 'asc',
   offer: { discount: 15, autoMessage: true },
+  hideSold: false,
 };
+
+/** Créée à la demande au premier archivage (§6.5), jamais à l'avance. */
+export const ARCHIVE_COLLECTION_ID = 'archives';
+
+function makeArchiveCollection(): Collection {
+  return { id: ARCHIVE_COLLECTION_ID, name: 'Archives', createdAt: Date.now(), order: [] };
+}
 
 function makeDefaultCollection(): Collection {
   return {
@@ -262,4 +270,90 @@ export async function restoreItem(item: SavedItem): Promise<void> {
     if (!collection || (collection.order || []).includes(item.id)) return current;
     return { ...current, [collectionId]: { ...collection, order: [item.id, ...collection.order] } };
   });
+}
+
+/** Ce qu'un archivage a déplacé, de quoi l'annuler — §6.5. */
+export type ArchiveResult = { movedIds: string[]; sourceCollectionId: string };
+
+/**
+ * Déplace les articles `sold`/`gone` d'**une** collection vers « Archives »,
+ * créée à la demande au premier usage. Pas une suppression, et réversible via
+ * `restoreArchived()` — sur le modèle exact de l'annulation de retrait
+ * ci-dessus, en un seul `set` pour les mêmes raisons que `commitCustomOrder` :
+ * deux écritures successives (articles, puis collections) déclencheraient deux
+ * rendus, et le premier verrait des articles déjà déplacés dans une
+ * « Archives » qui n'existe pas encore.
+ */
+export async function archiveSold(collectionId: string): Promise<ArchiveResult> {
+  const res = await read(ITEMS_KEY, COLLECTIONS_KEY);
+  const items = res[ITEMS_KEY] || {};
+  const collections: CollectionMap = { ...(res[COLLECTIONS_KEY] || {}) };
+
+  const targets = Object.values(items).filter(
+    (item) =>
+      collectionOf(item, collections) === collectionId &&
+      (item.status === 'sold' || item.status === 'gone')
+  );
+  if (!targets.length) return { movedIds: [], sourceCollectionId: collectionId };
+
+  if (!collections[ARCHIVE_COLLECTION_ID]) {
+    collections[ARCHIVE_COLLECTION_ID] = makeArchiveCollection();
+  }
+
+  const movedIds = targets.map((item) => item.id);
+  const moved = new Set(movedIds);
+
+  const nextItems: ItemMap = { ...items };
+  for (const id of movedIds) {
+    const item = nextItems[id];
+    if (item) nextItems[id] = { ...item, collectionId: ARCHIVE_COLLECTION_ID };
+  }
+
+  const nextCollections: CollectionMap = {};
+  for (const [id, collection] of Object.entries(collections)) {
+    const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
+    nextCollections[id] =
+      id === ARCHIVE_COLLECTION_ID
+        ? { ...collection, order: [...movedIds, ...order] }
+        : { ...collection, order };
+  }
+
+  await chrome.storage.local.set({ [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections });
+  return { movedIds, sourceCollectionId: collectionId };
+}
+
+/** Annule un archivage : remet chaque article dans la collection d'où il venait. */
+export async function restoreArchived({
+  movedIds,
+  sourceCollectionId,
+}: ArchiveResult): Promise<void> {
+  if (!movedIds.length) return;
+
+  const res = await read(ITEMS_KEY, COLLECTIONS_KEY);
+  const items = res[ITEMS_KEY] || {};
+  const collections = res[COLLECTIONS_KEY] || {};
+  const moved = new Set(movedIds);
+
+  const nextItems: ItemMap = { ...items };
+  for (const id of movedIds) {
+    const item = nextItems[id];
+    if (!item) continue;
+    const patched: SavedItem = { ...item, collectionId: sourceCollectionId };
+    // Absent = collection par défaut (voir `collectionOf()`) : ne pas écrire
+    // une valeur qui vaudrait la même chose, pour rester cohérent avec ce que
+    // le content script produit lui-même (il ne renseigne jamais ce champ).
+    if (sourceCollectionId === DEFAULT_COLLECTION_ID) delete patched.collectionId;
+    nextItems[id] = patched;
+  }
+
+  const nextCollections: CollectionMap = {};
+  for (const [id, collection] of Object.entries(collections)) {
+    const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
+    nextCollections[id] =
+      id === sourceCollectionId
+        ? { ...collection, order: [...movedIds, ...order] }
+        : { ...collection, order };
+  }
+
+  await chrome.storage.local.set({ [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections });
 }

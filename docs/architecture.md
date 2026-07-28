@@ -70,7 +70,8 @@ l'enregistrement des favoris de fonctionner.
 
 ## Stockage
 
-Trois clés dans `chrome.storage.local`.
+Quatre clés dans `chrome.storage.local` : `savedItems`, `collections`, `settings`, et
+`watch` (état du cycle de rafraîchissement — voir `docs/specs/suivi-prix.md`).
 
 ```js
 savedItems = {
@@ -116,6 +117,12 @@ savedItems = {
     savedAt: 1753500000000,
     source: 'catalog', // ou "detail"
     collectionId: 'col-lq3x8f-4b2', // absent = collection par défaut
+    // Suivi de prix et de disponibilité, absents tant que l'article n'a jamais
+    // été vérifié — voir docs/specs/suivi-prix.md.
+    lastCheckedAt: 1753500000000,
+    status: undefined, // 'sold' | 'gone', absent = actif
+    priceHistory: [{ at: 1753500000000, price: 1 }],
+    missCount: 0,
   },
 };
 
@@ -127,6 +134,8 @@ collections = {
     createdAt: 1753500000000,
     order: ['9496908003', '9481120044'],
   },
+  // Créée à la demande par « Archiver » (§6.5 de la spec), jamais à l'avance.
+  archives: { id: 'archives', name: 'Archives', createdAt: 1753500000000, order: [] },
 };
 
 settings = {
@@ -134,6 +143,14 @@ settings = {
   sortMode: 'custom', // custom | savedAt | price | condition | likes | size
   sortDir: 'asc',
   offer: { discount: 15, autoMessage: true },
+  hideSold: false,
+};
+
+// État du cycle de rafraîchissement, écrit par le content script d'un onglet
+// Vinted — jamais par le service worker. Voir docs/specs/suivi-prix.md.
+watch = {
+  lastSweepAt: 1753500000000,
+  bucket: { tokens: 12, at: 1753500000000 },
 };
 ```
 

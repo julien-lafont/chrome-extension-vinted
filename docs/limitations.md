@@ -12,8 +12,11 @@ elle, est reconnue par vocabulaire français dans `sorting.ts`.
 `chrome.storage.sync` est plafonné à 100 Ko, trop juste. L'export JSON du panneau permet
 un transfert manuel.
 
-**Articles vendus.** Un article retiré de Vinted reste dans la liste, mais son image
-peut renvoyer une 404. Aucune vérification de disponibilité n'est faite.
+**Articles vendus.** Vérifiés par le bouton « Rafraîchir » du panneau et par le
+déclencheur silencieux à l'ouverture (au-delà d'une heure) — voir
+[docs/specs/suivi-prix.md](specs/suivi-prix.md). Aucun rafraîchissement n'a lieu sans
+onglet Vinted ouvert : un article resté longtemps sans onglet Vinted actif garde l'état
+de sa dernière vérification, éventuellement périmé.
 
 ## Données de tri incomplètes
 

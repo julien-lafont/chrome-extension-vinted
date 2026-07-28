@@ -30,6 +30,7 @@ type FixtureMeta = {
   categoryUrl: string;
   catalogUrl: string;
   photosUrl: string;
+  soldUrl: string;
 } & Record<string, unknown>;
 
 export const meta = JSON.parse(readFileSync(join(FIXTURES, 'meta.json'), 'utf8')) as FixtureMeta;
@@ -121,8 +122,16 @@ export const ITEM_ID: string = itemIdOf(meta.itemUrl, 'itemUrl');
 /** Identifiant de la fiche multi-photos — la galerie est indexée par article. */
 export const PHOTOS_ITEM_ID: string = itemIdOf(meta.photosUrl, 'photosUrl');
 
+/**
+ * Identifiant de la fiche vendue — voir `docs/specs/suivi-prix.md` §8. Égal à
+ * `ITEM_ID` par coïncidence de calendrier : l'article épinglé pour `item.html`
+ * s'est vendu entre deux rafraîchissements des fixtures. Les deux fixtures
+ * restent indépendantes (deux fichiers distincts), ce n'est qu'un id partagé.
+ */
+export const SOLD_ITEM_ID: string = itemIdOf(meta.soldUrl, 'soldUrl');
+
 /** Nom d'une fixture de markup Vinted présente dans `tests/fixtures/`. */
-export type Fixture = 'catalog' | 'item' | 'category' | 'item-photos';
+export type Fixture = 'catalog' | 'item' | 'category' | 'item-photos' | 'sold';
 
 /** L'URL compte : elle décide de la page détail, et du contexte de catégorie. */
 const URLS: Record<Fixture, () => string> = {
@@ -132,12 +141,30 @@ const URLS: Record<Fixture, () => string> = {
   // Une fiche comme une autre pour l'extraction — sa seule particularité est de
   // porter plusieurs photos, ce que `itemUrl` ne garantit pas.
   'item-photos': () => meta.photosUrl,
+  // Une fiche vendue, sans JSON-LD (Vinted le retire) : exerce isSoldDetail()
+  // et le repli d'extractFromDetail() en même temps.
+  sold: () => meta.soldUrl,
 };
 
-/** @param options état initial du storage */
+/**
+ * Storage partagé entre plusieurs instances du content script — simule
+ * plusieurs onglets Vinted pointant sur le même `chrome.storage.local`.
+ * `watch-lease.test.ts` en a besoin : le bail n'a de sens qu'entre deux
+ * instances qui voient réellement la même écriture.
+ */
+export type SharedBackend = {
+  store: Record<string, unknown>;
+  listeners: ((changes: unknown, area: string) => void)[];
+};
+
+export function createSharedBackend(saved: Record<string, unknown> = {}): SharedBackend {
+  return { store: { savedItems: { ...saved } }, listeners: [] };
+}
+
+/** @param options état initial du storage, ou un backend partagé entre plusieurs instances */
 export async function loadContentScript(
   fixture: Fixture,
-  options: { saved?: Record<string, unknown> } = {}
+  options: { saved?: Record<string, unknown>; shared?: SharedBackend } = {}
 ) {
   const url = (URLS[fixture] || URLS.catalog)();
 
@@ -152,8 +179,10 @@ export async function loadContentScript(
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const window = dom.window as any;
 
-  const store: Record<string, unknown> = options.saved ? { savedItems: { ...options.saved } } : {};
-  const changeListeners: ((changes: unknown, area: string) => void)[] = [];
+  const backend: SharedBackend =
+    options.shared ?? createSharedBackend(options.saved ? { ...options.saved } : {});
+  const store = backend.store;
+  const changeListeners = backend.listeners;
   let messageListener:
     ((message: unknown, sender: unknown, respond: (r: unknown) => void) => void) | null = null;
 
@@ -218,6 +247,21 @@ export async function loadContentScript(
     /** Articles actuellement enregistrés. */
     saved: () => Object.values(store.savedItems || {}),
     savedCount: () => Object.keys(store.savedItems || {}).length,
+
+    /** État du cycle de rafraîchissement — clé `watch` du storage. */
+    watchState: (): any => store.watch,
+
+    /** Envoie VF_WATCH_START comme le ferait le panneau, et attend la réponse. */
+    startWatch: (ids: string[]): Promise<any> =>
+      new Promise((resolve) => {
+        messageListener?.({ type: 'VF_WATCH_START', ids }, null, resolve);
+      }),
+
+    /** Envoie VF_WATCH_CANCEL. Ne fait qu'armer le drapeau : pas de garantie d'arrêt immédiat. */
+    cancelWatch: (): Promise<any> =>
+      new Promise((resolve) => {
+        messageListener?.({ type: 'VF_WATCH_CANCEL' }, null, resolve);
+      }),
 
     /** Rapport du bouton Diagnostic du panneau latéral. */
     diagnose: (): Promise<any> =>

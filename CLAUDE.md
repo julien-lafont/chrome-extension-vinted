@@ -9,7 +9,7 @@ rien ne sort du navigateur.
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 124 tests, ~25 s, runner Node natif via tsx
+pnpm test         # 193 tests, ~28 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-favoris-<version>.zip
 ```

@@ -131,6 +131,73 @@ export type SavedItem = {
    * et la recherche les lisent en repli. Voir `docs/limitations.md`.
    */
   likes?: number;
+
+  // --- Suivi de prix et de disponibilité, voir docs/specs/suivi-prix.md -------
+
+  /** Horodatage de la dernière vérification aboutie (fiche lue, quel qu'en soit le verdict). */
+  lastCheckedAt?: number;
+
+  /**
+   * `undefined` = actif, ou jamais infirmé. `sold` vient du badge « Vendu » de la
+   * fiche, `gone` de deux absences consécutives — jamais d'une seule (voir
+   * `shared/watch.ts`). Un article marqué n'est jamais supprimé d'office : c'est
+   * l'utilisateur qui archive (`archiveSold()`).
+   */
+  status?: 'sold' | 'gone';
+
+  /**
+   * Points de prix, du plus ancien au plus récent, **seulement quand la valeur
+   * change**. Le premier point est toujours conservé — c'est la référence du
+   * « −15 % depuis l'ajout ». Au-delà de {@link PRICE_HISTORY_MAX} on évince les
+   * plus anciens *intermédiaires*, jamais le premier.
+   */
+  priceHistory?: PricePoint[];
+
+  /** Absences consécutives (404/410). Remis à 0 dès qu'une lecture aboutit. */
+  missCount?: number;
+};
+
+/** Un relevé de prix, horodaté. Voir `SavedItem.priceHistory`. */
+export type PricePoint = { at: number; price: number };
+
+/**
+ * Longueur maximale de `SavedItem.priceHistory`. ~20 octets le point → 300
+ * articles × 24 points ≈ 150 Ko sur les 10 Mo disponibles.
+ */
+export const PRICE_HISTORY_MAX = 24;
+
+/**
+ * État du cycle de rafraîchissement, clé `watch` de `chrome.storage.local`.
+ * Pas un port, pas un message de progression : le panneau écoute déjà
+ * `chrome.storage.onChanged`, la progression s'affiche gratuitement et survit à
+ * la fermeture du panneau comme à l'arrêt du service worker.
+ */
+export type WatchState = {
+  /** Fin du dernier cycle complet. Base du déclencheur « > 1 h » (§5.2). */
+  lastSweepAt: number;
+  /**
+   * Verrou d'onglet, avec bail : un onglet fermé en plein cycle ne bloque pas à
+   * vie. `tabId` n'est pas un id d'onglet Chrome — inaccessible depuis un
+   * content script — mais un identifiant d'instance généré au chargement.
+   */
+  lease?: { tabId: string; until: number };
+  progress?: { done: number; total: number; startedAt: number };
+  /** Fenêtre de silence après un 429 ou un challenge. Aucune requête avant. */
+  throttledUntil?: number;
+  /**
+   * Nombre de coups de frein consécutifs subis, remis à 0 au premier cycle qui
+   * aboutit sans en subir. Sert à faire croître `throttledUntil` en
+   * 30 min × 2^n plutôt que de reposer un délai fixe à chaque signal.
+   */
+  throttleStrikes?: number;
+  /** Seau à jetons, partagé entre tous les onglets — voir §3.2. */
+  bucket: { tokens: number; at: number };
+  /**
+   * Plafond quotidien (~80 fiches, §3.2), au-delà du seau à jetons : une liste de
+   * 300 articles s'étale ainsi sur plusieurs jours plutôt que de vider le seau
+   * en une seule session prolongée. `day` est une clé `YYYY-MM-DD` en UTC.
+   */
+  dailyBudget?: { day: string; used: number };
 };
 
 /**
@@ -167,6 +234,8 @@ export type Settings = {
   sortMode: SortMode;
   sortDir: SortDir;
   offer: OfferSettings;
+  /** Masque les articles `sold`/`gone` de la liste, sans les compter pour autant (§6.5). */
+  hideSold: boolean;
 };
 
 /** Les deux clés du storage sont indexées par id, pas stockées en tableau. */

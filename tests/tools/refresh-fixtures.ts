@@ -47,6 +47,20 @@ const CATEGORY_URL = 'https://www.vinted.fr/catalog/584-hauts-et-t-shirts';
 const PHOTOS_URL = 'https://www.vinted.fr/items/9504133342-sac-a-dos-nike-rose';
 
 /**
+ * Une fiche **vendue**, pour `content-watch.test.ts` — voir
+ * `docs/specs/suivi-prix.md` §4 et §8. `isSoldDetail()` s'ancre sur
+ * `[data-testid="item-status--content"]` = « Vendu », qui n'existe que sur une
+ * fiche réellement vendue : impossible à obtenir autrement qu'en pointant une
+ * vraie fiche dans cet état, jamais en la fabriquant à la main (voir CLAUDE.md).
+ *
+ * Comme `PHOTOS_URL`, cet article finira par disparaître du tout (Vinted retire
+ * les fiches vendues après un délai) : le refresh le signale alors sans faire
+ * échouer les autres fixtures, et conserve la fixture existante. Remplacer par
+ * n'importe quelle fiche affichant le badge « Vendu ».
+ */
+const SOLD_URL = 'https://www.vinted.fr/items/9508569835-t-shirt-nike';
+
+/**
  * Catalogue de secours, où puiser les cas limites que la recherche principale
  * n'offre pas toujours.
  *
@@ -156,7 +170,16 @@ function buildCatalogFixture(
   return { html: wrap(title, body), count: cards.length, crumbs: Boolean(crumbs) };
 }
 
-function buildItemFixture(html: string, title = 'Fixture fiche article Vinted') {
+/**
+ * @param requireJsonLd Vinted retire le JSON-LD Product d'une fiche **vendue**
+ *   (rien à référencer pour le SEO) : `false` pour `SOLD_URL`, qui doit au
+ *   contraire exercer le repli d'`extractFromDetail()` sans JSON-LD.
+ */
+export function buildItemFixture(
+  html: string,
+  title = 'Fixture fiche article Vinted',
+  requireJsonLd = true
+) {
   const doc = new JSDOM(html).window.document;
   const parts = [];
 
@@ -168,14 +191,17 @@ function buildItemFixture(html: string, title = 'Fixture fiche article Vinted') 
       return false;
     }
   });
-  if (!ld) throw new Error('JSON-LD Product introuvable sur la fiche');
-  parts.push(ld.outerHTML);
+  if (!ld && requireJsonLd) throw new Error('JSON-LD Product introuvable sur la fiche');
+  if (ld) parts.push(ld.outerHTML);
 
   // Les ancres de repli, utilisées si le JSON-LD venait à disparaître.
   const h1 = doc.querySelector('h1');
   if (h1) parts.push(h1.outerHTML);
 
   for (const sel of [
+    // Présent seulement sur une fiche vendue (ou réservée) : c'est l'ancre
+    // d'`isSoldDetail()`, voir `docs/specs/suivi-prix.md` §4.
+    '[data-testid="item-status"]',
     '[data-testid="item-price"]',
     '[data-testid="item-attributes-size"]',
     '[data-testid="item-attributes-status"]',
@@ -296,7 +322,7 @@ function firstItemUrl(html: string): string {
   return link.href.split('?')[0] ?? link.href;
 }
 
-const [catalogArg, itemArg, categoryArg, photosArg] = process.argv.slice(2);
+const [catalogArg, itemArg, categoryArg, photosArg, soldArg] = process.argv.slice(2);
 
 const catalogHtml = catalogArg ? readFileSync(catalogArg, 'utf8') : await fetchPage(CATALOG_URL);
 const itemUrl = firstItemUrl(catalogHtml);
@@ -345,6 +371,27 @@ try {
   );
 }
 
+// Fiche vendue, pour le suivi de prix. Même filet de sécurité que la fiche
+// multi-photos : l'article finira retiré, et perdre les autres fixtures pour
+// autant serait absurde.
+let sold: ReturnType<typeof buildItemFixture> | null = null;
+try {
+  const soldHtml = soldArg ? readFileSync(soldArg, 'utf8') : await fetchPage(SOLD_URL);
+  const built = buildItemFixture(soldHtml, 'Fixture fiche article Vinted — vendue', false);
+  if (!built.html.includes('item-status--content')) {
+    throw new Error('aucun badge « Vendu » sur cette fiche — trouver un autre article vendu');
+  }
+
+  writeFileSync(join(FIXTURES, 'sold.html'), built.html);
+  sold = built;
+} catch (err) {
+  console.warn(
+    `\n⚠  sold.html non régénérée (${err instanceof Error ? err.message : String(err)}).` +
+      `\n   La fixture existante est conservée. Remplacer SOLD_URL par n'importe quelle` +
+      `\n   fiche affichant le badge « Vendu ».\n`
+  );
+}
+
 // L'URL de la fiche est nécessaire aux tests : l'ID de l'article s'y trouve.
 writeFileSync(
   join(FIXTURES, 'meta.json'),
@@ -354,6 +401,7 @@ writeFileSync(
       catalogUrl: CATALOG_URL,
       categoryUrl: CATEGORY_URL,
       photosUrl: PHOTOS_URL,
+      soldUrl: SOLD_URL,
       cards: catalog.count,
       refreshedAt: new Date().toISOString(),
     },
@@ -370,4 +418,5 @@ console.log(`catalog.html   ${catalog.count} cartes  ${kb(catalog.html)}`);
 console.log(`item.html      ${item.count} blocs   ${kb(item.html)}  ${photoCount(item)}`);
 console.log(`category.html  ${category.count} cartes  ${kb(category.html)}`);
 if (photos) console.log(`item-photos.html  ${photos.count} blocs   ${photoCount(photos)}`);
+if (sold) console.log(`sold.html      ${sold.count} blocs   ${kb(sold.html)}`);
 console.log(`meta.json      ${itemUrl}`);

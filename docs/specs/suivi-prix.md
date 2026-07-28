@@ -105,13 +105,15 @@ triplé sans que personne ne l'ait demandé. D'où deux mécanismes :
   `CLAUDE.md`), qui plafonne le débit indépendamment du nombre de déclencheurs :
 
 ```ts
-const RATE = { capacity: 12, refillPerMinute: 6 }; // pointe de 12, régime de 6/min
+const RATE = { capacity: 48, refillPerMinute: 48 }; // pointe de 48, régime de 48/min
 ```
 
-Un plafond quotidien s'y ajoute (~80 fiches par défaut) : sur une liste de 300 articles,
-un cycle complet s'étale sur trois ou quatre jours, ce qui est parfaitement acceptable
-pour du suivi de prix et reste un volume de requêtes indiscernable d'une navigation
-soutenue.
+Un plafond quotidien s'y ajoute (`DAILY_CAP = 10000`, en pratique non contraignant). La
+valeur d'origine de cette spec (~80 fiches/jour, capacité 12, régime 6/min) était
+calibrée pour rester indiscernable d'une navigation soutenue ; ces valeurs ont été
+relevées en deux temps sur demande explicite le 28 juillet 2026 (24/12 puis 48/48), en
+connaissance de cause du compromis anti-détection que §3 décrit — au régime actuel, le
+débit ne ressemble plus à une navigation humaine.
 
 ### 3.3 Une cadence irrégulière
 
@@ -121,13 +123,13 @@ une distribution log-normale, et on y ajoute des pauses longues :
 ```ts
 /**
  * Un humain qui parcourt des fiches n'a pas de période. On tire un délai log-normal
- * (médiane ~4 s, queue jusqu'à ~20 s) et, une fois sur ~8, une pause de 20–60 s : la
+ * (médiane ~0,5 s) et, une fois sur 100, on ajoute une pause de 10 à 30 s : la
  * « lecture » d'une fiche. Le coût en durée totale est réel mais le cycle tourne en
  * fond — personne ne l'attend.
  */
 function nextDelay(): number {
-  const base = Math.exp(Math.log(4000) + gauss() * 0.55);
-  return Math.random() < 0.12 ? base + 20000 + Math.random() * 40000 : base;
+  const base = Math.exp(Math.log(500) + gauss() * 0.55);
+  return Math.random() < 0.01 ? base + 10000 + Math.random() * 20000 : base;
 }
 ```
 
@@ -179,10 +181,13 @@ min ». Mieux vaut le dire que faire semblant.
 
 ### 5.2 À l'ouverture du panneau, si `lastSweepAt` remonte à plus d'une heure
 
-Cycle silencieux en tâche de fond, plafonné à ~25 articles, non bloquant, sans
-indicateur intrusif — seulement le compteur discret dans le bouton. Si aucun onglet
-Vinted n'est ouvert : on ne fait rien, et on ne le signale pas (rien ne serait
-actionnable).
+Cycle silencieux en tâche de fond, non bloquant, sans indicateur intrusif — seulement le
+compteur discret dans le bouton. Si aucun onglet Vinted n'est ouvert : on ne fait rien,
+et on ne le signale pas (rien ne serait actionnable).
+
+Le plafond de ~25 articles d'origine a été supprimé sur demande explicite (même
+changement que §3.2) : le déclencheur silencieux couvre désormais tous les articles
+éligibles, pas seulement les plus périmés d'entre 25.
 
 ### 5.3 Le timer automatique : non, pas en V1
 
@@ -239,12 +244,20 @@ Quatre états, tous portés par le même bouton — le libellé change, jamais l
 | Aucun onglet Vinted | `Rafraîchir`     | « Ouvre un onglet Vinted pour rafraîchir »          | inerte (`disabled`) |
 
 L'icône est une flèche circulaire, animée en rotation continue **pendant le cycle
-seulement**. Le libellé `12/48` est mis à jour par paliers de 5 (voir §8), donc il
-avance par sauts : c'est voulu, et personne ne compte les unités sur un compteur de
-fond.
+seulement**. Le libellé `12/48` était à l'origine mis à jour par paliers de 5 pour
+limiter le repeint du panneau (voir §8) ; supprimé sur demande explicite le 28 juillet
+2026, en connaissance du compromis que §8 décrit — le libellé avance désormais à chaque
+article vérifié.
 
 L'état freiné se dit franchement plutôt que de se déguiser en panne : un bouton qui ne
 répond pas sans expliquer pourquoi est le pire des deux mondes.
+
+**Ajouté le 28 juillet 2026, sur demande explicite.** Pendant l'état « En cours »
+seulement, une ligne apparaît sous la barre de tri (`#watch-notice`, juste sous
+`#watchbar`) : « Rafraîchissement en cours — ne change pas d'onglet Vinted, ça mettrait
+le cycle en pause. » Ce n'est pas décoratif : §3.6 suspend réellement le cycle dès que
+`document.visibilityState` de l'onglet Vinted n'est plus `'visible'`, et rien d'autre
+dans l'interface ne le disait explicitement.
 
 ### 6.2 La ligne d'article — anatomie des trois cas
 
@@ -409,9 +422,12 @@ rafraîchissement de fond qui annonce son propre néant est une notification de 
 
 ### 6.8 Contraintes à respecter dans le rendu
 
-- **La liste est `aria-live="polite"`.** Un cycle qui repeint la liste à chaque article
-  vérifié ferait parler un lecteur d'écran en continu pendant vingt minutes. C'est la
-  même contrainte que celle des paliers de §8, vue depuis l'accessibilité.
+- **La liste est `aria-live="polite"`.** Chaque article vérifié avec succès écrit dans
+  `savedItems` (au moins `lastCheckedAt`), ce qui redéclenche le rendu complet de la
+  liste côté panneau — indépendamment du palier de progression de §8, qui ne concerne
+  que le libellé du bouton. Un cycle qui vérifie cent articles fait donc parler un
+  lecteur d'écran une centaine de fois ; `polite` attend une pause plutôt que de couper
+  la parole, mais n'élimine pas le bruit.
 - **Le badge porte un `aria-label` explicite** (« prix en baisse de 20 % depuis l'ajout
   ») : « −20 % » seul est illisible à la synthèse vocale.
 - L'ancien prix utilise `<s>`, qui porte la sémantique ; le titre d'un article vendu
@@ -425,14 +441,15 @@ rafraîchissement de fond qui annonce son propre néant est une notification de 
 
 ### 6.9 Récapitulatif des ajouts au DOM du panneau
 
-| Élément                                                                        | Emplacement                       |
-| ------------------------------------------------------------------------------ | --------------------------------- |
-| `<button id="refresh" class="dir">` + libellé `#refresh-label`                 | `.sortbar` de `sidepanel.html`    |
-| `<p class="hint watchbar" id="watchbar" hidden>`                               | sous `#hint`                      |
-| `<span class="item-price-was">` (`<s>`) et `<button class="item-price-delta">` | dans `.item-price` du template    |
-| `<span class="item-status-badge">`                                             | dans `.item-price`, après le prix |
-| `<div id="price-history" class="menu" hidden>`                                 | à côté de `#move-menu`            |
-| `.item--sold`, `.item--gone`                                                   | classes posées sur `.item`        |
+| Élément                                                                        | Emplacement                                                                                                      |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `<button id="refresh" class="dir">` + libellé `#refresh-label`                 | `.sortbar` de `sidepanel.html`                                                                                   |
+| `<p class="hint watchbar" id="watchbar" hidden>`                               | sous `#hint`                                                                                                     |
+| `<p class="hint" id="watch-notice" hidden>`                                    | sous `#watchbar`, ajouté le 28 juillet 2026 : rappelle de ne pas changer d'onglet Vinted pendant un cycle (§3.6) |
+| `<span class="item-price-was">` (`<s>`) et `<button class="item-price-delta">` | dans `.item-price` du template                                                                                   |
+| `<span class="item-status-badge">`                                             | dans `.item-price`, après le prix                                                                                |
+| `<div id="price-history" class="menu" hidden>`                                 | à côté de `#move-menu`                                                                                           |
+| `.item--sold`, `.item--gone`                                                   | classes posées sur `.item`                                                                                       |
 
 ## 7. Découpage
 
@@ -472,11 +489,14 @@ baisse de 20 % affiche la pastille et l'ancien prix, un article `sold` garde sa 
 dans la liste et son bouton d'offre inerte, et le popover d'historique ne s'ouvre pas
 sur un article à un seul point de prix.
 
-**Vigilance liée à la règle 3.** Les écritures de progression dans `watch` déclenchent
-`storage.onChanged`, donc `render()` côté panneau. Écrire à chaque requête ferait
-repeindre toute la liste toutes les quelques secondes pendant un cycle entier. La
-progression doit donc être écrite **par paliers** (tous les 5 articles), et le rendu du
-bouton court-circuiter le rendu complet de la liste.
+**Vigilance liée à la règle 3.** Le panneau n'écoute `storage.onChanged` sur la clé
+`watch` que dans `sidepanel/watch.ts`, pour repeindre le seul bouton — le rendu complet
+de la liste (`sidepanel.ts`) n'écoute que `savedItems`/`collections`/`settings`, jamais
+`watch`. Écrire la progression à chaque article ne coûte donc que deux éléments DOM, pas
+un repeint de liste ; c'est pour cette raison que le palier de progression d'origine (un
+article sur cinq) a pu être supprimé sur demande explicite le 28 juillet 2026 sans
+risque de scintillement. Le repeint de liste, lui, vient d'ailleurs — de l'écriture de
+chaque résultat dans `savedItems`, voir §6.8.
 
 ## 9. Ordre de mise en œuvre
 

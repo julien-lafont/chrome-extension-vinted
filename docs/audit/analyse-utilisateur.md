@@ -150,6 +150,26 @@ les pièges, l'effort estimé (S ≈ 1 jour, M ≈ 2-4 jours, L ≈ 1 semaine et
 
 ### A. Suivi de prix et de disponibilité — **la priorité n°1** · effort M
 
+> **Fait le 28/07/2026, en entier** — voir `docs/specs/suivi-prix.md` pour le détail
+> technique et l'ordre de mise en œuvre. Contrairement à la proposition initiale
+> (planificateur `chrome.alarms` + service worker), le rafraîchissement tourne dans le
+> content script d'un onglet Vinted ouvert : argument anti-détection (cookies de session
+> first-party, `Referer` cohérent), et aucune permission `alarms` n'a été ajoutée.
+> Livrés : les quatre champs sur `SavedItem` (`lastCheckedAt`, `status`, `priceHistory`,
+> `missCount`), le bouton « Rafraîchir » de la barre de tri avec bail entre onglets et
+> seau à jetons, la détection « vendu » conservatrice (badge explicite requis, jamais un
+> 404 isolé ni une redirection seule), le badge de variation de prix avec popover
+> d'historique (tracé en escalier, référence = prix à l'ajout), le filtre « masquer les
+> vendus » et l'archivage réversible. Deux déclencheurs : le bouton manuel, et un cycle
+> silencieux à l'ouverture du panneau si le dernier passage remonte à plus d'une heure —
+> le déclencheur périodique reste en phase 2, non livré, comme prévu par la spec. Le
+> mode de tri « Baisse de prix » évoqué ci-dessous a été explicitement écarté de la
+> version finale (redondant avec le badge et le popover). **Écart à noter** : les
+> paramètres de débit (seau à jetons, cadence, plafond quotidien) ont été relevés à
+> plusieurs reprises sur demande explicite de l'utilisateur après livraison — le
+> compromis anti-détection décrit au piège n°3 ci-dessous n'est donc plus intégralement
+> respecté dans la configuration actuelle du code.
+
 **Le besoin.** Un favori est une hypothèse d'achat en attente. Aujourd'hui l'hypothèse
 ne se vérifie jamais. Trois choses arrivent à un article suivi, et aucune n'est visible
 : il se vend, il baisse, il est remonté par le vendeur. La première rend la ligne

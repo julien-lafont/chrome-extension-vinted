@@ -8,6 +8,8 @@
   --accent-fg: #fff;
   --danger: #b91c1c;
   --shadow: 0 8px 24px rgba(17, 24, 39, 0.18);
+  --drop: #15803d;
+  --drop-bg: #dcfce7;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -21,6 +23,8 @@
     --accent-fg: #0b1120;
     --danger: #f87171;
     --shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    --drop: #4ade80;
+    --drop-bg: rgba(74, 222, 128, 0.14);
   }
 }
 
@@ -267,6 +271,29 @@ h1 {
   display: none;
 }
 
+.dir:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* La flèche circulaire ne tourne que pendant un cycle : au repos ou freinée,
+   elle reste un simple pictogramme. */
+.dir.is-running svg {
+  animation: vf-spin 1s linear infinite;
+}
+
+@keyframes vf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dir.is-running svg {
+    animation: none;
+  }
+}
+
 .hint {
   margin: 8px 0 0;
   color: var(--muted);
@@ -401,8 +428,74 @@ h1 {
 }
 
 .item-price {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   color: var(--fg);
   font-weight: 600;
+}
+
+/*
+ * Prix courant, ancien prix barré et pastille de variation ne doivent jamais
+ * céder leur place : entre le pseudo du vendeur et l'information « −20 % », le
+ * second gagne (§6.2). Seul le vendeur rétrécit, via `.item-seller` ci-dessous.
+ */
+.item-price-value,
+.item-price-was,
+.item-price-delta,
+.item-status-badge,
+.item-seller-dot {
+  flex: 0 0 auto;
+}
+
+.item-price-was {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 11px;
+}
+
+/* Pastille de variation, cliquable — ouvre l'historique de prix (§6.4). Sans
+   dépendance de layout au-delà de `.menu` déjà utilisé pour le menu « déplacer
+   vers » : le popover réutilise le même mécanisme, voir price-history.ts. */
+.item-price-delta {
+  padding: 1px 6px;
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.item-price-delta--drop {
+  background: var(--drop-bg);
+  color: var(--drop);
+}
+
+.item-price-delta--rise {
+  background: var(--border);
+  color: var(--muted);
+}
+
+.item-price-delta:hover {
+  filter: brightness(0.95);
+}
+
+@media (prefers-color-scheme: dark) {
+  .item-price-delta:hover {
+    filter: brightness(1.15);
+  }
+}
+
+/* Badge d'état, neutre : ni la victoire du vert ni l'alarme du rouge, juste un
+   fait. Vendu et Retiré partagent ce style, seul le texte les distingue. */
+.item-status-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
 }
 
 /*
@@ -441,13 +534,58 @@ h1 {
 }
 
 .item-seller {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .item-seller[href]:hover,
 .item-seller[href]:focus-visible {
   color: var(--accent);
+}
+
+/*
+ * Vendu ou retiré (§6.2) : la ligne se retire visuellement sans quitter la
+ * liste — c'est l'inverse du comportement de Vinted, qui la fait disparaître.
+ * `text-decoration` porte l'estompage, jamais la sémantique : c'est le badge
+ * d'état qui dit le fait, la rature n'est qu'un signal au balayage (§6.8).
+ */
+.item--sold,
+.item--gone {
+  opacity: 0.55;
+}
+
+.item--sold .item-title,
+.item--gone .item-title {
+  text-decoration: line-through;
+}
+
+.item--sold .item-thumb img,
+.item--gone .item-thumb img {
+  filter: grayscale(1);
+}
+
+.item--sold .item-offer,
+.item--gone .item-offer {
+  color: var(--border);
+  cursor: default;
+}
+
+.item--sold .item-offer:hover,
+.item--gone .item-offer:hover {
+  background: none;
+  color: var(--border);
+}
+
+/* La recherche d'un similaire reste l'action évidente sur un article parti :
+   elle seule se détache de l'opacité ambiante. */
+.item--sold .item-similar,
+.item--gone .item-similar {
+  opacity: calc(1 / 0.55);
 }
 
 /*
@@ -617,6 +755,71 @@ h1 {
 
 .menu-item.danger {
   color: var(--danger);
+}
+
+/* --- Popover d'historique de prix (§6.4) ---------------------------------- */
+
+#price-history {
+  width: 236px;
+  max-width: 236px;
+  padding: 8px;
+}
+
+.price-history-chart {
+  display: block;
+  width: 100%;
+  height: 64px;
+  margin: 2px 0 8px;
+  color: var(--accent);
+}
+
+.price-history-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.price-history-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.price-history-row > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.price-history-row > :nth-child(2) {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.price-history-delta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.price-history-delta.drop {
+  color: var(--drop);
+}
+
+.price-history-delta.rise {
+  color: var(--muted);
+}
+
+.price-history-footer {
+  margin: 8px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
 }
 
 /* --- Modales -------------------------------------------------------------- */

@@ -5,7 +5,7 @@ pnpm install
 ppnpm test
 ```
 
-88 tests, ~25 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
+193 tests, ~28 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
 pour qu'il lise directement les sources TypeScript. Node 22 minimum.
 
 **Les tests chargent le bundle esbuild, pas le fichier source.** `content.ts` importe du
@@ -33,10 +33,19 @@ le dossier de tests n'y entre jamais.
 | `saved-pulse.test.ts`    | L'icône ne confirme-t-elle _que_ les enregistrements ?                                    |
 | `hydration.test.ts`      | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                  |
 | `size-ids.test.ts`       | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?            |
+| `watch.test.ts`          | La logique pure du suivi de prix (historique, verdicts, débit) est-elle correcte ?        |
+| `content-watch.test.ts`  | Le cycle marque-t-il « vendu » sans supprimer, et laisse-t-il un id divergent intact ?    |
+| `watch-lease.test.ts`    | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                 |
+| `watch-render.test.ts`   | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?       |
 
 Les trois dernières suites verrouillent les correctifs décrits dans
 [pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber 6
 tests, neutraliser la garde `vfPainted` en fait tomber 1.
+
+Les quatre suites du suivi de prix couvrent `docs/specs/suivi-prix.md` — détail des
+verdicts, du bail et du débit dans `shared/watch.ts`, jamais dans le content script
+directement testable autrement qu'à travers `content-watch.test.ts` et
+`watch-lease.test.ts`.
 
 La suite « données de tri » d'`extraction.test.ts` couvre les quatre modes du panneau.
 Vérifié aussi, un correctif à la fois : ne plus désambiguïser le sous-titre, recouper le
@@ -152,14 +161,15 @@ marche pas — les rAF et observateurs encore en vol échouent sur une fenêtre 
 
 ## Fixtures
 
-Quatre fixtures, extraites de vraies pages Vinted :
+Cinq fixtures, extraites de vraies pages Vinted :
 
-| Fixture                           | Page d'origine                   | Ce qu'elle seule couvre                                       |
-| --------------------------------- | -------------------------------- | ------------------------------------------------------------- |
-| `catalog.html` (10 cartes, 61 Ko) | recherche `?search_text=nike`    | l'extraction des cartes, et l'absence de catégorie            |
-| `item.html` (10 Ko)               | une fiche article                | JSON-LD, attributs, favoris par hydratation, catégorie exacte |
-| `category.html` (2 cartes, 13 Ko) | `/catalog/584-hauts-et-t-shirts` | la catégorie héritée du fil d'Ariane de la page               |
-| `item-photos.html` (18 Ko)        | une fiche à trois photos         | la galerie : ordre, pleine résolution, dédoublonnage          |
+| Fixture                           | Page d'origine                   | Ce qu'elle seule couvre                                            |
+| --------------------------------- | -------------------------------- | ------------------------------------------------------------------ |
+| `catalog.html` (10 cartes, 61 Ko) | recherche `?search_text=nike`    | l'extraction des cartes, et l'absence de catégorie                 |
+| `item.html` (10 Ko)               | une fiche article                | JSON-LD, attributs, favoris par hydratation, catégorie exacte      |
+| `category.html` (2 cartes, 13 Ko) | `/catalog/584-hauts-et-t-shirts` | la catégorie héritée du fil d'Ariane de la page                    |
+| `item-photos.html` (18 Ko)        | une fiche à trois photos         | la galerie : ordre, pleine résolution, dédoublonnage               |
+| `sold.html`                       | une fiche **vendue**             | `isSoldDetail()`, et le repli sans JSON-LD (absent une fois vendu) |
 
 Les pages brutes pèsent 8 Mo et 2 Mo, presque entièrement du bundle Next.js : on ne
 garde que le markup réellement lu par le content script. Le markup conservé est
@@ -181,10 +191,15 @@ catalogue : son nombre de photos change à chaque rafraîchissement, et une gale
 signale alors sans échouer, et conserve la fixture. Il suffit de remplacer `PHOTOS_URL`
 par n'importe quelle fiche à trois photos ou plus.
 
-`fixtures/meta.json` porte les URLs des quatre pages (l'ID de l'article se lit dans
-celle de la fiche) et le nombre de cartes, que les tests lisent au lieu de coder ces
-valeurs en dur. **L'URL compte** : c'est elle qui décide si le content script se croit
-sur une fiche, et dans quel contexte de catégorie.
+`sold.html` a de même une URL épinglée (`SOLD_URL`) : impossible d'obtenir le badge «
+Vendu » autrement qu'en pointant une vraie fiche dans cet état. Même filet de sécurité —
+l'article finira par disparaître du tout, le refresh le signale et conserve la fixture
+existante plutôt que de faire échouer les quatre autres.
+
+`fixtures/meta.json` porte les URLs des cinq pages (l'ID de l'article se lit dans celle
+de la fiche) et le nombre de cartes, que les tests lisent au lieu de coder ces valeurs
+en dur. **L'URL compte** : c'est elle qui décide si le content script se croit sur une
+fiche, et dans quel contexte de catégorie.
 
 ### Rafraîchir
 
