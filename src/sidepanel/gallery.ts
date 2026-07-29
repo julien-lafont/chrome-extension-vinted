@@ -14,6 +14,7 @@
  * clic sur le fond et tout `[data-close]` — voir la fin de `sidepanel.ts`.
  */
 import type { ItemPhoto, SavedItem } from '../shared/types.ts';
+import { lensUrl } from './elsewhere.ts';
 
 /** Les nœuds de `sidepanel.html` que la visionneuse pilote. */
 export type GalleryElements = {
@@ -24,6 +25,8 @@ export type GalleryElements = {
   title: HTMLElement;
   counter: HTMLElement;
   link: HTMLAnchorElement;
+  elsewhere: HTMLAnchorElement;
+  zoom: HTMLAnchorElement;
   prev: HTMLButtonElement;
   next: HTMLButtonElement;
 };
@@ -31,6 +34,13 @@ export type GalleryElements = {
 let el: GalleryElements;
 let photos: ItemPhoto[] = [];
 let index = 0;
+
+/**
+ * Marque de l'article affiché, transmise à la recherche Lens de la photo
+ * courante (voir `show()`). `undefined` si l'article n'en a pas — Lens reste
+ * alors une recherche purement visuelle.
+ */
+let currentBrand: string | undefined;
 
 /**
  * Chargements de pleine résolution en vol, indexés par position.
@@ -57,6 +67,15 @@ function show(next: number): void {
   el.image.src = photo.url;
   el.image.alt = `Photo ${index + 1} sur ${photos.length}`;
   el.stage.style.background = photo.dominantColor ?? 'var(--surface)';
+
+  // La recherche vise la photo affichée à l'écran, pas la meilleure de
+  // l'article (voir bestPhoto() dans elsewhere.ts) : ici, c'est justement le
+  // choix de l'utilisateur qui fait foi.
+  el.elsewhere.href = lensUrl(photo.url, currentBrand);
+
+  // Pleine résolution, en dehors du panneau : `target="_blank"` sur un lien
+  // suffit, pas besoin d'attendre l'upgrade in-place de l'image affichée.
+  el.zoom.href = photo.full;
 
   // Réserver le ratio évite que le cadre saute d'une photo à l'autre. Le flux
   // d'hydratation donne les dimensions ; le repli DOM, non.
@@ -141,6 +160,7 @@ export function openGallery(item: SavedItem, start = 0): void {
 
   el.title.textContent = item.title || `Article ${item.id}`;
   el.link.href = item.url;
+  currentBrand = item.brand?.trim() || undefined;
 
   renderThumbs();
   show(start);

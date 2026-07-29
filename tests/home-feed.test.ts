@@ -13,7 +13,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadContentScript, settleFetches } from './harness.ts';
+import { loadContentScript, settleFetches, settle } from './harness.ts';
 
 after(settleFetches);
 
@@ -63,6 +63,77 @@ describe('fil de la page d’accueil', () => {
 
     const ids = page.cardButtons().map((button) => button.dataset.vfId);
     assert.equal(new Set(ids).size, ids.length, 'deux cartes ont enregistré le même ID');
+  });
+
+  test('masquer une carte du fil referme la grille, pas seulement la carte', async () => {
+    const page = await loadContentScript('home');
+    const [button] = page.cardButtons();
+    const id = button.dataset.vfId;
+
+    await page.setNoise({ hidden: { [id]: Date.now() } });
+
+    const [hidden] = page.hiddenCards();
+    assert.ok(hidden, 'la carte écartée doit porter un verdict');
+
+    // Le verdict doit tomber sur la cellule de grille, comme au catalogue. Posé
+    // sur la carte, il laisse la cellule en place, vide : la page d'accueil
+    // gardait un trou et les cartes suivantes ne remontaient pas.
+    assert.equal(
+      hidden.dataset.testid,
+      'grid-item',
+      'la carte du fil est enfouie sous sa cellule : la masquer ne referme rien'
+    );
+    assert.ok(
+      hidden.querySelector('[data-testid="feed-item"]'),
+      'et la cellule doit bien contenir la carte visée'
+    );
+  });
+
+  test('Vinted recycle le noeud d’une carte masquée : le bouton doit suivre le nouvel article', async () => {
+    const page = await loadContentScript('home');
+    const doc = page.window.document as Document;
+
+    const cards = [...doc.querySelectorAll<HTMLElement>('[data-testid="feed-item"]')];
+    assert.ok(cards.length >= 2, 'la fixture doit porter au moins deux cartes');
+    const [cardA, cardOther] = cards as [HTMLElement, HTMLElement];
+    const idOther = cardOther
+      .querySelector('[data-testid$="--overlay-link"]')
+      ?.getAttribute('href')
+      ?.match(/\/items\/(\d+)/)?.[1];
+    assert.ok(idOther, 'la fixture doit porter une deuxième carte identifiable');
+
+    // La carte A a déjà été écartée dans une session précédente : elle est
+    // masquée, donc un candidat plausible au recyclage de Vinted.
+    const idA = cardA
+      .querySelector('[data-testid$="--overlay-link"]')
+      ?.getAttribute('href')
+      ?.match(/\/items\/(\d+)/)?.[1];
+    await page.setNoise({ hidden: { [idA as string]: Date.now() } });
+
+    // Vinted réutilise le même noeud `feed-item` pour un tout autre article —
+    // seul son contenu change, pas son identité DOM.
+    const newId = '9999999999';
+    const linkInA = cardA.querySelector<HTMLAnchorElement>('[data-testid$="--overlay-link"]')!;
+    linkInA.setAttribute('href', linkInA.getAttribute('href')!.replace(idA as string, newId));
+
+    // Un vrai changement de DOM ailleurs sur la page, comme le ferait Vinted,
+    // pour réveiller le MutationObserver.
+    const spacer = doc.createElement('span');
+    doc.body.appendChild(spacer);
+    spacer.remove();
+    await settle(100);
+
+    const recycledButton = cardA.querySelector<HTMLButtonElement>('.vf-card-btn');
+    assert.ok(recycledButton, 'la carte recyclée doit garder un bouton');
+    assert.equal(
+      recycledButton.dataset.vfId,
+      newId,
+      'le bouton doit suivre le nouvel article, pas rester tagué sur l’ancien'
+    );
+
+    await page.clickMouse(recycledButton);
+    const [saved] = page.saved();
+    assert.equal(saved.id, newId, 'la carte cliquée doit enregistrer l’article qu’elle affiche');
   });
 
   test('un conteneur qui contient des cartes n’est pas pris pour une carte', async () => {

@@ -60,16 +60,15 @@ Trois questions dominent sa journée, dans cet ordre :
 
 L'extension excelle à répondre à « qu'est-ce que j'ai mis de côté ? ». Elle est
 **muette** sur les trois questions qui structurent réellement la journée du chineur. Il
-en découle quatre angles morts :
+en découle trois angles morts :
 
 | Angle mort    | Ce qui manque                                                                                                             | Conséquence vécue                                                                              |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | **Le temps**  | Rien n'est jamais relu après l'enregistrement. Un favori de mars 2026 affiche encore son prix de mars et son image morte. | Je ne sais pas ce qui est vendu, ce qui a baissé, ce qui est encore jouable. Ma liste pourrit. |
 | **Le marché** | Aucun point de comparaison. « 45 € » ne veut rien dire seul.                                                              | Je continue d'ouvrir 6 onglets pour savoir si c'est cher.                                      |
 | **Le bruit**  | Aucun moyen d'écarter durablement un article, un vendeur, un mot-clé.                                                     | Je rescanne les mêmes rebuts tous les jours. C'est le coût caché n°1 de Vinted.                |
-| **Le retour** | Une offre part et disparaît. Aucune trace, aucun statut, aucune relance.                                                  | Je ne sais plus ce que j'ai proposé ni si j'ai eu une réponse.                                 |
 
-Le reste de ce document découle de ces quatre lignes.
+Le reste de ce document découle de ces trois lignes.
 
 ## 3. Frictions immédiates — le petit bois, à ramasser d'abord
 
@@ -395,40 +394,10 @@ JSON-LD la porte (`description`, `docs/vinted-dom.md`) et que la fiche expose au
 
 **Faisabilité.** Très bonne. `uploadedAt` a un intérêt propre : c'est l'ancienneté de
 l'annonce, donc le levier de négociation le plus solide (un article en ligne depuis 3
-mois a un vendeur nettement plus souple) — voir H.
+mois a un vendeur nettement plus souple).
 
 **Piège.** Le quota. Une description Vinted fait 200 à 2 000 caractères ; 1 000 articles
 ≈ 2 Mo sur 10. Tronquer à ~1 000 caractères et le documenter.
-
-### H. Suivi des offres · effort M
-
-**Le besoin.** Le module d'offre est la partie la plus ambitieuse de l'extension — et la
-seule sans mémoire. L'offre part, le panneau affiche « Offre envoyée », et **rien n'est
-écrit**. Trois jours plus tard : ai-je proposé 32 ou 35 € ? A-t-il répondu ? Puis-je
-relancer sans passer pour un importun ?
-
-**La proposition.**
-
-- Un historique par article : `offers: { at, price, message, outcome }[]`, avec
-  `outcome` initialement `'sent'`, modifiable à la main (`accepted` / `refused` /
-  `ignored`) — et, à terme, déductible du suivi de prix (un prix qui tombe exactement à
-  ma proposition = acceptée).
-- Dans la ligne : `Offre 32 € il y a 3 j · sans réponse`.
-- Un tri/filtre **« offres en attente »**.
-- Une **garde anti-doublon** : réouvrir la modale sur un article déjà négocié prévient
-  et propose un montant cohérent plutôt que de repartir du réglage global.
-- Une aide au montant qui utilise l'ancienneté de l'annonce (G) et le nombre de favoris
-  : article en ligne depuis 2 mois avec 40 favoris et aucune vente → la remise proposée
-  peut être plus agressive.
-
-**Faisabilité.** Simple côté données. Le point délicat est `outcome`, qui n'est pas
-observable directement sans lire la messagerie — d'où la saisie manuelle en premier
-temps, l'automatisme plus tard.
-
-**Piège.** Le module d'offre repose sur des ancres explicitement **non vérifiées en
-production** (`docs/limitations.md`). Enrichir cette zone avant d'avoir confirmé les
-ancres, c'est bâtir sur du sable : confirmer d'abord par le Diagnostic sur une vraie
-fiche.
 
 ### I. Import, sauvegarde, portabilité · effort S
 
@@ -668,41 +637,22 @@ Correct et honnête (repli sur la marque seule si la catégorie est douteuse). M
 même exploration **dans ma taille**, qui est la seule que je veux vraiment. Et un accès
 depuis la carte du catalogue, pas seulement depuis le panneau.
 
-### 5.6 Offres
-
-- **Le message.** Les quatre ouvertures et trois registres sont bien vus, mais un
-  vendeur qui reçoit deux offres de moi reconnaît le gabarit. Surtout, aucune mémoire
-  des messages déjà envoyés : rien n'empêche d'envoyer deux fois le même texte au même
-  vendeur. Un anti-répétition par vendeur est peu coûteux.
-- **Les leviers manquants** sont ceux qui font accepter : l'ancienneté de l'annonce («
-  en ligne depuis 2 mois »), le lot (« je prends aussi le pull, 45 € les deux »).
-  **L'offre groupée par vendeur** est la vraie fonctionnalité manquante ici : le
-  dressing d'un même membre est la situation la plus fréquente et la plus rentable, et
-  l'extension a déjà tout pour la détecter (une fois `sellerId` capturé).
-- **Le prix suggéré** part d'un pourcentage global, jamais de l'article. Avec le prix de
-  référence (B) et l'ancienneté (G), on peut proposer un montant argumenté — et surtout
-  dire _pourquoi_ il est proposé.
-- **La sécurité.** « L'offre part réellement à la validation » est le bon choix, mais le
-  récapitulatif mériterait d'être plus dur à confondre : le montant en grand, le titre
-  de l'article, la photo. C'est un envoi irréversible à un inconnu.
-
-### 5.7 Diagnostic et export
+### 5.6 Diagnostic et export
 
 Le diagnostic est une excellente idée, mal située : c'est un outil de développeur
 affiché à l'utilisateur, qui recrache un JSON brut incluant la totalité des articles.
 Deux niveaux — un résumé lisible en français (« 3 articles n'ont jamais pu être
-complétés », « les ancres de la modale d'offre ne répondent pas ») et le JSON complet en
-repli — le rendraient utile aux deux publics. Ajouter un bouton « copier le rapport »
-(aujourd'hui il faut le sélectionner à la main dans un `<pre>`).
+complétés ») et le JSON complet en repli — le rendraient utile aux deux publics. Ajouter
+un bouton « copier le rapport » (aujourd'hui il faut le sélectionner à la main dans un
+`<pre>`).
 
 ## 6. Ce que je déconseille explicitement
 
 Un avis critique doit aussi dire où ne pas aller.
 
-- **L'achat automatique / le sniping.** Techniquement à portée (l'agent d'offre sait
-  déjà piloter la page). À proscrire : irréversible, financièrement dangereux, et le
-  premier bug coûte de l'argent réel à l'utilisateur. La bonne limite est celle déjà
-  tenue par le projet — préparer et notifier, laisser l'humain valider.
+- **L'achat automatique / le sniping.** À proscrire : irréversible, financièrement
+  dangereux, et le premier bug coûte de l'argent réel à l'utilisateur. La bonne limite
+  est celle déjà tenue par le projet — préparer et notifier, laisser l'humain valider.
 - **Les notifications système par nouveauté.** Une recherche un peu large produit 50
   notifications par heure ; l'extension est désinstallée dans la semaine. Badge sur
   l'icône + compteur dans le panneau, et rien d'autre par défaut.
@@ -732,9 +682,8 @@ forte. `D` (masquer vus / vendeurs / mots exclus), `A` (suivi de prix et disponi
 `L` (liste courte), `N` (doublons), §5.2 (actions groupées).
 
 **Jalon 3 — décider mieux (≈ 2-3 semaines).** `B` (prix de référence, une fois M livré),
-`H` (suivi des offres, une fois les ancres confirmées), `E` (signal vendeur), `F` (coût
-total), `K` (vue comparaison), `O` (recherche inversée par image — indépendant du reste,
-à caser dès que l'effort libère un créneau).
+`E` (signal vendeur), `F` (coût total), `K` (vue comparaison), `O` (recherche inversée
+par image — indépendant du reste, à caser dès que l'effort libère un créneau).
 
 **Ensuite, selon l'appétit.** `C` (veille sur recherches sauvegardées) et `J`
 (multi-domaine) sont les deux gros morceaux, et les deux qui feraient passer l'outil de

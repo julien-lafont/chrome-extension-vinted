@@ -1,10 +1,12 @@
 # Vinted Favoris
 
 Extension Chrome (Manifest V3) pour enregistrer des articles Vinted en local et les
-retrouver dans un panneau latéral : collections, tri, et envoi d'offres au vendeur.
+retrouver dans un panneau latéral : collections, tri, suivi de prix.
 
-Aucun serveur, aucun compte, aucune donnée qui sort du navigateur. Fonctionne sur
-`vinted.fr`.
+Aucun serveur, aucun compte : le stockage est local. La seule action qui sorte du site
+est volontaire — un bouton « Chercher ailleurs » ouvre, sur simple clic, une recherche
+par image (Google Lens) ou une recherche texte à partir de l'article. Voir
+`docs/specs/recherche-inversee.md`. Fonctionne sur `vinted.fr`.
 
 ## Installation
 
@@ -78,6 +80,12 @@ Chaque photo s'affiche d'abord en 600×800, puis passe en 1200×1600 dès que la
 résolution est chargée. Les articles enregistrés avant la 0.3 n'ont pas de galerie :
 leur miniature ouvre l'onglet Vinted, comme avant. Les réenregistrer la leur donne.
 
+En bas de la visionneuse : **« Chercher cette photo »** ouvre une recherche Google Lens
+sur l'image affichée à l'écran (marque incluse quand elle est connue) — voir
+[docs/specs/recherche-inversee.md](docs/specs/recherche-inversee.md). En surimpression,
+en bas à gauche de l'image, une icône d'agrandissement **ouvre la photo en 1200×1600
+dans un nouvel onglet du navigateur**, hors du panneau.
+
 ### Le vendeur
 
 Le pseudo du vendeur s'affiche à côté du prix, et mène à son dressing : c'est avec lui
@@ -149,26 +157,6 @@ pointure quand on cherchait un tour de taille.
 La recherche textuelle subsiste en repli : articles enregistrés avant la 0.3, marque non
 référencée par Vinted, ou taille non résolue. Les réenregistrer suffit à les remettre à
 niveau. Voir [limites connues](docs/limitations.md).
-
-### Offres au vendeur
-
-L'icône étiquette d'un article ouvre la fenêtre d'offre :
-
-1. le prix est pré-rempli à la dernière remise utilisée (raccourcis −10 / −15 / −20 /
-   −30 %) ;
-2. un message de négociation est composé pour ce prix — **Régénérer** en propose une
-   autre formulation, et toute modification manuelle est conservée ;
-3. **Envoyer l'offre** ouvre (ou réutilise) l'onglet de l'article et pilote la page :
-   bouton « Faire une offre » → saisie du prix → validation, puis envoi du message dans
-   la conversation si la case est cochée.
-
-Le registre du message s'adapte à l'effort demandé au vendeur : au-delà de 25 % de
-remise, il reconnaît explicitement que la demande est basse et invite à une
-contre-proposition, ce qui vaut mieux qu'un chiffre sec.
-
-L'offre part réellement à la validation — le récapitulatif affiché avant l'envoi est le
-point de contrôle. Chaque étape ratée est signalée nommément (bouton introuvable, champ
-inactif, modale non refermée) plutôt que par un échec générique.
 
 ### Export et diagnostic
 

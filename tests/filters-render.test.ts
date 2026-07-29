@@ -85,18 +85,18 @@ describe('rendu des règles', () => {
     assert.deepEqual(chipLabels('filters-sellers'), ['Vendeur 7']);
   });
 
-  test('le témoin s’allume dès qu’une règle générale existe', () => {
+  test('le bouton s’active dès qu’une règle générale existe', () => {
     // Les articles écartés un par un (`hidden`) ne comptent pas : seule une
-    // règle qui façonne le catalogue (marque, mot, vendeur) l'allume.
+    // règle qui façonne le catalogue (marque, mot, vendeur) l'active.
     setFilters({ ...emptyNoise(), hidden: { '1': 1, '2': 2 } }, settings());
-    assert.equal(byId('filters-dot').classList.contains('filters-dot--active'), false);
+    assert.equal(byId('filters').getAttribute('aria-pressed'), 'false');
 
     setFilters({ ...emptyNoise(), brands: ['zara'] }, settings());
-    assert.equal(byId('filters-dot').classList.contains('filters-dot--active'), true);
+    assert.equal(byId('filters').getAttribute('aria-pressed'), 'true');
   });
 
-  test('aucune règle : le témoin est éteint et chaque section le dit', () => {
-    assert.equal(byId('filters-dot').classList.contains('filters-dot--active'), false);
+  test('aucune règle : le bouton est inactif et chaque section le dit', () => {
+    assert.equal(byId('filters').getAttribute('aria-pressed'), 'false');
     assert.match(byId('filters-brands').textContent ?? '', /Aucune marque/);
     assert.match(byId('filters-hidden').textContent ?? '', /Aucun article/);
   });

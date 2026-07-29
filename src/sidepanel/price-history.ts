@@ -8,7 +8,7 @@
  * `sidepanel.ts` (même principe que `gallery.ts`), avec ses propres écouteurs.
  */
 import type { PricePoint, SavedItem } from '../shared/types.ts';
-import { formatEuro } from './offer.ts';
+import { formatEuro } from '../shared/price.ts';
 import { formatAgo } from './watch.ts';
 
 const WIDTH = 220;

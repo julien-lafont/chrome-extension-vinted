@@ -32,7 +32,6 @@ function required<T extends HTMLElement>(id: string): T {
 
 const dialog = required('filters-dialog');
 const openButton = required<HTMLButtonElement>('filters');
-const dot = required('filters-dot');
 
 const hiddenLine = required('filters-hidden');
 
@@ -253,9 +252,10 @@ function render(): void {
 
   // Un témoin, pas un compte : la question posée est « le catalogue est-il
   // filtré ? », pas « par combien de règles ? ». Les articles écartés un par un
-  // ne l'allument pas — voir hasActiveRules().
+  // ne l'allument pas — voir hasActiveRules(). Même style que « Masquer les
+  // pubs » (sidepanel.css, `.ghost-auto[aria-pressed='true']`).
   const active = hasActiveRules(noise);
-  dot.classList.toggle('filters-dot--active', active);
+  openButton.setAttribute('aria-pressed', String(active));
   openButton.title = active
     ? 'Filtres Vinted — au moins une règle masque des articles'
     : 'Filtres Vinted — aucune règle active';

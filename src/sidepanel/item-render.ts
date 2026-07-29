@@ -10,7 +10,7 @@
 import { countryName, flagEmoji } from '../shared/countries.ts';
 import { priceDropRatio, isMeaningfulDrop } from '../shared/watch.ts';
 import type { SavedItem } from '../shared/types.ts';
-import { formatEuro } from './offer.ts';
+import { formatEuro } from '../shared/price.ts';
 import { formatAgo } from './watch.ts';
 import { openPriceHistory } from './price-history.ts';
 
@@ -43,11 +43,6 @@ export function renderPriceAndStatus(
 
     statusEl.hidden = false;
     statusEl.textContent = item.status === 'sold' ? 'Vendu' : 'Retiré';
-
-    const offer = within<HTMLButtonElement>(node, '.item-offer');
-    offer.disabled = true;
-    offer.setAttribute('aria-disabled', 'true');
-    offer.title = 'Article vendu';
     return;
   }
 

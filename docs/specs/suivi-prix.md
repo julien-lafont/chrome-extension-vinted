@@ -31,11 +31,11 @@ Le service worker ne fait **aucune** requête vers Vinted. Il garde son rôle ac
 ouvrir le panneau, et la pulsation du badge.
 
 Corollaire assumé : **pas de rafraîchissement sans onglet Vinted ouvert.** Le panneau
-élit un onglet via `chrome.tabs.query({ url: 'https://www.vinted.fr/*' })` — le
-mécanisme existe déjà dans `offer.ts` — lui envoie l'ordre, et affiche « Ouvre un onglet
-Vinted pour rafraîchir » à défaut. C'est une contrainte, et c'est aussi le comportement
-le plus humain qui soit : le trafic n'existe que quand l'utilisateur est réellement sur
-le site.
+élit un onglet via `findVintedTab()`
+(`chrome.tabs.query({ url: 'https://www.vinted.fr/*' })` dans `watch.ts`), lui envoie
+l'ordre, et affiche « Ouvre un onglet Vinted pour rafraîchir » à défaut. C'est une
+contrainte, et c'est aussi le comportement le plus humain qui soit : le trafic n'existe
+que quand l'utilisateur est réellement sur le site.
 
 ## 2. Modèle de données
 
@@ -293,16 +293,14 @@ sans se retirer de la liste :
 │ img  │  Barbour · 40 · Très bon état · ♥ 12   ← ligne entière à 55 % d'opacité
 │ gris │  128,00 €  [Vendu]                     ← miniature désaturée
 └──────┘                                         [⌕] [◇] [🗀] [🗑]
-                                                  ↑        ↑
-                                    mise en avant  offre désactivée
+                                                  ↑
+                                    mise en avant
 ```
 
-Trois détails qui comptent dans ce cas :
+Deux détails qui comptent dans ce cas :
 
 - **la miniature passe en `filter: grayscale(1)`** : c'est ce qui se lit au balayage,
   avant même le titre barré ;
-- **le bouton « offre » devient inerte** (`aria-disabled`, `title` « Article vendu ») —
-  proposer un prix sur un article vendu ne peut produire qu'une déception ;
 - **le bouton « rechercher un article similaire » reste, et devient l'action évidente**
   : quand la pièce est partie, la seule chose utile est d'en retrouver une autre. C'est
   précisément le moment où cette fonction sert.
@@ -486,8 +484,8 @@ correspondant (méthode de debug, point 3 du `CLAUDE.md`) :
 Et un quatrième, côté rendu, sur le modèle de `gallery.test.ts` qui monte déjà le
 panneau en jsdom — `watch-render.test.ts` : une baisse de 2 % n'affiche aucun badge, une
 baisse de 20 % affiche la pastille et l'ancien prix, un article `sold` garde sa ligne
-dans la liste et son bouton d'offre inerte, et le popover d'historique ne s'ouvre pas
-sur un article à un seul point de prix.
+dans la liste, et le popover d'historique ne s'ouvre pas sur un article à un seul point
+de prix.
 
 **Vigilance liée à la règle 3.** Le panneau n'écoute `storage.onChanged` sur la clé
 `watch` que dans `sidepanel/watch.ts`, pour repeindre le seul bouton — le rendu complet

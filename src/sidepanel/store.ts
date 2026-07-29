@@ -4,7 +4,7 @@
  * Quatre clés dans chrome.storage.local :
  *   savedItems  { [id]: item }                        écrit aussi par le content script
  *   collections { [id]: { id, name, createdAt, order } }  écrit aussi par le content script
- *   settings    { activeCollectionId, sortMode, sortDir, offer }
+ *   settings    { activeCollectionId, sortMode, sortDir }
  *   noise       règles de filtrage du catalogue       écrit aussi par le content script
  *
  * (`watch` est la cinquième, mais elle ne passe pas par ici : le suivi de prix
@@ -57,9 +57,9 @@ const DEFAULT_SETTINGS: Settings = {
   activeCollectionId: DEFAULT_COLLECTION_ID,
   sortMode: 'custom',
   sortDir: 'asc',
-  offer: { discount: 15, autoMessage: true },
   hideSold: false,
   revealHidden: false,
+  hideAds: false,
 };
 
 /**
@@ -97,7 +97,6 @@ export async function readAll(): Promise<Snapshot> {
   }
 
   const settings = { ...DEFAULT_SETTINGS, ...(res[SETTINGS_KEY] || {}) };
-  settings.offer = { ...DEFAULT_SETTINGS.offer, ...(settings.offer || {}) };
 
   // La collection active a pu être supprimée depuis une autre fenêtre.
   if (!collections[settings.activeCollectionId]) {

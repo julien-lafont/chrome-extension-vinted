@@ -148,33 +148,6 @@ rendu (`dragging` / `renderPending`) jusqu'au relâchement.
 ne donne aucun retour visuel exploitable dans un panneau étroit et gère mal le
 défilement.
 
-## Le canal se ferme quand la page navigue
-
-> `A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received`
-
-Ce message ne dit **pas** que l'action a échoué : il dit que le content script a disparu
-avant de répondre. Valider une offre fait naviguer Vinted vers la conversation, ce qui
-détruit l'agent — l'offre était pourtant bien partie.
-
-Trois règles en découlent :
-
-1. **Une opération = un aller-retour court.** L'offre et le message sont deux messages
-   distincts (`VF_MAKE_OFFER`, `VF_SEND_MESSAGE`), pas un enchaînement côté page. Entre
-   les deux, le panneau attend que l'onglet réponde de nouveau avec
-   `readyState === 'complete'` : c'est ce qui permet de survivre à la navigation.
-2. **Une erreur de canal n'est pas un échec métier.** `CHANNEL_LOST` dans `offer.ts`
-   reconnaît ces messages (canal fermé, _receiving end does not exist_, contexte
-   invalidé) et poursuit, au lieu de rapporter une panne.
-3. **`offer-agent.ts` est déclaré sur `https://www.vinted.fr/*`**, pas seulement sur
-   `/items/*` : après navigation, le message s'envoie depuis la messagerie. L'agent
-   reste inerte tant qu'on ne lui parle pas.
-
-**Garde-fou** : avant d'écrire dans une conversation, l'agent vérifie que la page
-renvoie bien à l'article visé (`a[href*="/items/{id}"]`, ou URL de la fiche). Sans cette
-preuve il renonce et le dit — un message adressé au mauvais vendeur ne se rattrape pas.
-Le panneau propose alors **Copier** pour un envoi manuel : une offre partie n'est jamais
-présentée comme un échec, et le texte n'est pas perdu.
-
 ## Écrire dans un champ React
 
 Vinted est une application React. Affecter `field.value = …` est **silencieusement
@@ -192,5 +165,4 @@ setter.call(field, value);
 field.dispatchEvent(new Event('input', { bubbles: true }));
 ```
 
-Voir `offer-agent.ts`. Le même piège vaut pour tout pilotage d'une interface tierce
-moderne.
+Ce piège vaut pour tout pilotage d'une interface tierce moderne.

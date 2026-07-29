@@ -25,7 +25,6 @@ le dossier de tests n'y entre jamais.
 | `click-gestures.test.ts`    | Les boutons répondent-ils à tous les gestes ?                                             |
 | `repaint-loop.test.ts`      | Le content script se repeint-il en boucle ?                                               |
 | `drag-slots.test.ts`        | Où se pose une carte qu'on fait glisser ?                                                 |
-| `offer-flow.test.ts`        | L'offre et le message partent-ils, et que dit-on si un seul passe ?                       |
 | `collections.test.ts`       | Une collection ne se supprime-t-elle que vide ?                                           |
 | `similar-search.test.ts`    | L'URL de recherche est-elle correctement filtrée ?                                        |
 | `photos.test.ts`            | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?          |
@@ -243,9 +242,7 @@ dans Chrome :
   l'écran — n'est pas testée non plus ;
 - **le chargement réel des images** — `gallery.test.ts` remplace `Image` par un faux,
   puisque jsdom ne va pas sur le réseau. Que les URLs signées répondent vraiment, et que
-  la montée en pleine résolution soit imperceptible, se vérifie dans Chrome ;
-- **le pilotage d'offre** — `offer-agent.ts` dépend d'ancres non vérifiées en
-  production.
+  la montée en pleine résolution soit imperceptible, se vérifie dans Chrome.
 
 ### Rejouer un vrai glisser
 

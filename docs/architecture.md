@@ -12,13 +12,12 @@ src/
   content/content.css              styles des boutons injectés et du menu de collection
   content/collection-picker.ts     choix de collection à la capture (appui long)
   content/noise-ui.ts              filtrage : annulation, pastille, menu de la fiche
-  content/offer-agent.ts           pilotage de la modale d'offre Vinted
   sidepanel/sidepanel.ts           orchestration de l'interface
   sidepanel/store.ts               lecture/écriture chrome.storage.local
   sidepanel/sorting.ts             clés et modes de tri
   sidepanel/dnd.ts                 réorganisation par glisser-déposer
-  sidepanel/offer.ts               composition du message + pilotage de l'onglet
   sidepanel/search.ts              URLs de catalogue (similaires, marque)
+  sidepanel/elsewhere.ts           URLs de recherche externe (Lens, texte Google)
   sidepanel/gallery.ts             visionneuse des photos d'un article
   sidepanel/filters.ts             modale de gestion des règles de filtrage
   shared/types.ts                  modèle de données (SavedItem, Collection, Settings)
@@ -65,16 +64,10 @@ Le manifeste est également passé en TypeScript (`src/manifest.ts`) : sa versio
 depuis `package.json`, si bien qu'un tag de release et le manifeste ne peuvent plus
 diverger.
 
-## Les deux content scripts
+## Le content script
 
 `content.ts` s'exécute sur tout `https://www.vinted.fr/*` : il injecte les boutons
 d'enregistrement et lit les métadonnées des articles.
-
-`offer-agent.ts` est **distinct**, déclaré sur `https://www.vinted.fr/items/*`
-seulement. Les deux ne partagent aucun état : l'agent reste inerte tant que le panneau
-ne lui envoie pas de message. Cette séparation évite qu'un bug du pilotage d'offre — le
-code le plus fragile, puisqu'il dépend d'ancres non vérifiées — n'empêche
-l'enregistrement des favoris de fonctionner.
 
 ## Stockage
 
@@ -156,7 +149,6 @@ settings = {
   activeCollectionId: 'default',
   sortMode: 'custom', // custom | savedAt | price | condition | likes | size
   sortDir: 'asc',
-  offer: { discount: 15, autoMessage: true },
   hideSold: false,
   revealHidden: false, // mode révision du filtrage — préférence, pas une règle
 };

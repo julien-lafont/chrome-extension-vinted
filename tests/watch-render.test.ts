@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderPriceAndStatus } from '../src/sidepanel/item-render.ts';
 import { initPriceHistory, openPriceHistory } from '../src/sidepanel/price-history.ts';
-import { formatEuro } from '../src/sidepanel/offer.ts';
+import { formatEuro } from '../src/shared/price.ts';
 import type { SavedItem } from '../src/shared/types.ts';
 import { makeItem } from './factories.ts';
 
@@ -125,15 +125,11 @@ describe('badge de variation', () => {
 });
 
 describe('article vendu ou disparu', () => {
-  test('garde sa ligne dans la liste et son bouton d’offre inerte', () => {
+  test('garde sa ligne dans la liste avec son badge d’état', () => {
     const item = makeItem({ id: '5', status: 'sold' });
     const { article, node } = mount(item);
 
     assert.ok(article.classList.contains('item--sold'));
-
-    const offer = node.querySelector<HTMLButtonElement>('.item-offer');
-    assert.equal(offer?.disabled, true);
-    assert.equal(offer?.getAttribute('aria-disabled'), 'true');
 
     const status = node.querySelector<HTMLElement>('.item-status-badge');
     assert.equal(status?.hidden, false);

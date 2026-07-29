@@ -37,3 +37,7 @@ export function parsePriceString(raw: unknown): number | null {
   const value = Number.parseFloat(`${whole}.${match[2] || '0'}`);
   return Number.isFinite(value) ? value : null;
 }
+
+export function formatEuro(value: number): string {
+  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value);
+}

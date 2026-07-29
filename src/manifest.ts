@@ -55,14 +55,6 @@ export function buildManifest(version: string): chrome.runtime.ManifestV3 {
         css: ['content/content.css'],
         run_at: 'document_idle',
       },
-      {
-        // Agent d'offre : script distinct, inerte jusqu'à ce que le panneau le
-        // sollicite. Séparé de content.js pour que le pilotage de la modale
-        // d'offre ne puisse pas faire tomber l'injection des boutons.
-        matches: [VINTED_ORIGIN],
-        js: ['content/offer-agent.js'],
-        run_at: 'document_idle',
-      },
     ],
 
     icons: { ...ICON_PATHS },

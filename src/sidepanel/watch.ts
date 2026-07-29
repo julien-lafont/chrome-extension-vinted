@@ -13,7 +13,7 @@ import type { WatchStartResponse } from '../shared/messages.ts';
 
 const WATCH_KEY = 'watch';
 
-/** `chrome.tabs.sendMessage` n'est pas typé : la conversion est concentrée ici, comme dans offer.ts. */
+/** `chrome.tabs.sendMessage` n'est pas typé : la conversion est concentrée ici. */
 function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
   return chrome.tabs.sendMessage(tabId, message);
 }

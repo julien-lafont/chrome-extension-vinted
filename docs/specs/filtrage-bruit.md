@@ -509,8 +509,8 @@ oublié devient un bug incompréhensible six mois plus tard.
 
 ### 5.2 La modale
 
-Même mécanique que `#collection-dialog` et `#offer-dialog` : `.overlay` + `.dialog`,
-fermeture par `Échap` et par le fond. Aucun nouveau mécanisme de superposition.
+Même mécanique que `#collection-dialog` : `.overlay` + `.dialog`, fermeture par `Échap`
+et par le fond. Aucun nouveau mécanisme de superposition.
 
 ```
 ┌────────────────────────────────────────────┐
@@ -544,9 +544,9 @@ fermeture par `Échap` et par le fond. Aucun nouveau mécanisme de superposition
 
 Quelques partis pris :
 
-- **les règles sont des puces (`.chip`)**, style déjà présent dans la modale d'offre.
-  Une puce, une croix, une suppression : c'est la forme la plus dense pour une liste de
-  courts libellés, et la seule qui tienne dans 320 px ;
+- **les règles sont des puces (`.rule-chip`)**. Une puce, une croix, une suppression :
+  c'est la forme la plus dense pour une liste de courts libellés, et la seule qui tienne
+  dans 320 px ;
 - **les articles écartés ont leur propre modale.** La liste occupait la moitié de la
   hauteur des filtres pour l'usage le plus rare de l'écran ; il n'en reste ici qu'un
   compte et un « Gérer » qui ouvre `#hidden-dialog`, par-dessus. `Échap` ferme la plus

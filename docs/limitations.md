@@ -139,33 +139,23 @@ le carrousel de la page, qui ne sert que la taille d'affichage. Elle reste compl
 utilisable ; seul le zoom pleine résolution est perdu. Le [Diagnostic](diagnostic.md)
 distingue les deux voies.
 
-## Offres
+## Recherche ailleurs
 
-**Ancres non vérifiées en production.** Les `data-testid` de la modale d'offre sont des
-candidats plausibles, pas des relevés — contrairement aux ancres du catalogue et de la
-fiche article. Lancer le [Diagnostic](diagnostic.md) sur une fiche pour confirmer, et
-ajuster `ANCHORS` dans `offer-agent.ts`. Les replis par libellé couvrent le cas où les
-`testid` diffèrent.
+**Sans photo Vinted exploitable, la recherche retombe sur le texte.** Voir
+[docs/specs/recherche-inversee.md](specs/recherche-inversee.md). Un article dont
+`images` est absent (fiche jamais lue) ou dont la photo n'est pas hébergée sur un
+domaine Vinted connu perd la recherche par image, silencieusement pour le module — mais
+le `title` du bouton l'annonce (« pas de photo lisible »).
 
-**Message envoyé séparément de l'offre.** La modale d'offre Vinted ne comporte pas de
-champ message ; l'agent passe donc par la conversation dans un second temps, après avoir
-attendu que l'onglet se stabilise — valider une offre fait naviguer Vinted. Si cette
-étape échoue, l'offre reste envoyée : le panneau le dit explicitement et propose
-**Copier** pour envoyer le texte à la main.
-
-**Le message n'est jamais envoyé à l'aveugle.** L'agent exige une preuve que la page
-affichée concerne bien l'article visé — l'URL de la fiche, ou un lien vers elle dans la
-conversation. Sur une messagerie dont la structure aurait changé, il renoncera plutôt
-que de risquer d'écrire au mauvais vendeur ; c'est un compromis délibéré en faveur du
-repli manuel.
-
-**L'offre part réellement à la validation.** Le récapitulatif affiché avant l'envoi est
-le seul point de contrôle : il n'y a pas de mode simulation.
+**`lens.google.com/uploadbyurl` n'est pas une API publiée.** Google peut le changer, le
+retirer, ou exiger une session connectée sans préavis, auquel cas le bouton ouvrirait un
+onglet qui ne montre pas ce qu'on attend. Rien ne détecte cet échec côté extension —
+c'est un lien externe, pas un appel dont on lit la réponse.
 
 ## Couverture de test
 
 Le panneau latéral n'est couvert qu'en partie. Ses modules testables isolément le sont
-(tri, `pickSlot()` du glisser-déposer, composition d'offre, URLs de recherche,
+(tri, `pickSlot()` du glisser-déposer, URLs de recherche — Vinted comme externe —,
 visionneuse de photos) ; son orchestration — `sidepanel.ts`, le rendu de la liste, les
 collections à l'écran — ne l'est pas. Voir
 [testing.md](testing.md#ce-que-les-tests-ne-couvrent-pas).

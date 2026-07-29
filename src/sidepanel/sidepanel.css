@@ -624,18 +624,6 @@ h1 {
   filter: grayscale(1);
 }
 
-.item--sold .item-offer,
-.item--gone .item-offer {
-  color: var(--border);
-  cursor: default;
-}
-
-.item--sold .item-offer:hover,
-.item--gone .item-offer:hover {
-  background: none;
-  color: var(--border);
-}
-
 /* La recherche d'un similaire reste l'action évidente sur un article parti :
    elle seule se détache de l'opacité ambiante. */
 .item--sold .item-similar,
@@ -677,8 +665,13 @@ h1 {
 .item-actions {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: repeat(2, 26px);
+  grid-template-columns: repeat(2, 24px);
   gap: 2px;
+}
+
+.item-actions .icon-btn {
+  width: 24px;
+  height: 24px;
 }
 
 .icon-btn {
@@ -709,8 +702,8 @@ h1 {
   color: var(--danger);
 }
 
-.item-offer:hover,
-.item-similar:hover {
+.item-similar:hover,
+.item-elsewhere:hover {
   color: var(--accent);
 }
 
@@ -915,7 +908,7 @@ h1 {
   box-shadow: var(--shadow);
 }
 
-/* La modale d'offre porte plus de contenu que celle des collections. */
+/* La modale des filtres porte plus de contenu que celle des collections. */
 .dialog-lg {
   max-width: 420px;
 }
@@ -936,26 +929,6 @@ h1 {
   flex: 1;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.field-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.textarea {
-  resize: vertical;
-  min-height: 120px;
-  line-height: 1.5;
-}
-
 .check {
   display: flex;
   align-items: center;
@@ -968,76 +941,17 @@ h1 {
   accent-color: var(--accent);
 }
 
-.offer-item {
-  margin: 0;
-  color: var(--fg);
-  font-weight: 500;
-}
-
-.offer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-}
-
-.offer-row .field {
-  flex: 1;
-}
-
-.offer-original {
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
 .chips {
   display: flex;
   gap: 6px;
 }
 
-.chip {
-  flex: 1;
-  padding: 5px 0;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.chip:hover,
-.chip.active {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.offer-status {
+.status-note {
   margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--surface);
   font-size: 12px;
-}
-
-.offer-status.error {
-  color: var(--danger);
-}
-
-.offer-status.ok {
-  color: var(--accent);
-}
-
-/* Offre partie, message non envoyé : ni un succès franc, ni un échec. */
-.offer-status.warn {
-  border-left: 3px solid var(--danger);
-}
-
-.field-tools {
-  display: flex;
-  gap: 10px;
 }
 
 .link {
@@ -1108,8 +1022,9 @@ h1 {
   cursor: pointer;
 }
 
-/* La bande de réglages n'a qu'un bouton pour l'instant : l'étirer sur 320 px
-   serait un faux départ, il rétrécirait au premier voisin. */
+/* Les boutons de la bande de réglages gardent leur largeur de contenu plutôt
+   que de s'étirer sur 320 px : un faux départ qui les ferait rétrécir l'un
+   l'autre. */
 .ghost-auto {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1128,21 +1043,15 @@ h1 {
 }
 
 /**
- * Témoin de la bande de réglages : pas un compte, juste « au moins une règle
- * générale est active ». Rouge = catalogue non filtré, l'état par défaut ;
- * vert = au moins une règle masque des articles, donc discret (6 px). Les
- * deux couleurs viennent des variables déjà déclinées clair/sombre en tête de
- * fichier (--danger, --drop), pas de valeur figée ici.
+ * Bascule de la bande de réglages, partagée par « Filtres Vinted » et
+ * « Masquer les pubs » : bordure, fond et texte verts quand `aria-pressed`
+ * vaut `true`, état normal sinon. Remplace l'ancien témoin à point (`.filters-dot`) —
+ * le bouton entier porte l'information, plus lisible qu'un point de 7 px.
  */
-.filters-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--danger);
-}
-
-.filters-dot.filters-dot--active {
-  background: var(--drop);
+.ghost-auto[aria-pressed='true'] {
+  border-color: var(--drop);
+  background: var(--drop-bg);
+  color: var(--drop);
 }
 
 /* --- Modale des filtres --------------------------------------------------- */
@@ -1221,8 +1130,8 @@ h1 {
   flex: 0 0 auto;
 }
 
-/* Les règles s'enroulent et gardent leur largeur naturelle, contrairement aux
-   `.chip` de la modale d'offre qui se partagent la ligne à parts égales. */
+/* Les règles s'enroulent et gardent leur largeur naturelle plutôt que de se
+   partager la ligne à parts égales. */
 .chips--wrap {
   flex-wrap: wrap;
 }
@@ -1326,15 +1235,12 @@ h1 {
   object-fit: contain;
 }
 
-.gallery-nav {
+.gallery-nav,
+.gallery-zoom {
   position: absolute;
-  top: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  margin-top: -16px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -1343,17 +1249,27 @@ h1 {
   cursor: pointer;
 }
 
+.gallery-nav {
+  top: 50%;
+  width: 32px;
+  height: 32px;
+  margin-top: -16px;
+}
+
 /* Pas de `transform` au survol — le bouton quitterait sa zone de survol et
    oscillerait sous le pointeur. Voir CLAUDE.md, règle 2. */
-.gallery-nav:hover {
+.gallery-nav:hover,
+.gallery-zoom:hover {
   background: rgba(17, 24, 39, 0.8);
 }
 
-.gallery-nav > * {
+.gallery-nav > *,
+.gallery-zoom > * {
   pointer-events: none;
 }
 
-.gallery-nav svg {
+.gallery-nav svg,
+.gallery-zoom svg {
   width: 18px;
   height: 18px;
 }
@@ -1368,6 +1284,15 @@ h1 {
 
 .gallery-next {
   right: 8px;
+}
+
+/* Secondaire à la navigation entre photos : en bas plutôt que sur l'axe
+   vertical des flèches, pour ne jamais se chevaucher avec elles. */
+.gallery-zoom {
+  bottom: 8px;
+  left: 8px;
+  width: 28px;
+  height: 28px;
 }
 
 .gallery-thumbs {
@@ -1415,6 +1340,12 @@ h1 {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.gallery-foot-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .gallery-foot a {

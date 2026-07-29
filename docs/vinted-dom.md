@@ -373,30 +373,6 @@ Ce qui figure aussi sur cette page, et qu'on ne lit pas : `positive_feedback_cou
 compte n'y est pas** — aucun `created_at` dans le HTML servi, sur les deux profils
 relevés.
 
-## Modale d'offre
-
-⚠️ **Ancres non vérifiées en production** — ce sont des candidats plausibles, pas des
-relevés. Lancer le [Diagnostic](diagnostic.md) sur une fiche article pour confirmer, et
-ajuster `ANCHORS` dans `offer-agent.ts`.
-
-L'agent essaie plusieurs candidats par étape, du plus stable au plus permissif :
-
-| Étape          | Candidats                                                                                      |
-| -------------- | ---------------------------------------------------------------------------------------------- |
-| Bouton d'offre | `item-make-offer-button` → `*make-offer*` → libellé « faire une offre » / « proposer un prix » |
-| Modale         | `offer-modal` → `[role="dialog"]` **contenant un champ de saisie**                             |
-| Champ prix     | `offer-price-input` → `input[inputmode="decimal"]` → `input[type="number"]`                    |
-| Validation     | `offer-modal-submit-button` → `button[type="submit"]` → libellé « envoyer » / « proposer »     |
-
-Deux règles qui évitent les faux positifs :
-
-- une modale **sans champ de saisie** est considérée comme encore en ouverture, pas
-  comme la bonne modale — sinon l'agent tape dans le vide ;
-- la saisie passe par le **setter natif** de `HTMLInputElement.prototype.value` suivi
-  d'un événement `input`. Écrire `field.value = …` est silencieusement ignoré par React,
-  qui conserve son état interne : le bouton d'envoi reste alors désactivé sans qu'aucune
-  erreur n'apparaisse.
-
 ## URL de recherche du catalogue
 
 `src/sidepanel/search.ts` construit deux URLs de catalogue : « article similaire »

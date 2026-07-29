@@ -301,10 +301,10 @@
    `className` à chaque rendu d'une carte et emporterait la nôtre, alors qu'il ne
    touche pas aux `data-*` qu'il ne connaît pas.
 
-   Le `!important` est assumé, et c'est le seul du projet : on est en concurrence
-   avec une feuille de styles qu'on ne contrôle pas, dont l'ordre d'injection
-   n'est pas garanti, sur une propriété où perdre signifie « la fonctionnalité ne
-   marche pas ». */
+   Le `!important` est assumé — deux occurrences dans le fichier, ici et pour les
+   pubs plus bas, même raison : on est en concurrence avec une feuille de styles
+   qu'on ne contrôle pas, dont l'ordre d'injection n'est pas garanti, sur une
+   propriété où perdre signifie « la fonctionnalité ne marche pas ». */
 html:not(.vf-reveal) [data-vf-hidden]:not([data-vf-hidden='0']) {
   display: none !important;
 }
@@ -600,4 +600,13 @@ html.vf-reveal [data-vf-hidden]:not([data-vf-hidden='0']) {
 .vf-noise-item:hover,
 .vf-noise-item:focus-visible {
   background: #f3f4f6;
+}
+
+/* --- Encarts publicitaires du fil -------------------------------------------
+   Réglage indépendant du filtrage du bruit ci-dessus : pas de mode révision,
+   pas de règle, juste actif ou non — voir sidepanel.html, bouton « Masquer les
+   pubs », et `markAdBlocks()` dans content.ts. Désactivé par défaut : cette
+   règle ne s'applique que sous `.vf-hide-ads`, jamais d'elle-même. */
+html.vf-hide-ads [data-vf-ad='1'] {
+  display: none !important;
 }

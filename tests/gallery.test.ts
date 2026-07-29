@@ -121,6 +121,8 @@ before(() => {
     title: byId('gallery-title'),
     counter: byId('gallery-counter'),
     link: byId('gallery-link') as HTMLAnchorElement,
+    elsewhere: byId('gallery-elsewhere') as HTMLAnchorElement,
+    zoom: byId('gallery-zoom') as HTMLAnchorElement,
     prev: byId('gallery-prev') as HTMLButtonElement,
     next: byId('gallery-next') as HTMLButtonElement,
   };
@@ -290,5 +292,43 @@ describe('pleine résolution', () => {
       loading.map((p) => p.src),
       [same(2).url]
     );
+  });
+});
+
+describe('recherche ailleurs et taille maximale', () => {
+  test('la recherche Lens porte sur la photo affichée, et sa marque', () => {
+    const item = makeItem({ id: '1', brand: 'Nike', images: [photo(1), photo(2)] });
+    openGallery(item);
+
+    const [first, second] = item.images ?? [];
+    assert.ok(first && second);
+
+    assert.equal(new URL(el.elsewhere.href).searchParams.get('url'), first.url);
+    assert.equal(new URL(el.elsewhere.href).searchParams.get('q'), 'Nike');
+
+    click(el.next);
+    assert.equal(
+      new URL(el.elsewhere.href).searchParams.get('url'),
+      second.url,
+      'la recherche doit suivre la navigation, pas rester sur la première photo'
+    );
+  });
+
+  test('sans marque, la recherche Lens ne porte pas de paramètre q', () => {
+    openGallery(makeItem({ id: '2', images: [photo(1)] }));
+    assert.equal(new URL(el.elsewhere.href).searchParams.has('q'), false);
+  });
+
+  test('le lien « taille maximale » pointe vers full, et suit la navigation', () => {
+    const item = itemWith(2);
+    openGallery(item);
+
+    const [first, second] = item.images ?? [];
+    assert.ok(first && second);
+
+    assert.equal(el.zoom.href, first.full);
+
+    click(el.next);
+    assert.equal(el.zoom.href, second.full);
   });
 });

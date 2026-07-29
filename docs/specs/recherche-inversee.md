@@ -57,17 +57,10 @@ ponctuelle, exactement comme pour `similarSearchUrl()`.
 ## 3. Modèle de données
 
 **Aucun champ nouveau, ni sur `SavedItem` ni sur `Settings`, aucune migration.** Tout ce
-qu'il faut est déjà capturé par `images` (`ItemPhoto[]`), `brand`, `title`, `size`. Le
-bouton ouvre l'onglet directement au clic, sans état à retenir entre deux usages.
-
-**Pas de repli sur `imageUrl`.** C'est le seul champ de `SavedItem` qui existe sur tout
-article, y compris ceux enregistrés avant la 0.3 — mais l'admettre ici reviendrait à
-maintenir une compatibilité que cette fonctionnalité n'a aucune raison de porter :
-`imageUrl` vient parfois d'une simple miniature de carte de catalogue (310×430), une
-qualité insuffisante pour une reconnaissance fiable, et l'exploiter ajouterait une
-branche entière (validation d'hôte sur une source non prévue à cet usage) pour un gain
-marginal. La cascade ne porte que sur `images` ; son absence bascule directement sur le
-repli texte (§4.2), qui reste toujours disponible.
+qu'il faut est déjà capturé par `images` (`ItemPhoto[]`), `brand`, `title`, `size`. La
+cascade de photo ne porte que sur `images` ; son absence bascule directement sur le
+repli texte (§4.2), qui reste toujours disponible. Le bouton ouvre l'onglet directement
+au clic, sans état à retenir entre deux usages.
 
 ### 3.1 Quelle photo, et pourquoi
 
@@ -121,11 +114,14 @@ export type ElsewhereSearch = {
   label: string;
 };
 
-/** Destinations disponibles pour un article, la meilleure en tête. Jamais vide. */
-export function elsewhereSearches(item: SavedItem): ElsewhereSearch[];
+/** Destinations disponibles pour un article, la meilleure en tête. Jamais vide —
+ *  le type tuple porte l'invariant, pas seulement la convention. */
+export function elsewhereSearches(
+  item: SavedItem
+): [ElsewhereSearch, ...ElsewhereSearch[]];
 
-/** URL Google Lens pour une photo donnée. Exportée pour le test. */
-export function lensUrl(photoUrl: string): string;
+/** URL Google Lens pour une photo, affinée par la marque quand elle est connue. */
+export function lensUrl(photoUrl: string, brand?: string): string;
 
 /** Requête texte de repli : marque + titre + taille, dédoublonnés. */
 export function textQuery(item: SavedItem): string;
@@ -141,16 +137,25 @@ alimente le menu évoqué au §6.4.
 ```ts
 const LENS = 'https://lens.google.com/uploadbyurl';
 
-export function lensUrl(photoUrl: string): string {
+export function lensUrl(photoUrl: string, brand?: string): string {
   const url = new URL(LENS);
   url.searchParams.set('url', photoUrl);
+  if (brand) url.searchParams.set('q', brand);
   return url.toString();
 }
 ```
 
-Rien de plus : pas de `hl`, pas de `ep`, pas de paramètre de session. Chaque paramètre
-supplémentaire est une occasion de casser le jour où Google change son endpoint, pour un
-bénéfice nul — l'interface de Lens suit déjà la langue du compte.
+Deux paramètres, pas un de plus : pas de `hl`, pas de `ep`, pas de paramètre de session
+— chacun serait une occasion de casser le jour où Google change son endpoint, pour un
+bénéfice nul, l'interface de Lens suivant déjà la langue du compte.
+
+`q` porte la marque, quand l'article en a une : Lens bascule alors de la pure
+ressemblance visuelle (`lns_mode=un`) vers une recherche mixte image + texte
+(`lns_mode=mu`, observé en vérification préalable, §9). L'intérêt est concret — deux
+articles de coupe proche mais de marques différentes se ressemblent visuellement, la
+marque textuelle désambiguïse sans rien retirer à l'image. Seule la marque est
+transmise, pas le titre ni la taille : eux resserreraient une recherche texte, mais
+n'ont rien à faire dans une requête pensée pour affiner une correspondance visuelle.
 
 ### 4.2 Le repli texte
 
@@ -253,7 +258,7 @@ au bouton « Fermer » de la galerie, qui ne doit pas rétrécir :
 }
 ```
 
-Disposition obtenue : `similar` / `elsewhere`, `offer` / `move`, `remove` / vide.
+Disposition obtenue : `similar` / `elsewhere`, `move` / `remove`.
 
 L'icône reste à 15 px dans un bouton de 24 px — la cible de clic passe de 26 à 24 px, au
 seuil du confortable mais dans la norme du panneau (`.item-drag` fait 18 px de large).
@@ -275,23 +280,48 @@ l'`openMenu()` déjà utilisé par `openMoveMenu()`. **Pas dans cette version** 
 une action, à l'effort S. La structure de retour est le seul investissement consenti
 pour la suite.
 
+### 6.5 Dans la visionneuse (`gallery.ts`)
+
+La liste des favoris n'est pas le seul endroit d'où une photo se regarde : la
+visionneuse (`openGallery()`, voir son propre module) affiche une photo à la fois, en
+grand. Deux liens y ont leur place naturelle, dans le pied `.gallery-foot`, à côté du
+lien existant « Ouvrir sur Vinted » :
+
+- **« Chercher cette photo »** — appelle directement `lensUrl(photo.url, brand)`, pas
+  `elsewhereSearches()`. La différence est délibérée : la visionneuse sait déjà quelle
+  photo est à l'écran, celle que l'utilisateur regarde au moment du clic — recalculer la
+  « meilleure » photo de l'article (§3.1) reviendrait à ignorer son choix. Pas de repli
+  texte ici non plus : la visionneuse ne s'ouvre que sur un article qui a `images`, donc
+  toujours au moins une photo.
+- **« Ouvrir en taille maximale »** — un second lien, en surimpression sur la scène
+  (bas-gauche, à l'écart des flèches de navigation), qui pointe vers `photo.full`
+  (1200×1600) et l'ouvre **hors du panneau**, dans un nouvel onglet du navigateur : la
+  largeur d'un panneau latéral ne permet jamais d'apprécier le détail d'un tissu ou
+  d'une couture à pleine résolution. Un simple `<a target="_blank">`, sans écouteur — le
+  même schéma que le lien « Ouvrir sur Vinted » déjà en place.
+
+Les deux liens se recalculent à `show()`, donc suivent la navigation (flèches, clavier,
+balayage, miniatures) sans code dédié : c'est la fonction qui met déjà à jour l'image et
+le compteur à chaque changement de photo.
+
 ## 7. Tests
 
 `tests/elsewhere.test.ts`, sur le modèle de `similar-search.test.ts` — fonctions pures,
 `makeItem()` de `factories.ts`, relecture de l'URL produite via `new URL()` :
 
-| Cas                                                  | Attendu                                       |
-| ---------------------------------------------------- | --------------------------------------------- |
-| article avec `images`                                | `kind: 'lens'`, `url=` = `images[0].url`      |
-| photo signée `?s=…`                                  | signature intacte après décodage du paramètre |
-| `images` absent, `imageUrl` sur `images1.vinted.net` | `kind: 'lens'` sur `imageUrl`                 |
-| `imageUrl` sur un hôte inconnu                       | `kind: 'text'` — le garde-fou du §3.2 mord    |
-| `imageUrl` en `http:` ou relative                    | `kind: 'text'`                                |
-| aucune photo                                         | `kind: 'text'`, liste non vide                |
-| marque répétée dans le titre                         | un seul « Nike » dans `q`                     |
-| taille « M »                                         | absente de `q`                                |
-| taille « 42 EU » hors titre                          | présente dans `q`                             |
-| article sans marque ni taille                        | `q` = titre, URL valide                       |
+| Cas                                    | Attendu                                       |
+| -------------------------------------- | --------------------------------------------- |
+| article avec `images`                  | `kind: 'lens'`, `url=` = `images[0].url`      |
+| photo signée `?s=…`                    | signature intacte après décodage du paramètre |
+| article avec marque et photo           | l'URL Lens porte `q=<marque>`                 |
+| article sans marque, avec photo        | l'URL Lens n'a pas de paramètre `q`           |
+| `images[0].url` sur un hôte inconnu    | `kind: 'text'` — le garde-fou du §3.2 mord    |
+| `images[0].url` en `http:` ou relative | `kind: 'text'`                                |
+| `images` absent                        | `kind: 'text'`, liste non vide                |
+| marque répétée dans le titre (repli)   | un seul « Nike » dans le `q` du repli texte   |
+| taille « M » (repli)                   | absente du `q` du repli texte                 |
+| taille « 42 EU » hors titre (repli)    | présente dans le `q` du repli texte           |
+| article sans marque ni taille (repli)  | `q` du repli texte = titre, URL valide        |
 
 Le test de la signature est le plus important : il verrouille le seul point où une
 réécriture bien intentionnée casserait le lien sans erreur visible.
@@ -304,6 +334,16 @@ aujourd'hui, et l'y monter pour un `addEventListener` coûterait plus que le ris
 couvert. `tests/build-output.test.ts` continue de verrouiller les formats de sortie sans
 modification — `elsewhere.ts` est importé par le panneau, donc bundlé en module ES.
 
+**La visionneuse, elle, est déjà montée en jsdom** (`tests/gallery.test.ts`) : les deux
+liens du §6.5 y sont directement vérifiables, sans ce contournement. Trois cas ajoutés à
+la suite existante :
+
+| Cas                                                   | Attendu                                                                                                                                     |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| ouverture avec marque, navigation à la photo suivante | `elsewhere.href` porte `url=` de la photo **affichée** (pas toujours la première) et `q=<marque>`, et se met à jour au clic sur « suivant » |
+| ouverture sans marque                                 | `elsewhere.href` n'a pas de paramètre `q`                                                                                                   |
+| navigation entre deux photos                          | `zoom.href` vaut `photo.full` de la photo affichée, avant et après un clic sur « suivant »                                                  |
+
 ## 8. Documentation à mettre à jour
 
 - `CLAUDE.md` et `README` : nuancer « rien ne sort du navigateur » en renvoyant au §2.
@@ -311,8 +351,8 @@ modification — `elsewhere.ts` est importé par le panneau, donc bundlé en mod
   ; la recherche externe est la seule action qui sorte du site, et elle est décrite dans
   `docs/specs/recherche-inversee.md` ».
 - `docs/architecture.md` : `elsewhere.ts` dans la liste des modules du panneau.
-- `docs/limitations.md` : la dépendance à un endpoint Google non documenté (§9), et la
-  qualité variable du repli `imageUrl` sur les articles d'avant la 0.3.
+- `docs/limitations.md` : la dépendance à un endpoint Google non documenté (§9), et
+  l'absence de recherche image pour les articles sans `images` (repli texte, §4.2).
 
 ## 9. Vérification préalable — à faire avant d'écrire le code
 

@@ -1404,6 +1404,8 @@ import {
 
   /** Réglage d'affichage, pas une règle : il vit dans `settings`. */
   let revealHidden = false;
+  /** Masque les encarts publicitaires du fil (Braze). Désactivé par défaut. */
+  let hideAds = false;
 
   /**
    * `item_id → seller_id` du flux d'hydratation, calculé une fois par page.
@@ -1441,12 +1443,13 @@ import {
     }
   }
 
-  /** Le seul réglage du panneau que le content script lise : le mode révision. */
-  async function loadReveal(): Promise<void> {
+  /** Les deux seuls réglages du panneau que le content script lise. */
+  async function loadDisplaySettings(): Promise<void> {
     try {
-      const res: { [SETTINGS_KEY]?: { revealHidden?: boolean } } =
+      const res: { [SETTINGS_KEY]?: { revealHidden?: boolean; hideAds?: boolean } } =
         await chrome.storage.local.get(SETTINGS_KEY);
       revealHidden = Boolean(res[SETTINGS_KEY]?.revealHidden);
+      hideAds = Boolean(res[SETTINGS_KEY]?.hideAds);
     } catch (err) {
       debug.lastError = errorText(err);
     }
@@ -1460,6 +1463,11 @@ import {
    */
   function applyRevealClass(): void {
     document.documentElement.classList.toggle('vf-reveal', revealHidden);
+  }
+
+  /** Même mécanisme que `applyRevealClass()`, pour le réglage « Masquer les pubs ». */
+  function applyAdsClass(): void {
+    document.documentElement.classList.toggle('vf-hide-ads', hideAds);
   }
 
   /**
@@ -1477,17 +1485,67 @@ import {
    * structure d'une carte ne change pas de sa vie, et `closest()` sur 96 cartes à
    * chaque scan est du travail répété pour rien.
    */
+  const GRID_CELL = '[data-testid="grid-item"]';
+
   const hideTargets = new WeakMap<HTMLElement, HTMLElement>();
 
-  function hideTargetOf(box: HTMLElement): HTMLElement {
+  /**
+   * Combien de cartes chaque cellule de grille porte, sur les cartes trouvées.
+   *
+   * Ce comptage se faisait au sélecteur du catalogue, donc ne voyait que les
+   * cartes `product-item-id-…` : sur la page d'accueil, dont les cartes
+   * s'appellent toutes `feed-item`, la cellule paraissait n'en porter aucune, la
+   * garde échouait et c'était la carte qui était masquée — la cellule restait, et
+   * son trou avec elle, les suivantes ne remontant pas. On compte donc les cartes
+   * réellement trouvées, quelle que soit leur famille de `data-testid`.
+   */
+  function cellLoad(cards: readonly HTMLElement[]): Map<HTMLElement, number> {
+    const load = new Map<HTMLElement, number>();
+
+    for (const card of cards) {
+      const cell = card.closest<HTMLElement>(GRID_CELL);
+      if (cell) load.set(cell, (load.get(cell) ?? 0) + 1);
+    }
+
+    return load;
+  }
+
+  function hideTargetOf(box: HTMLElement, load: Map<HTMLElement, number>): HTMLElement {
     const known = hideTargets.get(box);
     if (known) return known;
 
-    const cell = box.closest<HTMLElement>('[data-testid="grid-item"]');
-    const target = cell && cell.querySelectorAll(CATALOG_CARDS).length === 1 ? cell : box;
+    const cell = box.closest<HTMLElement>(GRID_CELL);
+    const target = cell && load.get(cell) === 1 ? cell : box;
 
     hideTargets.set(box, target);
     return target;
+  }
+
+  // --- Encarts publicitaires du fil -------------------------------------------
+  // Réglage indépendant du filtrage du bruit ci-dessus (pas une règle, pas de
+  // mode révision) : voir sidepanel.html, bouton « Masquer les pubs ».
+
+  /**
+   * Braze est le seul vendeur d'encart vu à ce jour (`feed-braze--promo-box`,
+   * signalé sur la page d'accueil) : son nom dans le `data-testid` suffit et ne
+   * risque pas de confondre une carte produit, qui n'en porte jamais.
+   */
+  const AD_SELECTOR = '[data-testid*="braze"]';
+
+  /**
+   * Marque la cellule de grille d'un encart, comme `hideTargetOf()` le fait pour
+   * une carte écartée — sinon masquer le seul bloc intérieur laisse la cellule
+   * vide, et le trou qu'elle creuse dans la grille (même raison qu'au-dessus).
+   *
+   * Posé à **chaque** scan, que le réglage soit actif ou non : seule
+   * `applyAdsClass()` décide de l'affichage, en CSS (`.vf-hide-ads`). Activer ou
+   * désactiver le réglage devient ainsi instantané, sans repasser par un scan.
+   */
+  function markAdBlocks(): void {
+    for (const ad of document.querySelectorAll<HTMLElement>(AD_SELECTOR)) {
+      const target = ad.closest<HTMLElement>(GRID_CELL) ?? ad;
+      if (target.dataset.vfAd !== '1') target.dataset.vfAd = '1';
+    }
   }
 
   /**
@@ -1507,7 +1565,10 @@ import {
   function applyFilters(): void {
     let hiddenCount = 0;
 
-    for (const box of cardBoxes()) {
+    const cards = cardBoxes();
+    const load = cellLoad(cards);
+
+    for (const box of cards) {
       const id = cardId(box);
       if (!id) continue;
 
@@ -1534,7 +1595,7 @@ import {
 
       if (decision.verdict !== '0') hiddenCount += 1;
 
-      const target = hideTargetOf(box);
+      const target = hideTargetOf(box, load);
       if (
         target.dataset.vfRev === String(noiseRev) &&
         target.dataset.vfHidden === decision.verdict
@@ -2022,10 +2083,19 @@ import {
   }
 
   function injectCardButton(box: HTMLElement): void {
-    if (box.dataset[BTN_FLAG]) return;
-
     const item = extractFromCard(box);
     if (!item) return;
+
+    // Une carte masquée (déjà écartée) est un candidat que Vinted peut recycler
+    // pour un autre article sans remplacer son noeud `feed-item` — le repère
+    // resterait posé, mais nos boutons pointeraient encore sur l'ancien
+    // identifiant : icône d'enregistrement figée, et un clic sauvegarderait
+    // l'article affiché à la place de celui qu'on croit viser. Le repère porte
+    // donc l'identifiant, pas un simple booléen, pour détecter l'écart.
+    if (box.dataset[BTN_FLAG] === item.id) return;
+    if (box.dataset[BTN_FLAG]) {
+      box.querySelectorAll('.vf-card-btn, .vf-hide-btn').forEach((el) => el.remove());
+    }
 
     // Le bouton doit être ancré dans un parent positionné.
     const host =
@@ -2039,7 +2109,7 @@ import {
     // bouton lui-même — un bouton invisible ne peut pas être visé.
     host.classList.add('vf-host');
 
-    box.dataset[BTN_FLAG] = '1';
+    box.dataset[BTN_FLAG] = item.id;
 
     const btn = createButton('vf-card-btn', () => extractFromCard(box));
     btn.dataset.vfId = item.id;
@@ -2244,6 +2314,7 @@ import {
     });
     injectDetailButton();
     injectDetailHideButton();
+    markAdBlocks();
 
     // Après l'injection : une carte tout juste apparue doit être jugée dans le
     // même passage, sinon elle clignote — visible une frame, masquée la suivante.
@@ -2337,6 +2408,7 @@ import {
 
   function diagnose(): DiagnoseReport {
     const boxes = cardBoxes();
+    const load = cellLoad(boxes);
     const items = boxes
       .map((box) => extractFromCard(box))
       .filter((item): item is SavedItem => item !== null);
@@ -2368,7 +2440,7 @@ import {
     for (const box of boxes) {
       // Le verdict est posé sur la cellule de grille, pas sur la carte — voir
       // hideTargetOf().
-      const verdict = hideTargetOf(box).dataset.vfHidden;
+      const verdict = hideTargetOf(box, load).dataset.vfHidden;
       if (verdict && verdict !== '0') motifs[verdict] = (motifs[verdict] ?? 0) + 1;
     }
 
@@ -2393,7 +2465,7 @@ import {
         mots: noise.words.length,
       },
       cartesMasquees: boxes.filter((box) => {
-        const verdict = hideTargetOf(box).dataset.vfHidden;
+        const verdict = hideTargetOf(box, load).dataset.vfHidden;
         return verdict !== undefined && verdict !== '0';
       }).length,
       motifs,
@@ -2559,48 +2631,57 @@ import {
 
     const settings = changes[SETTINGS_KEY];
     if (settings) {
-      const next = Boolean(
-        (settings.newValue as { revealHidden?: boolean } | undefined)?.revealHidden
-      );
-      if (next !== revealHidden) {
-        revealHidden = next;
+      const value = settings.newValue as { revealHidden?: boolean; hideAds?: boolean } | undefined;
+
+      const nextReveal = Boolean(value?.revealHidden);
+      if (nextReveal !== revealHidden) {
+        revealHidden = nextReveal;
         applyRevealClass();
         applyFilters();
+      }
+
+      const nextHideAds = Boolean(value?.hideAds);
+      if (nextHideAds !== hideAds) {
+        hideAds = nextHideAds;
+        applyAdsClass();
       }
     }
   });
 
-  void Promise.all([loadSaved(), loadCollections(), loadNoise(), loadReveal()]).then(() => {
-    applyRevealClass();
-    scan();
+  void Promise.all([loadSaved(), loadCollections(), loadNoise(), loadDisplaySettings()]).then(
+    () => {
+      applyRevealClass();
+      applyAdsClass();
+      scan();
 
-    /** Nos propres nœuds : leurs mutations ne doivent jamais relancer un scan. */
-    const OWN = `.vf-card-btn, .vf-detail-btn, .vf-hide-btn, .vf-detail-hide, ${OVERLAY_SELECTOR}, ${NOISE_OVERLAY_SELECTOR}`;
+      /** Nos propres nœuds : leurs mutations ne doivent jamais relancer un scan. */
+      const OWN = `.vf-card-btn, .vf-detail-btn, .vf-hide-btn, .vf-detail-hide, ${OVERLAY_SELECTOR}, ${NOISE_OVERLAY_SELECTOR}`;
 
-    /**
-     * Le menu de collection et sa confirmation sont posés sur `document.body` :
-     * la mutation a alors pour cible le body, que `closest()` ne rattachera
-     * jamais à nous. On regarde donc aussi ce qui entre et sort.
-     */
-    const BODY_OVERLAYS = `${OVERLAY_SELECTOR}, .vf-pill, .vf-noise-menu, .vf-detail-hide`;
+      /**
+       * Le menu de collection et sa confirmation sont posés sur `document.body` :
+       * la mutation a alors pour cible le body, que `closest()` ne rattachera
+       * jamais à nous. On regarde donc aussi ce qui entre et sort.
+       */
+      const BODY_OVERLAYS = `${OVERLAY_SELECTOR}, .vf-pill, .vf-noise-menu, .vf-detail-hide`;
 
-    const ownNodesOnly = (nodes: NodeList): boolean =>
-      [...nodes].every((node) => node instanceof Element && node.matches(BODY_OVERLAYS));
+      const ownNodesOnly = (nodes: NodeList): boolean =>
+        [...nodes].every((node) => node instanceof Element && node.matches(BODY_OVERLAYS));
 
-    // Second garde-fou contre la boucle : on ignore les mutations que nos propres
-    // boutons génèrent, pour ne réagir qu'aux changements venant de Vinted.
-    const observer = new MutationObserver((mutations) => {
-      const fromVinted = mutations.some((m) => {
-        const target = m.target;
-        if (!(target instanceof Element)) return true;
-        if (target.closest(OWN)) return false;
-        if (m.addedNodes.length && ownNodesOnly(m.addedNodes)) return false;
-        if (m.removedNodes.length && ownNodesOnly(m.removedNodes)) return false;
-        return true;
+      // Second garde-fou contre la boucle : on ignore les mutations que nos propres
+      // boutons génèrent, pour ne réagir qu'aux changements venant de Vinted.
+      const observer = new MutationObserver((mutations) => {
+        const fromVinted = mutations.some((m) => {
+          const target = m.target;
+          if (!(target instanceof Element)) return true;
+          if (target.closest(OWN)) return false;
+          if (m.addedNodes.length && ownNodesOnly(m.addedNodes)) return false;
+          if (m.removedNodes.length && ownNodesOnly(m.removedNodes)) return false;
+          return true;
+        });
+        if (fromVinted) scheduleScan();
       });
-      if (fromVinted) scheduleScan();
-    });
 
-    observer.observe(document.body, { childList: true, subtree: true });
-  });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+  );
 })();

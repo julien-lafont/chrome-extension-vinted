@@ -249,17 +249,10 @@ export type KeyedSortMode = Exclude<SortMode, 'custom'>;
 
 export type SortDir = 'asc' | 'desc';
 
-export type OfferSettings = {
-  /** Remise proposée, en pourcentage du prix affiché. */
-  discount: number;
-  autoMessage: boolean;
-};
-
 export type Settings = {
   activeCollectionId: string;
   sortMode: SortMode;
   sortDir: SortDir;
-  offer: OfferSettings;
   /** Masque les articles `sold`/`gone` de la liste, sans les compter pour autant (§6.5). */
   hideSold: boolean;
   /**
@@ -269,6 +262,13 @@ export type Settings = {
    * `docs/specs/filtrage-bruit.md` §4.4.
    */
   revealHidden: boolean;
+  /**
+   * Masque les encarts publicitaires du fil (Braze, `feed-braze--promo-box`
+   * notamment). Activable depuis le pied de page, **désactivé par défaut** :
+   * rien ne change tant qu'on ne l'a pas demandé. Voir `content.css`,
+   * `.vf-hide-ads`.
+   */
+  hideAds: boolean;
 };
 
 /** Les deux clés du storage sont indexées par id, pas stockées en tableau. */

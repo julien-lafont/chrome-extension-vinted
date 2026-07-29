@@ -2,8 +2,7 @@
  * Vinted Favoris — panneau latéral.
  *
  * Lit chrome.storage.local et se resynchronise dès qu'un onglet Vinted écrit.
- * Les articles sont regroupés en collections, ordonnables à la main, et chacun
- * peut faire l'objet d'une offre déposée automatiquement sur la fiche Vinted.
+ * Les articles sont regroupés en collections, ordonnables à la main.
  */
 
 import {
@@ -41,7 +40,7 @@ import {
 import { enableDragAndDrop } from './dnd.ts';
 import { initGallery, openGallery } from './gallery.ts';
 import { similarSearchUrl, brandSearchUrl } from './search.ts';
-import { composeMessage, suggestPrice, submitOffer, formatEuro } from './offer.ts';
+import { elsewhereSearches } from './elsewhere.ts';
 import { initWatch, maybeStartSilentSweep, resetRateLimits } from './watch.ts';
 import { initPriceHistory } from './price-history.ts';
 import { renderPriceAndStatus, renderSeller } from './item-render.ts';
@@ -82,6 +81,7 @@ const refreshLabelEl = required('refresh-label');
 const watchNoticeEl = required('watch-notice');
 const watchbarEl = required('watchbar');
 const hintEl = required('hint');
+const hideAdsEl = required<HTMLButtonElement>('hide-ads');
 const menuEl = required('move-menu');
 const template = required<HTMLTemplateElement>('item-template');
 
@@ -484,9 +484,17 @@ function renderItem(item: SavedItem): DocumentFragment {
   within(node, '.item-similar').addEventListener('click', () => {
     void chrome.tabs.create({ url: similarSearchUrl(item), active: true });
   });
-  within(node, '.item-offer').addEventListener('click', () => {
-    openOfferDialog(item);
+
+  const elsewhere = elsewhereSearches(item)[0];
+  const elsewhereBtn = within<HTMLButtonElement>(node, '.item-elsewhere');
+  elsewhereBtn.title =
+    elsewhere.kind === 'lens'
+      ? 'Rechercher cette photo sur Google Lens'
+      : 'Rechercher ce modèle sur Google (pas de photo lisible)';
+  elsewhereBtn.addEventListener('click', () => {
+    void chrome.tabs.create({ url: elsewhere.url, active: true });
   });
+
   within(node, '.item-move').addEventListener('click', (event) => {
     if (event.currentTarget instanceof HTMLElement) openMoveMenu(item, event.currentTarget);
   });
@@ -505,6 +513,7 @@ function render(): void {
   }
 
   renderCollections();
+  hideAdsEl.setAttribute('aria-pressed', String(settings.hideAds));
 
   const inCollection = itemsOfActiveCollection();
   const isGone = (item: SavedItem) => item.status === 'sold' || item.status === 'gone';
@@ -772,172 +781,6 @@ collectionForm.addEventListener('submit', (event) => {
   })();
 });
 
-// --- Modale : offre -----------------------------------------------------------
-
-const offerDialog = required('offer-dialog');
-const offerForm = required<HTMLFormElement>('offer-form');
-const offerItemEl = required('offer-item');
-const offerPriceEl = required<HTMLInputElement>('offer-price');
-const offerOriginalEl = required('offer-original');
-const offerPresetsEl = required('offer-presets');
-const offerMessageEl = required<HTMLTextAreaElement>('offer-message');
-const offerSendMessageEl = required<HTMLInputElement>('offer-send-message');
-const offerStatusEl = required('offer-status');
-const offerSubmitEl = required<HTMLButtonElement>('offer-submit');
-
-/** Article visé par la modale d'offre. */
-let offerItem: SavedItem | null = null;
-/** Le message suit le prix tant que l'utilisateur ne l'a pas retouché lui-même. */
-let messageEdited = false;
-
-function setOfferStatus(text: string, kind?: 'error' | 'ok' | 'warn'): void {
-  offerStatusEl.hidden = !text;
-  offerStatusEl.textContent = text || '';
-  offerStatusEl.className = `offer-status${kind ? ` ${kind}` : ''}`;
-}
-
-function markPreset(discount: number | null): void {
-  for (const chip of offerPresetsEl.querySelectorAll<HTMLElement>('.chip')) {
-    chip.classList.toggle('active', Number(chip.dataset.discount) === discount);
-  }
-}
-
-/** Réécrit le message pour le prix actuellement saisi. */
-function refreshOfferMessage(): void {
-  const price = Number(offerPriceEl.value);
-  if (!offerItem || !Number.isFinite(price) || price <= 0) return;
-  offerMessageEl.value = composeMessage(offerItem, price);
-}
-
-function openOfferDialog(item: SavedItem): void {
-  offerItem = item;
-  const original = parsePrice(item);
-  const discount = settings.offer.discount;
-
-  offerItemEl.textContent = item.title || `Article ${item.id}`;
-  offerOriginalEl.textContent = original
-    ? `Prix affiché : ${formatEuro(original)}`
-    : 'Prix inconnu';
-
-  const suggested = suggestPrice(item, discount);
-  offerPriceEl.value = suggested != null ? String(suggested) : '';
-  offerPriceEl.max = original ? String(Math.ceil(original)) : '';
-  markPreset(original ? discount : null);
-
-  offerSendMessageEl.checked = Boolean(settings.offer.autoMessage);
-  offerSubmitEl.disabled = false;
-  offerSubmitEl.textContent = "Envoyer l'offre";
-  setOfferStatus('');
-
-  // Nouvel article : le message repart d'une génération, pas du texte précédent.
-  messageEdited = false;
-  refreshOfferMessage();
-
-  offerDialog.hidden = false;
-  offerPriceEl.focus();
-  offerPriceEl.select();
-}
-
-offerPresetsEl.addEventListener('click', (event) => {
-  const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('.chip') : null;
-  if (!chip || !offerItem) return;
-
-  const discount = Number(chip.dataset.discount);
-  const suggested = suggestPrice(offerItem, discount);
-  if (suggested == null) {
-    setOfferStatus("Prix de l'article inconnu : saisis un montant à la main.", 'error');
-    return;
-  }
-
-  offerPriceEl.value = String(suggested);
-  markPreset(discount);
-  refreshOfferMessage();
-  void saveSettings({ offer: { ...settings.offer, discount } });
-});
-
-offerMessageEl.addEventListener('input', () => {
-  messageEdited = true;
-});
-offerPriceEl.addEventListener('input', () => {
-  markPreset(null);
-  if (!messageEdited) refreshOfferMessage();
-});
-required('offer-regen').addEventListener('click', () => {
-  messageEdited = false;
-  refreshOfferMessage();
-});
-
-required('offer-copy').addEventListener('click', (event) => {
-  const button = event.currentTarget;
-  if (!(button instanceof HTMLElement)) return;
-
-  void (async () => {
-    try {
-      await navigator.clipboard.writeText(offerMessageEl.value);
-      button.textContent = 'Copié';
-    } catch {
-      // Presse-papier refusé : la sélection permet au moins un copier manuel.
-      offerMessageEl.select();
-      button.textContent = 'Sélectionné';
-    }
-    setTimeout(() => {
-      button.textContent = 'Copier';
-    }, 1500);
-  })();
-});
-
-offerForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-  void submitOfferFromForm();
-});
-
-/**
- * Corps de l'envoi, extrait de l'écouteur : un gestionnaire d'événement ne doit
- * rien renvoyer, or celui-ci enchaîne plusieurs allers-retours avec l'agent.
- */
-async function submitOfferFromForm(): Promise<void> {
-  if (!offerItem) return;
-
-  const price = Number(offerPriceEl.value);
-  if (!Number.isFinite(price) || price <= 0) {
-    setOfferStatus('Saisis un prix valide.', 'error');
-    return;
-  }
-
-  offerSubmitEl.disabled = true;
-  offerSubmitEl.textContent = 'Envoi…';
-  setOfferStatus("Ouverture de l'article sur Vinted…");
-
-  await saveSettings({
-    offer: { ...settings.offer, autoMessage: offerSendMessageEl.checked },
-  });
-
-  const result = await submitOffer(offerItem, {
-    price,
-    message: offerMessageEl.value,
-    sendMessage: offerSendMessageEl.checked,
-  });
-
-  offerSubmitEl.disabled = false;
-  offerSubmitEl.textContent = "Envoyer l'offre";
-
-  if (result.ok) {
-    // Offre partie mais message bloqué : on le dit, et on laisse le texte sous la
-    // main pour un envoi manuel plutôt que de le perdre.
-    if (result.messagePending) {
-      setOfferStatus(`${result.detail} Utilise « Copier » pour l'envoyer à la main.`, 'warn');
-      return;
-    }
-    setOfferStatus(result.detail || 'Offre envoyée.', 'ok');
-    return;
-  }
-
-  setOfferStatus(
-    `Échec à l'étape « ${result.step || 'inconnue'} ». ${result.detail || ''}`.trim(),
-    'error'
-  );
-}
-
 // --- Visionneuse de photos ----------------------------------------------------
 
 initGallery({
@@ -948,6 +791,8 @@ initGallery({
   title: required('gallery-title'),
   counter: required('gallery-counter'),
   link: required<HTMLAnchorElement>('gallery-link'),
+  elsewhere: required<HTMLAnchorElement>('gallery-elsewhere'),
+  zoom: required<HTMLAnchorElement>('gallery-zoom'),
   prev: required<HTMLButtonElement>('gallery-prev'),
   next: required<HTMLButtonElement>('gallery-next'),
 });
@@ -1040,12 +885,6 @@ async function runDiagnostic(): Promise<void> {
     } catch {
       report.catalogue = 'Content script injoignable. Recharge la page Vinted (Cmd+R).';
     }
-
-    try {
-      report.offre = await chrome.tabs.sendMessage(tabId, { type: 'VF_OFFER_DIAGNOSE' });
-    } catch {
-      report.offre = "Agent d'offre injoignable. Recharge la page Vinted (Cmd+R).";
-    }
   }
 
   // Champs de tri réellement disponibles sur les articles enregistrés.
@@ -1114,6 +953,13 @@ openAllEl.addEventListener('click', () => {
   if (!toOpen.length) return;
   if (toOpen.length > 12 && !confirm(`Ouvrir ${toOpen.length} onglets ?`)) return;
   for (const item of toOpen) void chrome.tabs.create({ url: item.url, active: false });
+});
+
+hideAdsEl.addEventListener('click', () => {
+  void saveSettings({ hideAds: !settings.hideAds }).then((next) => {
+    settings = next;
+    render();
+  });
 });
 
 required('export').addEventListener('click', exportJson);

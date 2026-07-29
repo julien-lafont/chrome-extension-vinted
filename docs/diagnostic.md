@@ -144,8 +144,7 @@ localisation — les deux sont des réponses normales.
 
 ## Blocs supplémentaires
 
-Le rapport comprend aussi `offre` (ancres de la modale vues par `offer-agent.ts`, via
-`VF_OFFER_DIAGNOSE`) et `donneesDeTri`, qui compte les favoris déjà enregistrés
+Le rapport comprend aussi `donneesDeTri`, qui compte les favoris déjà enregistrés
 dépourvus de chaque champ de tri :
 
 ```json
@@ -211,9 +210,9 @@ champ absent parce que l'article précède son extraction. C'est la lecture à f
 de conclure qu'une ancre a cassé.
 
 Il est produit même sans onglet Vinted actif (le rapport porte alors une clé `page` à la
-place de `catalogue` et `offre`) : il se lit dans le storage, pas dans la page. Pour
-l'exploiter ailleurs que dans la fenêtre de 220 px du panneau, **Exporter** livre le
-même contenu en fichier.
+place de `catalogue`) : il se lit dans le storage, pas dans la page. Pour l'exploiter
+ailleurs que dans la fenêtre de 220 px du panneau, **Exporter** livre le même contenu en
+fichier.
 
 ## Table de lecture
 

@@ -32,10 +32,7 @@ export type Entry = { source: string; out: string };
  * compilation et enferme le tout dans une fonction anonyme, ce qui isole aussi
  * nos variables de celles de la page Vinted.
  */
-export const IIFE_ENTRIES: Entry[] = [
-  { source: 'src/content/content.ts', out: 'content/content' },
-  { source: 'src/content/offer-agent.ts', out: 'content/offer-agent' },
-];
+export const IIFE_ENTRIES: Entry[] = [{ source: 'src/content/content.ts', out: 'content/content' }];
 
 /**
  * Service worker et panneau : modules ES. Les deux tournent dans un contexte

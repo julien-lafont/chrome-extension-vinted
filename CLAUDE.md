@@ -2,14 +2,16 @@
 
 Extension Chrome **Manifest V3**, TypeScript, bundlée par esbuild. Cible
 `https://www.vinted.fr/*` uniquement. Le stockage est local (`chrome.storage.local`),
-rien ne sort du navigateur.
+rien ne part sans un clic explicite. La recherche « ailleurs » (bouton dédié, voir
+`docs/specs/recherche-inversee.md`) est la seule action qui sorte du site : elle
+transmet à Google l'URL de la photo, à la demande, jamais en tâche de fond.
 
 ## Commandes
 
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 321 tests, ~29 s, runner Node natif via tsx
+pnpm test         # 341 tests, ~30 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-favoris-<version>.zip
 ```
@@ -25,8 +27,7 @@ toute modification : `pnpm build` (ou laisser `pnpm dev` tourner), ↻ dans
 src/content/content.ts       injection des boutons + extraction   ← le cœur, testé
 src/content/collection-picker.ts  menu de collection ouvert par l'appui long
 src/content/noise-ui.ts      filtrage : bouton d'écart, annulation, pastille, menu
-src/content/offer-agent.ts   pilotage de la modale d'offre Vinted
-src/sidepanel/               panneau : sidepanel, store, sorting, dnd, offer, search, gallery
+src/sidepanel/               panneau : sidepanel, store, sorting, dnd, search, elsewhere, gallery
 src/shared/                  modèle de données, messages, prix, photos, vendeur, erreurs
 src/background/              ouvre le panneau ; badge + pulsation à l'enregistrement
 src/manifest.ts              manifeste typé ; la version vient de package.json
