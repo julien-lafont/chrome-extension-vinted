@@ -10,6 +10,11 @@
   --shadow: 0 8px 24px rgba(17, 24, 39, 0.18);
   --drop: #15803d;
   --drop-bg: #dcfce7;
+
+  /* Offre en cours : ni le vert d'une baisse ni le gris d'un état, une
+     négociation ouverte est un troisième registre. */
+  --offer: #a16207;
+  --offer-bg: #fef3c7;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -25,6 +30,8 @@
     --shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     --drop: #4ade80;
     --drop-bg: rgba(74, 222, 128, 0.14);
+    --offer: #fbbf24;
+    --offer-bg: rgba(251, 191, 36, 0.16);
   }
 }
 
@@ -175,6 +182,18 @@ h1 {
 }
 
 .tab-archive .tab-name {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* Onglet « Sous offres » : une icône et un compteur (docs/specs/offres.md §5).
+   Il garde son compteur là où « Archives » n'en a pas — le nombre d'offres en
+   cours est précisément ce qu'on surveille. */
+.tab-offers .tab-select {
+  padding: 5px 8px;
+}
+
+.tab-offers .tab-name {
   font-size: 13px;
   line-height: 1;
 }
@@ -502,6 +521,45 @@ h1 {
 
 @media (prefers-color-scheme: dark) {
   .item-price-delta:hover {
+    filter: brightness(1.15);
+  }
+}
+
+/* Badge d'offre (docs/specs/offres.md §5). Cliquable — il ouvre la conversation
+   — d'où le même dessin que la pastille de variation. Il porte deux
+   informations sur une ligne déjà chargée : le prix proposé, et depuis quand.
+
+   `--live` pour une négociation ouverte, `--dead` pour une offre refusée,
+   annulée ou acceptée : celle-ci reste affichée, en gris, parce que « déjà
+   tenté à 42 € » vaut d'être su avant de refaire une offre. */
+.item-offer {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.item-offer--live {
+  background: var(--offer-bg);
+  color: var(--offer);
+}
+
+.item-offer--dead {
+  background: var(--border);
+  color: var(--muted);
+}
+
+.item-offer:hover {
+  filter: brightness(0.95);
+}
+
+@media (prefers-color-scheme: dark) {
+  .item-offer:hover {
     filter: brightness(1.15);
   }
 }

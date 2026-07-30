@@ -13,7 +13,12 @@
  *   Détail — un <script type="application/ld+json"> schema.org expose tout ;
  *   les data-testid `item-*` servent de repli.
  */
-import { COLLECTIONS_KEY, DEFAULT_COLLECTION_ID } from '../shared/collections.ts';
+import {
+  COLLECTIONS_KEY,
+  DEFAULT_COLLECTION_ID,
+  placeInOrder,
+  withDefault,
+} from '../shared/collections.ts';
 import { errorText } from '../shared/errors.ts';
 import { hydrationNumbers, hydrationSellerMap } from '../shared/hydration.ts';
 import {
@@ -37,17 +42,22 @@ import {
   renderPill,
   showDismissPanel,
 } from './noise-ui.ts';
-import type { ExtensionMessage, WatchStartResponse } from '../shared/messages.ts';
-import { extractPhotos, photosFromDom, photosFromHydration } from '../shared/photos.ts';
-import { parsePriceString } from '../shared/price.ts';
-import {
-  ratingFromReputation,
-  readSellerFeedback,
-  sellerCell,
-  sellerCountryFrom,
-} from '../shared/seller.ts';
-import type { SellerFeedback } from '../shared/seller.ts';
+import type {
+  ExtensionMessage,
+  OffersScanResponse,
+  WatchStartResponse,
+} from '../shared/messages.ts';
+import { scanOffers } from './offers-scan.ts';
+import { photosFromDom, photosFromHydration } from '../shared/photos.ts';
+import { ratingFromReputation, sellerCountryFrom } from '../shared/seller.ts';
 import { sizeIdFor } from '../shared/size-ids.ts';
+import {
+  ITEMS_KEY,
+  SETTINGS_KEY,
+  WATCH_KEY,
+  read as readStorage,
+  update as updateStorage,
+} from '../shared/storage.ts';
 import {
   applyCheckResult,
   nextDelay,
@@ -59,7 +69,6 @@ import {
   RATE,
 } from '../shared/watch.ts';
 import type { CheckOutcome } from '../shared/watch.ts';
-import { DESCRIPTION_MAX } from '../shared/types.ts';
 import type {
   CollectionMap,
   ItemCategory,
@@ -74,12 +83,30 @@ import {
   openCollectionPicker,
   toast,
 } from './collection-picker.ts';
+import { readTabDefault, renderDefaultPill, writeTabDefault } from './tab-default.ts';
+import { PILLS_SELECTOR } from './ui.ts';
+import {
+  HYDRATED_KEYS,
+  brandIdFromBreadcrumb,
+  cardId,
+  extractFromCard,
+  extractFromDetail,
+  extractIdFromUrl,
+  formatPrice,
+  isDetailPage,
+  isSoldDetail,
+  parsePriceValue,
+  parseTitleFromLabel,
+  readBreadcrumbCategory,
+  readJsonLd,
+  readSeller,
+  text,
+  titleFromUrl,
+} from './extract.ts';
 
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'savedItems';
-  const SETTINGS_KEY = 'settings';
   const BTN_FLAG = 'vfInjected'; // dataset posé sur les cartes déjà traitées
 
   /** Cache local du contenu du storage : { [id]: item }. */
@@ -118,6 +145,13 @@ import {
     // règle au dernier scan — voir docs/specs/filtrage-bruit.md.
     dismissed: 0,
     hiddenCards: 0,
+    // Conversations détaillées par le balayage des offres, articles dont l'offre
+    // en a été modifiée, et raison d'un arrêt anticipé — voir docs/specs/offres.md.
+    // `offersRead` à zéro alors qu'une offre existe désigne un scan qui ne part
+    // pas (compte non lu, freinage), pas une lecture qui se trompe.
+    offersRead: 0,
+    offersWritten: 0,
+    offersStopped: null as string | null,
     lastError: null as string | null,
   };
 
@@ -125,10 +159,24 @@ import {
   // Storage
   // ---------------------------------------------------------------------------
 
-  /** `chrome.storage.local.get` n'est pas typé : la conversion est concentrée ici. */
   async function readItems(): Promise<ItemMap> {
-    const res: { savedItems?: ItemMap } = await chrome.storage.local.get(STORAGE_KEY);
-    return res[STORAGE_KEY] || {};
+    const res = await readStorage(ITEMS_KEY);
+    return res[ITEMS_KEY] || {};
+  }
+
+  /**
+   * Relit-transforme-écrit `savedItems` sans qu'aucune autre écriture de cet
+   * onglet ne s'intercale — voir `shared/storage.ts`. Toutes les écritures d'ici
+   * passent par là : cette page fait tourner en parallèle la file
+   * d'enrichissement, le cycle de suivi et les gestes de l'utilisateur.
+   *
+   * `mutate` rend la carte à écrire, ou `null` pour renoncer.
+   */
+  async function updateItems(mutate: (current: ItemMap) => ItemMap | null): Promise<void> {
+    await updateStorage([ITEMS_KEY], (stored) => {
+      const next = mutate(stored[ITEMS_KEY] || {});
+      return next ? { [ITEMS_KEY]: next } : null;
+    });
   }
 
   async function loadSaved(): Promise<void> {
@@ -149,20 +197,101 @@ import {
   /**
    * Ajoute ou retire un article. On relit le storage juste avant d'écrire
    * pour ne pas écraser ce qu'un autre onglet Vinted aurait enregistré.
+   *
+   * @param into collection où ranger l'ajout — celle épinglée sur l'onglet, s'il
+   *   y en a une. Le rangement part dans le **même** `set` que l'article :
+   *   deux écritures produiraient deux `onChanged`, donc deux rendus du panneau,
+   *   dont le premier montrerait un article rangé nulle part.
    */
-  async function toggleItem(item: SavedItem): Promise<ToggleResult> {
-    const current = await readItems();
-    const previous = current[item.id];
+  async function toggleItem(item: SavedItem, into: string | null = null): Promise<ToggleResult> {
+    let result: ToggleResult = { action: 'added' };
 
-    if (previous) {
-      delete current[item.id];
-      await chrome.storage.local.set({ [STORAGE_KEY]: current });
-      return { action: 'removed', previous };
-    }
+    await updateStorage([ITEMS_KEY, COLLECTIONS_KEY], (stored) => {
+      const current = stored[ITEMS_KEY] || {};
+      const previous = current[item.id];
+      const next = { ...current };
 
-    current[item.id] = { ...item, savedAt: Date.now() };
-    await chrome.storage.local.set({ [STORAGE_KEY]: current });
-    return { action: 'added' };
+      if (previous) {
+        delete next[item.id];
+        result = { action: 'removed', previous };
+        return { [ITEMS_KEY]: next };
+      }
+
+      // La collection épinglée a pu être supprimée depuis le panneau pendant que
+      // la page était ouverte : on enregistre alors sans elle, plutôt que
+      // d'écrire une référence morte. `syncTabDefault()` retirera l'épingle à la
+      // notification du storage.
+      const collections = withDefault(stored[COLLECTIONS_KEY]);
+      const target = into && collections[into] ? into : null;
+
+      next[item.id] = { ...item, savedAt: Date.now(), ...(target ? { collectionId: target } : {}) };
+      result = { action: 'added' };
+
+      return target
+        ? { [ITEMS_KEY]: next, [COLLECTIONS_KEY]: placeInOrder(collections, item.id, target) }
+        : { [ITEMS_KEY]: next };
+    });
+
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Collection par défaut de l'onglet
+  // ---------------------------------------------------------------------------
+
+  /**
+   * La collection épinglée, si elle existe encore.
+   *
+   * On ne se fie jamais au seul `sessionStorage` : la collection a pu être
+   * supprimée depuis le panneau, ou dans un autre onglet, pendant que celui-ci
+   * était ouvert.
+   */
+  function tabDefaultId(): string | null {
+    const id = readTabDefault();
+    if (!id) return null;
+    // Collections pas encore lues (ou lecture échouée) : on n'invente pas leur
+    // absence, l'épingle survit jusqu'à ce qu'on sache.
+    if (!Object.keys(collections).length) return id;
+    return collections[id] ? id : null;
+  }
+
+  function tabDefaultName(): string | null {
+    const id = tabDefaultId();
+    if (!id) return null;
+    return collections[id]?.name || (id === DEFAULT_COLLECTION_ID ? 'Mes favoris' : null);
+  }
+
+  /** Pose ou retire l'épingle, et met à jour tout ce qui la montre. */
+  function setTabDefault(id: string | null): void {
+    writeTabDefault(id);
+    renderTabDefault();
+    // Les boutons annoncent la destination du prochain clic : elle vient de changer.
+    repaintAll();
+
+    // Le nom affiché vient du cache des collections, qu'une collection créée à
+    // l'instant depuis le menu n'a pas encore atteint — `onChanged` peut arriver
+    // après ce clic. On relit, et on réaffiche : les deux rendus sont idempotents.
+    void loadCollections().then(() => {
+      renderTabDefault();
+      repaintAll();
+    });
+  }
+
+  function renderTabDefault(): void {
+    renderDefaultPill(tabDefaultName(), () => {
+      setTabDefault(null);
+      toast('Enregistrements dans « Mes favoris »');
+    });
+  }
+
+  /**
+   * Efface l'épingle dont la collection a disparu. Appelé à chaque changement de
+   * `collections` : le panneau peut supprimer une collection à tout moment, et
+   * une pastille qui nomme un tiroir inexistant est pire que pas de pastille.
+   */
+  function syncTabDefault(): void {
+    if (readTabDefault() && !tabDefaultId()) writeTabDefault(null);
+    renderTabDefault();
   }
 
   /**
@@ -173,11 +302,7 @@ import {
    * onglet a réenregistré l'article entre-temps.
    */
   async function restoreItem(item: SavedItem): Promise<void> {
-    const current = await readItems();
-    if (current[item.id]) return;
-
-    current[item.id] = item;
-    await chrome.storage.local.set({ [STORAGE_KEY]: current });
+    await updateItems((current) => (current[item.id] ? null : { ...current, [item.id]: item }));
   }
 
   /**
@@ -197,614 +322,6 @@ import {
     }
 
     return merged as SavedItem;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Extraction — champs communs
-  // ---------------------------------------------------------------------------
-
-  const text = (el: Element | null): string => el?.textContent?.trim() ?? '';
-
-  /**
-   * Identifiant Vinted ramené à la chaîne du modèle. Le flux d'hydratation les
-   * donne en nombres, le DOM en chaînes : le storage n'en garde qu'une forme,
-   * celle de `category.id`.
-   */
-  const idOf = (value: number | undefined): string | null =>
-    typeof value === 'number' ? String(value) : null;
-
-  /**
-   * Description ramenée à la longueur que le storage accepte de porter pour des
-   * milliers d'articles. Une valeur vide devient `null` : `mergeDetail()` ignore
-   * les deux, mais `null` dit « lu, rien trouvé » là où `''` se confondrait avec
-   * une description réellement vide.
-   */
-  const truncate = (value: string | undefined): string | null => {
-    const raw = (value ?? '').trim();
-    if (!raw) return null;
-    return raw.length <= DESCRIPTION_MAX ? raw : `${raw.slice(0, DESCRIPTION_MAX).trimEnd()}…`;
-  };
-
-  /**
-   * Vocabulaire des états Vinted. Sert à reconnaître un état quand rien ne dit
-   * si une valeur isolée est une taille ou un état — voir parseSubtitle().
-   */
-  const CONDITION_WORDS = /neuf\s+(avec|sans)|(tr[eè]s\s+)?bon\s+[ée]tat|satisfaisant/i;
-
-  /** Voir `shared/price.ts` — le parseur est commun au panneau et à l'extraction. */
-  const parsePriceValue = parsePriceString;
-
-  /**
-   * Nombre de favoris affiché sur un bouton « cœur » Vinted, carte ou fiche.
-   *
-   * Deux sources dans le même bouton : le compteur visible
-   * (`favourite-count-text`) et le libellé d'accessibilité
-   * ("Ajouter aux favoris, ajouté aux favoris par 9 utilisateurs").
-   *
-   * Le sélecteur est passé par l'appelant : la fiche affiche aussi les cartes des
-   * articles similaires, dont les boutons `--favourite` ne concernent pas
-   * l'article courant.
-   *
-   * @returns null si le bouton est absent ou pas encore hydraté —
-   *   surtout pas 0, qui trierait l'article comme réellement sans favori.
-   */
-  function readFavouriteButton(scope: ParentNode, selector: string): number | null {
-    const btn = scope.querySelector(selector);
-    if (!btn) return null;
-
-    const counter = btn.querySelector('[data-testid="favourite-count-text"]');
-    if (counter) {
-      const digits = (counter.textContent ?? '').replace(/[^\d]/g, '');
-      if (digits) return Number.parseInt(digits, 10);
-    }
-
-    const label = btn.getAttribute('aria-label') || '';
-    const fromLabel = label.match(/(\d+)/);
-    if (fromLabel?.[1]) return Number.parseInt(fromLabel[1], 10);
-
-    // Libellé présent mais sans nombre ("Ajouter aux favoris" tout court) :
-    // le bouton est rendu, personne n'a mis l'article en favori.
-    return label ? 0 : null;
-  }
-
-  /**
-   * Catégorie Vinted, lue dans le fil d'Ariane de la page.
-   *
-   *   <ul class="breadcrumbs">
-   *     <li><a href="/catalog/5-hommes" itemprop="url"><span itemprop="title">Hommes</span></a>
-   *     … <a href="/catalog/584-hauts-et-t-shirts">Hauts et t-shirts</a>
-   *
-   * Le même fil existe sur la fiche article et sur les pages catégorie du
-   * catalogue, ce qui donne les deux niveaux de fiabilité de `exact` — voir
-   * `categoryOf()`. On s'ancre sur les `itemprop` schema.org plutôt que sur la
-   * classe `breadcrumbs`, et l'on garde `.breadcrumbs` en repli.
-   *
-   * Le dernier maillon d'une fiche croise la marque
-   * (« Nike Hauts et t-shirts » → `/catalog/584-…/brand/53-nike`) : on l'écarte,
-   * une recherche relancée depuis là serait restreinte à la marque.
-   *
-   * **Relu à chaque appel, jamais mis en cache.** Une navigation SPA change
-   * `location.href` avant que Vinted ait re-rendu le fil : une valeur mémorisée
-   * par URL figerait la catégorie de l'article précédent sur le suivant, et
-   * l'enregistrement serait faux sans que rien ne le signale. Le gain mesuré
-   * (18 ms pour 96 cartes, sous jsdom donc majoré) ne vaut pas ce risque.
-   *
-   * @param doc page courante, ou fiche récupérée par fetch
-   */
-  function breadcrumbLinks(doc: Document): Element[] {
-    const list =
-      doc.querySelector('ul.breadcrumbs') ??
-      doc.querySelector('a[itemprop="url"][href*="/catalog/"]')?.parentElement;
-
-    return list ? [...list.querySelectorAll('a[href*="/catalog/"]')] : [];
-  }
-
-  function readBreadcrumbCategory(doc: Document): Omit<ItemCategory, 'exact'> | null {
-    const links = breadcrumbLinks(doc).filter(
-      (a) => !(a.getAttribute('href') ?? '').includes('/brand/')
-    );
-
-    const leaf = links.at(-1);
-    if (!leaf) return null;
-
-    const href = (leaf.getAttribute('href') ?? '').split('?')[0] ?? '';
-
-    return {
-      id: href.match(/\/catalog\/(\d+)/)?.[1] ?? null,
-      name: text(leaf),
-      path: links.map((link) => text(link)).filter(Boolean),
-      url: `https://www.vinted.fr${href}`,
-    };
-  }
-
-  /**
-   * Catégorie à enregistrer avec un article.
-   *
-   * `exact` distingue deux situations que l'affichage confondrait :
-   *  - sur une fiche article, le fil décrit **l'article** — catégorie exacte ;
-   *  - sur une page catégorie du catalogue, il décrit **la page**. Tous les
-   *    articles listés y appartiennent, mais souvent à une sous-catégorie plus
-   *    fine ; la valeur reste bonne pour relancer une recherche, elle est juste
-   *    plus large. Une recherche par mots-clés n'a pas de fil du tout : `null`.
-   *
-   * La catégorie n'existe nulle part sur une carte du catalogue — ni dans le DOM,
-   * ni dans le flux d'hydratation, dont l'objet article ne porte pas de
-   * `catalog_id`. Le contexte de navigation est donc la seule source disponible
-   * sans requête supplémentaire. Voir docs/limitations.md.
-   */
-  function categoryOf(doc: Document, exact: boolean): ItemCategory | null {
-    const category = readBreadcrumbCategory(doc);
-    return category ? { ...category, exact } : null;
-  }
-
-  /**
-   * Identifiant de marque, lu dans le maillon que la catégorie écarte.
-   *
-   * Le dernier maillon d'une fiche croise catégorie et marque
-   * (« Nike Hauts et t-shirts » → `/catalog/584-tops-and-t-shirts/brand/53-nike`)
-   * : inutilisable comme catégorie, mais c'est **la seule occurrence en clair de
-   * l'identifiant de marque dans le DOM servi**. Le fil est rendu côté serveur et
-   * Vinted a un intérêt SEO à le garder — on le préfère donc au flux
-   * d'hydratation, qui reste en repli dans `extractFromDetail()`.
-   *
-   * Sans cet identifiant, le catalogue ne sait pas filtrer par marque :
-   * `brand_ids[]` n'accepte pas de nom, et la recherche retombait sur du texte
-   * libre. Voir `docs/vinted-dom.md`.
-   *
-   * @returns l'identifiant, ou null si l'article n'a pas de marque référencée
-   */
-  function brandIdFromBreadcrumb(doc: Document): string | null {
-    for (const link of breadcrumbLinks(doc)) {
-      const id = (link.getAttribute('href') ?? '').match(/\/brand\/(\d+)/)?.[1];
-      if (id) return id;
-    }
-    return null;
-  }
-
-  /**
-   * Vendeur de l'article : identifiant, pseudo, et sa réputation telle que le
-   * DOM la porte.
-   *
-   * Trois ancres complémentaires, toutes rendues côté serveur :
-   *   <a href="/member/3165663897">
-   *     <span data-testid="profile-username">emma07297</span>
-   *     <div role="group" aria-label="Le membre est noté 4.7 sur 5">…</div>
-   *
-   * L'identifiant vient du lien plutôt que du `data-testid`, parce que c'est lui
-   * qui porte le nombre ; le pseudo vient du `data-testid`, seul endroit où il
-   * est isolé du reste de la cellule (avatar, note, nombre d'évaluations).
-   *
-   * `/member/signup/...` traîne aussi dans la page (liens d'inscription) : le
-   * motif exige des chiffres, ce qui les écarte sans avoir à les énumérer.
-   *
-   * La note et le compteur d'évaluations ne sont ici qu'un **repli** du flux
-   * d'hydratation — contrairement au reste de l'extraction. Voir
-   * `shared/seller.ts` : le DOM ne leur donne aucun `data-testid`, et son
-   * libellé dépend de la langue de la page.
-   */
-  function readSeller(doc: Document): {
-    id: string | null;
-    name: string;
-    feedback: SellerFeedback;
-  } {
-    let id: string | null = null;
-
-    for (const link of doc.querySelectorAll('a[href*="/member/"]')) {
-      const found = (link.getAttribute('href') ?? '').match(/\/member\/(\d+)/)?.[1];
-      if (found) {
-        id = found;
-        break;
-      }
-    }
-
-    return {
-      id,
-      name: text(doc.querySelector('[data-testid="profile-username"]')),
-      feedback: readSellerFeedback(sellerCell(doc)),
-    };
-  }
-
-  /**
-   * Un article vendu ne doit pas pouvoir être ajouté aux favoris.
-   *
-   * Vinted affiche alors une cellule dédiée en tête de la sidebar :
-   *   <div data-testid="item-status"><div data-testid="item-status--content">Vendu</div></div>
-   * Absente sur un article encore en vente. Elle existe aussi pour "Réservé" —
-   * un état qui reste normalement enregistrable, d'où le texte exact plutôt que
-   * la seule présence de la cellule.
-   */
-  function isSoldDetail(doc: Document): boolean {
-    return /^vendu$/i.test(text(doc.querySelector('[data-testid="item-status--content"]')));
-  }
-
-  // ---------------------------------------------------------------------------
-  // Extraction — cartes (catalogue, et blocs d'articles d'une fiche)
-  // ---------------------------------------------------------------------------
-
-  const isDetailPage = () => /^\/items\/\d+/.test(location.pathname);
-
-  /**
-   * Séparateurs du libellé d'accessibilité d'une carte, au format
-   *   "{titre}, marque: X, état: Y, taille: Z, {prix}, {protection acheteurs}"
-   * La marque manque sur certaines cartes : couper au seul ", marque:" laissait
-   * alors tout le libellé en guise de titre.
-   */
-  const LABEL_FIELDS = /,\s*(marque|brand|[ée]tat|condition|taille|size)\s*:/i;
-
-  /**
-   * Vinted ne rend le titre de l'article nulle part en clair sur une carte :
-   * il n'existe que dans le libellé d'accessibilité. On coupe au premier
-   * séparateur connu — le titre lui-même peut contenir des virgules, d'où la
-   * coupe sur ", marque:" et non sur ",".
-   */
-  function parseTitleFromLabel(label: string): string {
-    if (!label) return '';
-    const cut = label.search(LABEL_FIELDS);
-    return (cut === -1 ? label : label.slice(0, cut)).trim();
-  }
-
-  /**
-   * Lit un attribut nommé du libellé d'accessibilité ("état: Très bon état").
-   * Aucune des valeurs concernées ne contient de virgule.
-   */
-  function parseLabelField(label: string, names: string): string {
-    const match = String(label || '').match(new RegExp(`,\\s*(?:${names})\\s*:\\s*([^,]+)`, 'i'));
-    return match?.[1]?.trim() ?? '';
-  }
-
-  /**
-   * Sous-titre d'une carte : "42 · Neuf avec étiquette".
-   *
-   * La taille est omise sur les articles qui n'en ont pas (sacs, accessoires) et
-   * le sous-titre se réduit alors à l'état, sans rien pour le signaler : prendre
-   * la première partie pour la taille y enregistrait "Très bon état" comme
-   * taille, et laissait l'état vide — deux tris faussés d'un coup.
-   */
-  function parseSubtitle(subtitle: string): { size: string; condition: string } {
-    const parts = String(subtitle || '')
-      .split('·')
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    if (parts.length >= 2) return { size: parts[0]!, condition: parts[1]! };
-
-    const only = parts[0];
-    if (!only) return { size: '', condition: '' };
-
-    return CONDITION_WORDS.test(only)
-      ? { size: '', condition: only }
-      : { size: only, condition: '' };
-  }
-
-  /** Repli ultime : reconstruit un titre lisible depuis le slug de l'URL. */
-  function titleFromUrl(url: string): string {
-    const m = url ? url.match(/\/items\/\d+-([^?#/]+)/) : null;
-    if (!m?.[1]) return '';
-    const words = m[1].replace(/-/g, ' ').trim();
-    return words.charAt(0).toUpperCase() + words.slice(1);
-  }
-
-  function extractIdFromUrl(url: string): string | null {
-    const m = url ? url.match(/\/items\/(\d+)/) : null;
-    return m?.[1] ?? null;
-  }
-
-  /**
-   * ID d'article porté par le `data-testid` d'une carte.
-   *
-   * `product-item-id-{ID}` n'est que le nom **par défaut** de la carte Vinted :
-   * les blocs d'articles d'une fiche lui imposent leur propre préfixe
-   * (`other_user_items-{ID}`, `similar_items-{ID}` — voir blockCards()). Seul le
-   * suffixe numérique est commun aux deux, et le préfixe ne nous apprend rien :
-   * on ne lit donc que le nombre final.
-   *
-   * Il fait aussi office de garde-fou — un testid voisin sans identifiant
-   * (`{plugin}-plugin-empty-state`, `{plugin}-items`) ne matche pas, et la carte
-   * est ignorée plutôt qu'extraite à vide.
-   */
-  /** Testids de carte qui ne portent pas d'identifiant — voir le repli ci-dessous. */
-  const IDLESS_CARDS = new Set(['feed-item']);
-
-  function cardId(box: HTMLElement): string | null {
-    const testid = box.dataset.testid || '';
-
-    const match = testid.match(/-(\d+)$/);
-    if (match?.[1]) return match[1];
-
-    // Le fil de la page d'accueil fait exception : ses cartes s'appellent
-    // **toutes** `feed-item`, sans identifiant nulle part dans le testid. Seule
-    // l'URL du lien overlay le porte.
-    //
-    // Ce repli est réservé aux testids connus pour ne pas porter d'identifiant,
-    // et n'est surtout pas généralisé : `querySelector` descend dans tout le
-    // sous-arbre, si bien qu'un conteneur qui *contient* des cartes — le voisin
-    // `{plugin}-items` des blocs d'une fiche — passerait pour une carte et
-    // recevrait un bouton en double, sur l'article de sa première carte.
-    if (!IDLESS_CARDS.has(testid)) return null;
-
-    const href = box
-      .querySelector<HTMLAnchorElement>('[data-testid$="--overlay-link"]')
-      ?.getAttribute('href');
-    return href?.match(/\/items\/(\d+)/)?.[1] ?? null;
-  }
-
-  /** @param box conteneur de carte, ex. [data-testid="product-item-id-{ID}"] */
-  function extractFromCard(box: HTMLElement): SavedItem | null {
-    const id = cardId(box);
-    if (!id) return null;
-
-    const link =
-      box.querySelector<HTMLAnchorElement>('[data-testid$="--overlay-link"]') ||
-      box.querySelector<HTMLAnchorElement>('a[href*="/items/"]');
-    const img =
-      box.querySelector<HTMLImageElement>('[data-testid$="--image--img"]') ||
-      box.querySelector('img');
-
-    // L'URL du catalogue traîne un ?referrer= dont on n'a pas besoin.
-    const rawUrl = link ? link.href : '';
-    const url = rawUrl ? (rawUrl.split('?')[0] ?? rawUrl) : `https://www.vinted.fr/items/${id}`;
-
-    const label = link?.title || img?.alt || '';
-    const title = parseTitleFromLabel(label) || titleFromUrl(url) || `Article ${id}`;
-
-    // Le libellé d'accessibilité nomme ses attributs ("état: X, taille: Y") là où
-    // le sous-titre les juxtapose ; il est donc lu en premier, le sous-titre ne
-    // servant que de repli si Vinted change le format du libellé.
-    const fromSubtitle = parseSubtitle(
-      text(box.querySelector('[data-testid$="--description-subtitle"]'))
-    );
-    const price = text(box.querySelector('[data-testid$="--price-text"]'));
-
-    return {
-      id,
-      url,
-      title,
-      brand: text(box.querySelector('[data-testid$="--description-title"]')),
-      size: parseLabelField(label, 'taille|size') || fromSubtitle.size,
-      condition: parseLabelField(label, '[ée]tat|condition') || fromSubtitle.condition,
-      price,
-      priceValue: parsePriceValue(price),
-      favouriteCount: readFavouriteButton(box, '[data-testid$="--favourite"]'),
-      // Le fil d'Ariane décrit la page, pas la carte : catégorie approchée.
-      // Elle sera remplacée par celle de la fiche dès l'enrichissement.
-      //
-      // Sur une fiche article, il ne décrit même plus la page mais l'article
-      // affiché : les cartes du dressing du membre relèvent d'un tout autre
-      // rayon (« Sacs à dos » sous une fiche de chaussures). Aucune catégorie
-      // vaut mieux qu'une catégorie fausse, que rien ne signalerait si
-      // l'enrichissement échouait.
-      category: isDetailPage() ? null : categoryOf(document, false),
-      imageUrl: img ? img.src : '',
-      source: 'catalog',
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Extraction — page détail
-  // ---------------------------------------------------------------------------
-
-  /** Formate un prix numérique à la française : 1 → "1,00 €". */
-  function formatPrice(value: number, currency: string | undefined): string {
-    try {
-      return new Intl.NumberFormat('fr-FR', {
-        style: 'currency',
-        currency: currency || 'EUR',
-      }).format(value);
-    } catch {
-      return `${String(value).replace('.', ',')} ${currency || ''}`.trim();
-    }
-  }
-
-  /**
-   * Forme du JSON-LD de Vinted, réduite à ce qu'on en lit. Tous les champs sont
-   * optionnels : c'est du contenu tiers, rien ne garantit sa structure.
-   */
-  type ProductJsonLd = {
-    '@type'?: string;
-    name?: string;
-    description?: string;
-    brand?: { name?: string };
-    category?: string;
-    image?: string;
-    offers?: { price?: number | string; priceCurrency?: string; url?: string };
-  };
-
-  /** Lit le JSON-LD schema.org de la page détail. Source la plus stable. */
-  function readJsonLd(doc: Document): ProductJsonLd | null {
-    const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
-    for (const script of scripts) {
-      try {
-        const data = JSON.parse(script.textContent ?? '') as ProductJsonLd | null;
-        if (data && data['@type'] === 'Product') return data;
-      } catch {
-        // Bloc JSON-LD non parsable : on passe au suivant.
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Valeur d'une ligne d'attribut de la fiche.
-   *
-   * La ligne empile son libellé et sa valeur :
-   *   <div data-testid="item-attributes-size">
-   *     <div>Taille</div><div itemprop="size">42<button aria-label="Informations…"></div>
-   *   </div>
-   * Lire le `textContent` du bloc entier donnait "Taille42" — inutilisable à
-   * l'affichage, et une taille que le tri ne reconnaît que par accident. On cible
-   * donc la valeur (`itemprop`), et on écarte le bouton d'aide qu'elle contient.
-   *
-   * Le clone reste hors du document : aucune mutation, donc aucun scan déclenché.
-   */
-  function detailAttribute(doc: Document, name: string, prop: string): string {
-    const row = doc.querySelector(`[data-testid="item-attributes-${name}"]`);
-    if (!row) return '';
-
-    const value = row.querySelector(`[itemprop="${prop}"]`) || row.lastElementChild || row;
-    const clone = value.cloneNode(true) as Element;
-    clone.querySelectorAll('button').forEach((btn) => {
-      btn.remove();
-    });
-    return clone.textContent?.trim() ?? '';
-  }
-
-  /**
-   * Ce que la fiche ne rend que dans son flux d'hydratation. Trois clés, une
-   * seule passe sur les scripts de la page — voir `shared/hydration.ts`.
-   *
-   *   favourite_count  le bouton cœur arrive `disabled` et vide : Vinted
-   *                    l'hydrate côté client, et l'enregistrement peut survenir
-   *                    avant ;
-   *   brand_id         repli du fil d'Ariane, qui n'a de maillon de marque que
-   *                    si l'article en a une de référencée ;
-   *   seller_id        repli du lien `/member/{id}` ;
-   *   feedback_count   nombre d'évaluations du vendeur, et
-   *   feedback_reputation  sa note entre 0 et 1 — les deux dans le bloc
-   *                    `user_info_header`. Ici le flux passe **devant** le DOM,
-   *                    qui n'a pour ces deux valeurs ni `data-testid` ni libellé
-   *                    indépendant de la langue (voir `shared/seller.ts`).
-   */
-  const HYDRATED_KEYS = [
-    'favourite_count',
-    'brand_id',
-    'seller_id',
-    'feedback_count',
-    'feedback_reputation',
-  ] as const;
-
-  /**
-   * Extraction complète d'une fiche article — **la seule source de vérité**.
-   *
-   * Elle travaille sur un `Document` quelconque : la page ouverte, ou la fiche
-   * récupérée par `fetch()` pour un article enregistré depuis une carte. Les
-   * deux chemins produisent donc exactement le même objet, avec les mêmes
-   * ancres ; une carte ne fournit plus qu'un affichage immédiat, remplacé dès
-   * que la fiche répond. Voir `enrichFromDetail()`.
-   *
-   * @param doc par défaut la page courante
-   * @param pageUrl URL de cette fiche, par défaut celle de la page
-   */
-  function extractFromDetail(doc: Document = document, pageUrl = location.href): SavedItem | null {
-    const id = extractIdFromUrl(pageUrl);
-    if (!id) return null;
-
-    const path = pageUrl.replace(/^https?:\/\/[^/]+/, '').split('?')[0] ?? '';
-    const url = `https://www.vinted.fr${path}`;
-    const ld = readJsonLd(doc);
-
-    // Taille et état ne sont pas dans le JSON-LD : les deux branches lisent le
-    // même DOM. Idem pour les favoris, absents des deux sources.
-    //
-    // Les deux voies des favoris se complètent plutôt qu'elles ne se doublent :
-    // le flux d'hydratation n'existe que dans le HTML initial (une navigation SPA
-    // récupère ses données par fetch, sans ajouter de script), et c'est justement
-    // là que le bouton n'est pas encore hydraté. Passé la navigation SPA, la page
-    // est vivante depuis longtemps et le bouton porte le compteur.
-    const size = detailAttribute(doc, 'size', 'size');
-    const condition = detailAttribute(doc, 'status', 'status');
-
-    const hydrated = hydrationNumbers(doc, id, HYDRATED_KEYS);
-    const favouriteCount =
-      readFavouriteButton(doc, '[data-testid="favourite-button"]') ??
-      hydrated.favourite_count ??
-      null;
-
-    // Ici le fil d'Ariane décrit l'article lui-même : catégorie exacte.
-    const category = categoryOf(doc, true);
-
-    // DOM d'abord, flux en repli : le fil d'Ariane et le lien du vendeur sont
-    // rendus côté serveur et visibles par Vinted comme du contenu, là où le flux
-    // n'est qu'un détail d'implémentation de son rendu React.
-    const brandId = brandIdFromBreadcrumb(doc) ?? idOf(hydrated.brand_id);
-    const seller = readSeller(doc);
-    const sellerId = seller.id ?? idOf(hydrated.seller_id);
-
-    // Le pseudo n'a d'intérêt que s'il dit autre chose que l'identifiant, qui
-    // suffit déjà à construire le lien vers le profil.
-    const sellerName = seller.name && seller.name !== sellerId ? seller.name : null;
-
-    // Réputation : flux d'abord, DOM en repli — l'inverse du reste, et pour la
-    // raison donnée avec HYDRATED_KEYS. `??` et non `||` : zéro évaluation est
-    // une valeur, et c'est même celle qui compte le plus.
-    const sellerFeedbackCount = hydrated.feedback_count ?? seller.feedback.count;
-    const rating = ratingFromReputation(hydrated.feedback_reputation) ?? seller.feedback.rating;
-
-    // Un compte sans aucune évaluation n'a pas une note de 0 : il n'en a pas.
-    // Vinted rend pourtant `feedback_reputation: 0`, qu'afficher tel quel
-    // accuserait un vendeur neuf d'être un mauvais vendeur.
-    const sellerRating = sellerFeedbackCount === 0 ? null : rating;
-
-    // Les deux branches ci-dessous partagent la galerie : le JSON-LD ne porte
-    // que la photo principale (une chaîne, pas un tableau, même à trois photos).
-    const images = extractPhotos(doc, id);
-
-    if (ld) {
-      const offer = ld.offers || {};
-      // Le JSON-LD donne un nombre brut (1) ; on le rend comme le catalogue ("1,00 €").
-      const price =
-        typeof offer.price === 'number'
-          ? formatPrice(offer.price, offer.priceCurrency)
-          : String(offer.price ?? '');
-
-      return {
-        id,
-        url: offer.url || url,
-        title: ld.name || titleFromUrl(url) || `Article ${id}`,
-        brand: ld.brand?.name || '',
-        size,
-        condition,
-        price,
-        // Le JSON-LD porte déjà un nombre : inutile de le relire depuis l'affichage.
-        priceValue: typeof offer.price === 'number' ? offer.price : parsePriceValue(offer.price),
-        favouriteCount,
-        // Repli sans fil d'Ariane : le JSON-LD nomme la catégorie
-        // ("Hommes Chaussures de foot") mais sans identifiant — de quoi
-        // l'afficher, pas de quoi relancer une recherche.
-        category:
-          category ||
-          (ld.category ? { id: null, name: ld.category, path: [], url: null, exact: true } : null),
-        imageUrl: ld.image || images?.[0]?.url || '',
-        images,
-        brandId,
-        sellerId,
-        sellerName,
-        sellerRating,
-        sellerFeedbackCount,
-        // Le JSON-LD est la seule source de la description : la fiche ne porte
-        // pas d'`itemprop="description"` (vérifié), et le bloc affiché est rendu
-        // par React après hydratation.
-        description: truncate(ld.description),
-        source: 'detail',
-      };
-    }
-
-    // Repli sans JSON-LD : on retombe sur les data-testid de la page.
-    const img = doc.querySelector<HTMLImageElement>('[data-testid="item-photo-1--img"]');
-    const price = text(doc.querySelector('[data-testid="item-price"]'));
-
-    return {
-      id,
-      url,
-      title: text(doc.querySelector('h1')) || titleFromUrl(url) || `Article ${id}`,
-      brand: text(doc.querySelector('[data-testid="item-attributes-brand-menu-button"]')),
-      size,
-      condition,
-      price,
-      priceValue: parsePriceValue(price),
-      favouriteCount,
-      category,
-      imageUrl: img ? img.src : images?.[0]?.url || '',
-      images,
-      brandId,
-      sellerId,
-      sellerName,
-      sellerRating,
-      sellerFeedbackCount,
-      // Sans JSON-LD, la description n'est nulle part dans le HTML servi : on la
-      // laisse absente plutôt que d'écraser celle d'une lecture précédente.
-      description: null,
-      source: 'detail',
-    };
   }
 
   // ---------------------------------------------------------------------------
@@ -924,15 +441,15 @@ import {
    * pendant la requête, le ressusciter serait pire que de perdre l'enrichissement.
    */
   async function finishEnrich(id: string, detail: SavedItem | null): Promise<void> {
-    const current = await readItems();
-    const existing = current[id];
-    if (!existing) return;
+    await updateItems((current) => {
+      const existing = current[id];
+      if (!existing) return null;
 
-    const merged = detail ? mergeDetail(existing, detail) : { ...existing };
-    delete merged.pending;
+      const merged = detail ? mergeDetail(existing, detail) : { ...existing };
+      delete merged.pending;
 
-    current[id] = merged;
-    await chrome.storage.local.set({ [STORAGE_KEY]: current });
+      return { ...current, [id]: merged };
+    });
   }
 
   /**
@@ -945,11 +462,13 @@ import {
    * (retiré par l'utilisateur), il n'y a rien à faire.
    */
   async function discardSoldItem(id: string): Promise<void> {
-    const current = await readItems();
-    if (!current[id]?.pending) return;
+    await updateItems((current) => {
+      if (!current[id]?.pending) return null;
 
-    delete current[id];
-    await chrome.storage.local.set({ [STORAGE_KEY]: current });
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   }
 
   /**
@@ -980,15 +499,21 @@ import {
       return;
     }
 
-    // Relecture : la requête a laissé le temps à un autre onglet d'écrire, et à
-    // l'utilisateur de retirer l'article.
-    const fresh = await readItems();
-    const target = fresh[id];
-    if (!target) return;
+    // La requête a laissé le temps à un autre onglet d'écrire, et à l'utilisateur
+    // de retirer l'article : l'écriture repart donc de l'état relu, et pas de
+    // `item`. C'est aussi pourquoi la requête est faite **hors** de la section
+    // critique — elle y retiendrait toutes les autres écritures de l'onglet.
+    let written = false;
 
-    fresh[id] = { ...target, sizeId };
-    await chrome.storage.local.set({ [STORAGE_KEY]: fresh });
-    debug.sizesResolved += 1;
+    await updateItems((current) => {
+      const target = current[id];
+      if (!target) return null;
+
+      written = true;
+      return { ...current, [id]: { ...target, sizeId } };
+    });
+
+    if (written) debug.sizesResolved += 1;
   }
 
   /**
@@ -1059,15 +584,19 @@ import {
       sellerCountries.set(sellerId, country);
     }
 
-    // Relecture : la requête a laissé le temps à un autre onglet d'écrire, et à
-    // l'utilisateur de retirer l'article.
-    const fresh = await readItems();
-    const target = fresh[id];
-    if (!target) return;
+    // Même raison qu'à `completeSizeId()` : la requête est faite hors section
+    // critique, et l'écriture repart de l'état relu.
+    let written = false;
 
-    fresh[id] = { ...target, sellerCountry: country ?? null };
-    await chrome.storage.local.set({ [STORAGE_KEY]: fresh });
+    await updateItems((current) => {
+      const target = current[id];
+      if (!target) return null;
 
+      written = true;
+      return { ...current, [id]: { ...target, sellerCountry: country ?? null } };
+    });
+
+    if (!written) return;
     if (country) debug.sellerProfiles += 1;
     else debug.sellerProfilesEmpty += 1;
   }
@@ -1081,7 +610,6 @@ import {
   // via un bail dans `watch.lease` — voir `acquireOrRenewLease()`.
   // ---------------------------------------------------------------------------
 
-  const WATCH_KEY = 'watch';
   const LEASE_MS = 60000;
 
   /**
@@ -1090,10 +618,14 @@ import {
    * panneau) montre chaque décision du cycle, notamment celles qui ne sont
    * pas des erreurs — bail perdu, débit épuisé, aucun article éligible…
    *
-   * Désactivé (no-op) une fois le diagnostic terminé — les points d'appel
-   * restent en place pour une réactivation rapide en cas de nouveau bug muet.
+   * Se neutralise en `function watchLog(..._args: unknown[]): void {}` une fois
+   * le diagnostic terminé — les points d'appel restent en place pour une
+   * réactivation rapide en cas de nouveau bug muet.
    */
-  function watchLog(..._args: unknown[]): void {}
+  function watchLog(...args: unknown[]): void {
+    // eslint-disable-next-line no-console -- journal de diagnostic assumé, pas une erreur
+    console.log('[Vinted Favoris][watch]', ...args);
+  }
 
   /**
    * Identifiant de cette instance de content script, pas un vrai id d'onglet
@@ -1110,16 +642,22 @@ import {
   }
 
   async function readWatch(): Promise<WatchState> {
-    const res: { watch?: WatchState } = await chrome.storage.local.get(WATCH_KEY);
-    return res.watch || defaultWatch();
+    const res = await readStorage(WATCH_KEY);
+    return res[WATCH_KEY] || defaultWatch();
   }
 
-  /** Relit puis réécrit `watch`, comme toute écriture partagée entre onglets (règle 6). */
+  /**
+   * Relit puis réécrit `watch`, sans écriture concurrente possible (règle 6 et
+   * `shared/storage.ts`). Le bail et le seau à jetons en dépendent de près : deux
+   * `patchWatch()` entrelacés — la boucle du cycle en lance plusieurs par
+   * article — rendaient un jeton déjà consommé, ou effaçaient le bail que le
+   * précédent venait de poser.
+   */
   async function patchWatch(mutate: (current: WatchState) => WatchState): Promise<WatchState> {
-    const current = await readWatch();
-    const next = mutate(current);
-    await chrome.storage.local.set({ [WATCH_KEY]: next });
-    return next;
+    const written = await updateStorage([WATCH_KEY], (stored) => ({
+      [WATCH_KEY]: mutate(stored[WATCH_KEY] || defaultWatch()),
+    }));
+    return written[WATCH_KEY] ?? defaultWatch();
   }
 
   /**
@@ -1172,18 +710,32 @@ import {
   }
 
   /**
-   * Une réponse dont le HTML ne porte aucune ancre connue est un challenge
-   * (Cloudflare) plutôt qu'une fiche : aucune des trois sources qu'on lit par
-   * ailleurs (JSON-LD, prix affiché, titre) n'y figure.
+   * Une réponse dont aucune des trois sources qu'on lit par ailleurs (JSON-LD,
+   * prix affiché, titre) n'est présente. Deux causes bien différentes, que le
+   * contenu ne permet pas de départager :
+   *
+   * - un challenge (Cloudflare, DataDome) : il faut freiner tout le cycle ;
+   * - un article dont Vinted ne sert plus les informations. Sa page affiche
+   *   brièvement la fiche puis renvoie vers le dressing du vendeur, redirection
+   *   décidée côté client : il n'y a rien à lire dans la réponse. Il faut passer
+   *   à l'article suivant.
+   *
+   * C'est la **répétition** qui tranche, pas le contenu — voir `runWatchQueue()`.
    */
-  function looksLikeChallenge(doc: Document): boolean {
+  function looksAnchorless(doc: Document): boolean {
     if (readJsonLd(doc)) return false;
     if (doc.querySelector('[data-testid="item-price"]')) return false;
     if (doc.querySelector('h1')) return false;
     return true;
   }
 
-  type CheckStep = { outcome: CheckOutcome; block?: boolean };
+  type CheckStep = {
+    outcome: CheckOutcome;
+    /** Signal de freinage sans ambiguïté (429, 403) : arrêt immédiat du cycle. */
+    block?: boolean;
+    /** Réponse illisible : ne freine que si elle se répète — §3.5. */
+    suspect?: boolean;
+  };
 
   /**
    * Vérifie un article suivi. Reprend les mêmes ancres que `enrichFromDetail()`
@@ -1206,7 +758,7 @@ import {
       if (!response.ok) return { outcome: { kind: 'failure' } };
 
       const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
-      if (looksLikeChallenge(doc)) return { outcome: { kind: 'failure' }, block: true };
+      if (looksAnchorless(doc)) return { outcome: { kind: 'unreadable' }, suspect: true };
 
       if (isSoldDetail(doc)) return { outcome: { kind: 'sold' } };
 
@@ -1231,15 +783,15 @@ import {
 
   /** Relit `savedItems` juste avant d'écrire : l'utilisateur a pu retirer l'article entretemps. */
   async function writeCheckResult(id: string, outcome: CheckOutcome, now: number): Promise<void> {
-    const current = await readItems();
-    const item = current[id];
-    if (!item) return;
+    await updateItems((current) => {
+      const item = current[id];
+      if (!item) return null;
 
-    const patch = applyCheckResult(item, outcome, now);
-    if (Object.keys(patch).length === 0) return;
+      const patch = applyCheckResult(item, outcome, now);
+      if (Object.keys(patch).length === 0) return null;
 
-    current[id] = { ...item, ...patch };
-    await chrome.storage.local.set({ [STORAGE_KEY]: current });
+      return { ...current, [id]: { ...item, ...patch } };
+    });
   }
 
   const wait = (ms: number): Promise<void> =>
@@ -1275,6 +827,8 @@ import {
     let done = 0;
     let completed = true;
     let hitBlock = false;
+    /** Réponses illisibles consécutives — voir le traitement de `suspect`. */
+    let suspects = 0;
 
     await patchWatch((w) => ({ ...w, progress: { done: 0, total, startedAt } }));
 
@@ -1320,8 +874,30 @@ import {
           hitBlock = true;
           completed = false;
           await enterThrottle();
-          watchLog('arrêt : signal de freinage (429/403/challenge), fenêtre de silence posée');
+          watchLog('arrêt : signal de freinage (429/403), fenêtre de silence posée');
           break;
+        }
+
+        // Une réponse illisible ne dit pas d'elle-même s'il s'agit d'un
+        // challenge ou d'un seul article indisponible. Ce qui les sépare : un
+        // challenge frappe *toutes* les requêtes, jamais une seule. On ne freine
+        // donc qu'à la deuxième d'affilée — le prix de cette prudence est une
+        // requête de plus, là où freiner dès la première mettait tout le cycle
+        // en sommeil 30 min pour une fiche momentanément indisponible.
+        if (step.suspect) {
+          suspects += 1;
+          if (suspects >= 2) {
+            hitBlock = true;
+            completed = false;
+            await enterThrottle();
+            watchLog(
+              'arrêt : deux réponses illisibles d’affilée, challenge probable, fenêtre de silence posée'
+            );
+            break;
+          }
+          watchLog(`article ${item.id} illisible, passé sans freiner le cycle`);
+        } else {
+          suspects = 0;
         }
 
         await writeCheckResult(item.id, step.outcome, Date.now());
@@ -1387,6 +963,41 @@ import {
   }
 
   // ---------------------------------------------------------------------------
+  // Offres en cours — docs/specs/offres.md
+  //
+  // Le balayage vit dans `offers-scan.ts` ; il n'y a ici qu'un verrou d'onglet.
+  // Pas de bail partagé comme le suivi de prix : un second scan lancé depuis un
+  // autre onglet ne ferait que relire les mêmes conversations sans rien écrire
+  // de faux, là où deux cycles de suivi doublaient le trafic de fiches.
+  // ---------------------------------------------------------------------------
+
+  let offersScanRunning = false;
+
+  /**
+   * Répond immédiatement et laisse le balayage tourner : comme le cycle de
+   * suivi, le résultat se lit dans le storage, jamais dans la réponse au message.
+   */
+  function startOffersScan(): OffersScanResponse {
+    if (offersScanRunning) return { accepted: false, reason: 'déjà en cours dans cet onglet' };
+
+    offersScanRunning = true;
+    void scanOffers()
+      .then((summary) => {
+        debug.offersRead += summary.read;
+        debug.offersWritten += summary.written;
+        if (summary.stopped) debug.offersStopped = summary.stopped;
+      })
+      .catch((err: unknown) => {
+        debug.lastError = errorText(err);
+      })
+      .finally(() => {
+        offersScanRunning = false;
+      });
+
+    return { accepted: true };
+  }
+
+  // ---------------------------------------------------------------------------
   // Filtrage du bruit — docs/specs/filtrage-bruit.md
   // ---------------------------------------------------------------------------
 
@@ -1423,8 +1034,7 @@ import {
 
   async function loadNoise(): Promise<void> {
     try {
-      const res: { [NOISE_KEY]?: Partial<NoiseFilters> } =
-        await chrome.storage.local.get(NOISE_KEY);
+      const res = await readStorage(NOISE_KEY);
       noise = normalizeNoise(res[NOISE_KEY]);
     } catch (err) {
       // Extension rechargée sans recharger l'onglet : le filtrage se tait plutôt
@@ -1435,8 +1045,7 @@ import {
 
   async function loadCollections(): Promise<void> {
     try {
-      const res: { [COLLECTIONS_KEY]?: CollectionMap } =
-        await chrome.storage.local.get(COLLECTIONS_KEY);
+      const res = await readStorage(COLLECTIONS_KEY);
       collections = res[COLLECTIONS_KEY] || {};
     } catch (err) {
       debug.lastError = errorText(err);
@@ -1446,8 +1055,7 @@ import {
   /** Les deux seuls réglages du panneau que le content script lise. */
   async function loadDisplaySettings(): Promise<void> {
     try {
-      const res: { [SETTINGS_KEY]?: { revealHidden?: boolean; hideAds?: boolean } } =
-        await chrome.storage.local.get(SETTINGS_KEY);
+      const res = await readStorage(SETTINGS_KEY);
       revealHidden = Boolean(res[SETTINGS_KEY]?.revealHidden);
       hideAds = Boolean(res[SETTINGS_KEY]?.hideAds);
     } catch (err) {
@@ -1697,6 +1305,11 @@ import {
     // jamais à jour, et rien ne le signalerait.
     const collection = isSaved && btn.dataset.vfId ? collectionNameOf(btn.dataset.vfId) : '';
 
+    // Où ira le prochain clic, quand l'onglet a une collection épinglée. Comme le
+    // nom ci-dessus, il entre dans la garde : sans lui, épingler ne changerait
+    // les libellés qu'au prochain repeint provoqué par autre chose.
+    const target = (!isSaved && tabDefaultName()) || '';
+
     // Idempotent, et c'est vital : réécrire innerHTML déclenche le MutationObserver,
     // qui relance un scan, qui repeint… Sans cette garde, la page part en boucle
     // à chaque frame et le bouton devient incliquable (ses enfants sont détruits
@@ -1705,19 +1318,25 @@ import {
       btn.dataset.vfPainted === '1' &&
       btn.dataset.vfSaved === String(isSaved) &&
       btn.dataset.vfBlocked === String(blocked) &&
-      btn.dataset.vfCol === collection
+      btn.dataset.vfCol === collection &&
+      btn.dataset.vfTarget === target
     )
       return;
 
     btn.dataset.vfSaved = String(isSaved);
     btn.dataset.vfBlocked = String(blocked);
     btn.dataset.vfCol = collection;
+    btn.dataset.vfTarget = target;
     btn.dataset.vfPainted = '1';
     btn.disabled = blocked;
     btn.setAttribute('aria-pressed', String(isSaved));
 
     // « Déjà dans Vestes » : la seule chose que l'icône pleine ne dit pas.
     const where = collection ? `Déjà dans « ${collection} » — ` : '';
+
+    // La destination du clic, annoncée là où la question se pose. La pastille dit
+    // qu'un défaut est actif ; le survol du bouton dit ce qu'il va en faire.
+    const into = target ? `Enregistrer dans « ${target} »` : 'Enregistrer dans mes favoris';
 
     if (isDetail) {
       if (blocked) {
@@ -1727,13 +1346,11 @@ import {
         btn.innerHTML =
           (isSaved ? ICON_FILLED : ICON_OUTLINE) +
           `<span>${isSaved ? 'Enregistré' : 'Enregistrer'}</span>`;
-        btn.title = isSaved ? `${where}retirer de mes favoris` : 'Enregistrer dans mes favoris';
+        btn.title = isSaved ? `${where}retirer de mes favoris` : into;
       }
     } else {
       btn.innerHTML = isSaved ? ICON_FILLED : ICON_OUTLINE;
-      btn.title = isSaved
-        ? `${where}retirer de mes favoris (extension)`
-        : 'Enregistrer dans mes favoris (extension)';
+      btn.title = isSaved ? `${where}retirer de mes favoris (extension)` : `${into} (extension)`;
     }
     btn.setAttribute('aria-label', btn.title);
   }
@@ -1796,6 +1413,8 @@ import {
         itemTitle: item.title || '',
         currentCollectionId: item.collectionId || DEFAULT_COLLECTION_ID,
         anchor: { top: box.top, bottom: box.bottom, left: box.left, right: box.right },
+        pinnedCollectionId: tabDefaultId(),
+        onPin: setTabDefault,
       });
     } catch (err) {
       debug.lastError = errorText(err);
@@ -1834,7 +1453,7 @@ import {
         // affiche l'article dès le clic, pas au retour de la requête.
         const fromCard = item.source === 'catalog';
         const stored = fromCard ? { ...item, pending: true } : item;
-        const result = await toggleItem(stored);
+        const result = await toggleItem(stored, tabDefaultId());
         debug.writes += 1;
 
         // Repeint immédiatement : si le storage échoue silencieusement ou si
@@ -1847,7 +1466,10 @@ import {
         // seule l'API du site peut donner — voir completeSizeId().
         if (result.action === 'added') queueEnrich(item.id, item.url, !fromCard);
 
-        return { ...result, item: stored };
+        // L'article **tel qu'il est en storage**, et non celui qu'on croyait
+        // écrire : la collection épinglée sur l'onglet vient peut-être de lui
+        // être posée, et l'appui long doit ouvrir son menu dessus.
+        return { ...result, item: saved[item.id] || stored };
       } catch (err) {
         // Cas classique : extension rechargée sans recharger l'onglet
         // ("Extension context invalidated") — le clic échoue en silence.
@@ -2319,6 +1941,11 @@ import {
     // Après l'injection : une carte tout juste apparue doit être jugée dans le
     // même passage, sinon elle clignote — visible une frame, masquée la suivante.
     applyFilters();
+
+    // Rendu ici, et pas seulement à l'épinglage : Vinted remplace le corps de la
+    // page à certaines navigations, ce qui emporterait la pastille sans qu'aucun
+    // événement de l'extension ne le signale. L'appel est idempotent.
+    renderTabDefault();
   }
 
   // ---------------------------------------------------------------------------
@@ -2370,6 +1997,12 @@ import {
     missing: Record<string, number>;
     categorie: Omit<ItemCategory, 'exact'> | string;
     savedCount: number;
+    /**
+     * Collection épinglée sur cet onglet — où part un clic court. `null` quand
+     * il n'y en a pas. Répond à « pourquoi mes articles atterrissent-ils là ? »
+     * sans avoir à ouvrir le storage de session.
+     */
+    collectionParDefaut: string | null;
     debug: typeof debug;
     sample: SavedItem | null;
 
@@ -2455,6 +2088,7 @@ import {
       missing,
       categorie: category || 'aucun fil d’Ariane (recherche par mots-clés ?)',
       savedCount: Object.keys(saved).length,
+      collectionParDefaut: tabDefaultName(),
       debug: { ...debug },
       sample: items[0] || null,
 
@@ -2587,6 +2221,11 @@ import {
       return true; // réponse asynchrone : le canal doit rester ouvert
     }
 
+    if (message?.type === 'VF_OFFERS_SCAN') {
+      sendResponse(startOffersScan());
+      return false;
+    }
+
     if (message?.type === 'VF_WATCH_CANCEL') {
       cancelWatch();
       sendResponse({ accepted: true });
@@ -2603,7 +2242,7 @@ import {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
 
-    const items = changes[STORAGE_KEY];
+    const items = changes[ITEMS_KEY];
     if (items) {
       saved = (items.newValue as ItemMap | undefined) || {};
       repaintAll();
@@ -2619,6 +2258,9 @@ import {
     const cols = changes[COLLECTIONS_KEY];
     if (cols) {
       collections = (cols.newValue as CollectionMap | undefined) || {};
+      // Renommée, la collection épinglée change de nom sur la pastille ;
+      // supprimée, l'épingle tombe avec elle.
+      syncTabDefault();
       repaintAll();
     }
 
@@ -2652,6 +2294,9 @@ import {
     () => {
       applyRevealClass();
       applyAdsClass();
+      // Avant le scan : les boutons injectés annoncent la collection épinglée,
+      // et une épingle posée à la session précédente est déjà en session storage.
+      syncTabDefault();
       scan();
 
       /** Nos propres nœuds : leurs mutations ne doivent jamais relancer un scan. */
@@ -2662,7 +2307,7 @@ import {
        * la mutation a alors pour cible le body, que `closest()` ne rattachera
        * jamais à nous. On regarde donc aussi ce qui entre et sort.
        */
-      const BODY_OVERLAYS = `${OVERLAY_SELECTOR}, .vf-pill, .vf-noise-menu, .vf-detail-hide`;
+      const BODY_OVERLAYS = `${OVERLAY_SELECTOR}, ${PILLS_SELECTOR}, .vf-pill, .vf-noise-menu, .vf-detail-hide`;
 
       const ownNodesOnly = (nodes: NodeList): boolean =>
         [...nodes].every((node) => node instanceof Element && node.matches(BODY_OVERLAYS));

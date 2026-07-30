@@ -11,7 +11,7 @@ transmet à Google l'URL de la photo, à la demande, jamais en tâche de fond.
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 341 tests, ~30 s, runner Node natif via tsx
+pnpm test         # 447 tests, ~30 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-favoris-<version>.zip
 ```
@@ -24,11 +24,17 @@ toute modification : `pnpm build` (ou laisser `pnpm dev` tourner), ↻ dans
 ## Structure
 
 ```
-src/content/content.ts       injection des boutons + extraction   ← le cœur, testé
+src/content/content.ts       injection des boutons, enrichissement, suivi, filtrage
+src/content/extract.ts       lecture du DOM Vinted → SavedItem (pur)  ← ce qui casse
 src/content/collection-picker.ts  menu de collection ouvert par l'appui long
+src/content/tab-default.ts   collection épinglée sur l'onglet (sessionStorage) + pastille
+src/content/ui.ts            briques des surcouches : activation à deux gestes, pastilles
 src/content/noise-ui.ts      filtrage : bouton d'écart, annulation, pastille, menu
-src/sidepanel/               panneau : sidepanel, store, sorting, dnd, search, elsewhere, gallery
-src/shared/                  modèle de données, messages, prix, photos, vendeur, erreurs
+src/content/offers-scan.ts   balayage de l'inbox : les offres en cours (réseau)
+src/sidepanel/               panneau : sidepanel (orchestration) + un module par zone
+                             (item-list, collections-bar, menus, gallery, filters, watch…)
+src/shared/                  storage, modèle de données, messages, prix, photos, vendeur,
+                             offres (lecture pure de l'API des conversations)
 src/background/              ouvre le panneau ; badge + pulsation à l'enregistrement
 src/manifest.ts              manifeste typé ; la version vient de package.json
 scripts/                     build, empaquetage (build-config.ts = source unique)
@@ -44,18 +50,33 @@ service worker → modules ES. L'appariement vit dans `scripts/build-config.ts` 
 pouvaient rien partager, et le modèle de données comme le parseur de prix vivaient en
 double.
 
+**L'extraction vit dans `content/extract.ts`, séparée de l'injection.** Ces fonctions ne
+font que lire un `Document` passé en paramètre — la page ouverte ou une fiche récupérée
+par `fetch()` — sans toucher au storage ni au DOM. C'est la moitié du content script qui
+casse quand Vinted déploie, et `tests/extract.test.ts` l'éprouve directement, sans
+monter l'extension (1 s, contre ~30 s pour le harness jsdom complet).
+
 **Une seule extraction fait foi : celle de la fiche article.** Un clic sur une carte
 enregistre aussitôt ce que la carte affiche (`pending: true`, le panneau montre
 l'article dans la seconde), puis `fetch()` la fiche en tâche de fond et complète — même
 fonction, mêmes ancres. Détail et garde-fous : `docs/architecture.md`.
+
+**Les offres se lisent dans l'API, pas dans une page** (`docs/specs/offres.md`). La
+fiche article ne porte aucune trace d'une offre en cours ; `shared/offers.ts` interprète
+les réponses de `/api/v2/inbox` et `/api/v2/conversations/{id}`,
+`content/offers-scan.ts` va les chercher. Même séparation que `extract.ts` face à
+`content.ts`, et même raison : la lecture est ce qui casse, elle s'éprouve sans réseau
+ni navigateur. L'API répond **403 sans cookies de session** — donc depuis le content
+script, jamais du panneau.
 
 ## Règles à ne pas enfreindre
 
 Chacune vient d'un bug réel, intermittent et **silencieux** — aucune erreur en console.
 Ce qui les verrouille mécaniquement : les tests jsdom pour 1 et 3, un plugin stylelint
 maison (`tools/stylelint-no-hover-transform.js`) pour le `transform` de la règle 2, une
-règle ESLint `no-restricted-syntax` pour la 4. Les règles 5 et 6 ne tiennent qu'à la
-relecture.
+règle ESLint `no-restricted-syntax` pour la 4 et pour l'accès direct à
+`chrome.storage.local` de la règle 6 (`tests/storage.test.ts` couvre l'entrelacement).
+La règle 5 ne tient qu'à la relecture.
 
 1. **`pointerdown`, jamais `click` seul** pour déclencher une action souris. Le
    navigateur supprime `click` dès qu'une sélection de texte démarre ou que le pointeur
@@ -71,8 +92,10 @@ relecture.
 5. **Écrire dans un champ React** passe par le setter natif de
    `HTMLInputElement.prototype.value` + un événement `input`. `field.value = …` est
    ignoré et laisse le bouton d'envoi désactivé.
-6. **Toute écriture en storage relit d'abord** : plusieurs onglets Vinted écrivent en
-   parallèle.
+6. **Toute écriture en storage passe par `update()` de `shared/storage.ts`** : il relit
+   avant d'écrire (plusieurs onglets Vinted écrivent en parallèle) _et_ sérialise les
+   mutations du contexte courant. Relire ne suffit pas : entre le `get` et le `set`, la
+   boucle d'événements passe la main, et deux écritures du même onglet s'écrasent.
 
 ## Où chercher
 

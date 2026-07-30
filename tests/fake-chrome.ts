@@ -13,6 +13,8 @@
  * fois**, et commentée.
  */
 
+import { resetStorageQueue } from '../src/shared/storage.ts';
+
 export type FakeStore = Record<string, unknown>;
 
 type ChangeListener = (
@@ -50,27 +52,42 @@ export type FakeChrome = {
  */
 export function installFakeChrome(
   initial: FakeStore = {},
-  options: { notify?: boolean } = {}
+  options: { notify?: boolean; latency?: number } = {}
 ): FakeChrome {
+  // Une file laissée pleine par le cas précédent s'exécuterait sur ce storage-ci.
+  resetStorageQueue();
+
   const db: FakeStore = structuredClone(initial);
   const listeners: ChangeListener[] = [];
+
+  /**
+   * Le vrai `chrome.storage` répond de façon asynchrone. Par défaut le faux se
+   * contente d'une micro-tâche, ce qui suffit à laisser la boucle d'événements
+   * passer la main ; `latency` allonge le délai, seul moyen de faire s'entrelacer
+   * deux lectures-écritures de façon déterministe (voir `storage.test.ts`).
+   */
+  const settle = <T>(value: T): Promise<T> =>
+    options.latency
+      ? new Promise((resolve) => setTimeout(() => resolve(value), options.latency))
+      : Promise.resolve(value);
 
   const local = {
     get(keys: string | string[]) {
       const list = Array.isArray(keys) ? keys : [keys];
       const out: FakeStore = {};
       for (const key of list) if (key in db) out[key] = structuredClone(db[key]);
-      return Promise.resolve(out);
+      return settle(out);
     },
 
     set(obj: FakeStore) {
-      const changes: Record<string, { oldValue?: unknown; newValue?: unknown }> = {};
-      for (const [key, value] of Object.entries(obj)) {
-        changes[key] = { oldValue: db[key], newValue: value };
-        db[key] = structuredClone(value);
-      }
-      if (options.notify) listeners.forEach((fn) => fn(changes, 'local'));
-      return Promise.resolve();
+      return settle(undefined).then(() => {
+        const changes: Record<string, { oldValue?: unknown; newValue?: unknown }> = {};
+        for (const [key, value] of Object.entries(obj)) {
+          changes[key] = { oldValue: db[key], newValue: value };
+          db[key] = structuredClone(value);
+        }
+        if (options.notify) listeners.forEach((fn) => fn(changes, 'local'));
+      });
     },
   };
 

@@ -23,12 +23,7 @@ import {
 import type { NoiseFilters } from '../shared/noise.ts';
 import { saveSettings, updateNoise } from './store.ts';
 import type { Settings } from '../shared/types.ts';
-
-function required<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`sidepanel.html : #${id} introuvable`);
-  return el as T;
-}
+import { required } from './dom.ts';
 
 const dialog = required('filters-dialog');
 const openButton = required<HTMLButtonElement>('filters');

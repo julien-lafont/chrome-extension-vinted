@@ -24,6 +24,7 @@ lecture « Vinted a changé son DOM » de « le clic n'arrive pas jusqu'au bouto
     "favouriteCount": 0
   },
   "savedCount": 12,
+  "collectionParDefaut": "Vestes",
   "debug": { "clicks": 2, "writes": 2, "lastError": null }
 }
 ```
@@ -32,6 +33,12 @@ lecture « Vinted a changé son DOM » de « le clic n'arrive pas jusqu'au bouto
 champs doivent rester à 0 : ce sont les quatre entrées du tri (`price`/`priceValue`,
 `condition`, `favouriteCount`, `size`). `priceValue` et `favouriteCount` sont comptés
 sur leur type, pas sur leur valeur — 0 favori est une donnée, pas une absence.
+
+`collectionParDefaut` répond à « pourquoi mes articles atterrissent-ils là ? » : c'est
+la collection épinglée sur **cet onglet** (l'épingle du menu de rangement), où part tout
+clic court. `null` quand il n'y en a pas — l'article va alors dans « Mes favoris ».
+L'épinglage est propre à l'onglet et disparaît avec lui ; un autre onglet peut donc
+répondre autre chose, et c'est voulu.
 
 ### `regles`, `motifs`, `vendeursSurCartes` — le filtrage du bruit
 
@@ -162,6 +169,31 @@ dépourvus de chaque champ de tri :
 }
 ```
 
+Et `offres`, qui dit où en est le balayage de la messagerie
+([offres.md](specs/offres.md) §4) — la première chose à lire quand un badge d'offre
+manque :
+
+```json
+{
+  "offres": {
+    "avecOffre": 4,
+    "enAttente": 2,
+    "compte": "77742929",
+    "dernierBalayage": "30/07/2026 11:42:03",
+    "rattrapage": "en cours, conversations d'avant le 26/04/2026 12:14:37",
+    "freineJusqua": "non"
+  }
+}
+```
+
+| Ce qu'on lit                             | Interprétation                                                                                        |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `compte: "inconnu — session expirée ?"`  | `/api/v2/users/current` n'a rien rendu : rien n'est décidable, le balayage ne lit aucune conversation |
+| `dernierBalayage: "jamais"`              | aucun scan n'a abouti — ouvrir un onglet Vinted, puis le panneau                                      |
+| `rattrapage: "en cours…"`                | l'historique n'est pas entièrement lu : les offres anciennes arriveront aux prochaines ouvertures     |
+| `freineJusqua` avec une heure            | 429/403 sur l'API : silence jusque-là, les offres connues restent affichées                           |
+| `avecOffre: 0` alors qu'une offre existe | l'article n'est pas dans les favoris, ou l'offre porte sur ce que l'on vend                           |
+
 `enAttenteDeFiche` compte les articles dont la fiche est en cours de lecture. Il doit
 retomber à zéro en quelques secondes ; s'il stagne, les requêtes échouent —
 `debug.enrichFailed` et `debug.lastError`, côté `catalogue`, disent pourquoi.
@@ -238,6 +270,9 @@ fichier.
 | `vendeursSurCartes: "0/n"`                                       | Le vendeur n'est pas lisible sur une carte ; c'est un état connu, pas une panne        |
 | `vendeur.noteFlux` et `noteDom` tous deux à `null`               | Les deux ancres de la note ont sauté → [vinted-dom.md](vinted-dom.md)                  |
 | `debug.sellerProfilesEmpty` monte seul                           | Les profils sont lus mais n'ont plus de pays → l'ancre `country_code` a changé         |
+| `debug.offersRead: 0` alors qu'une offre existe                  | Le balayage ne part pas : session expirée, ou freinage → voir `offersStopped`          |
+| `debug.offersStopped: "freiné"`                                  | 429/403 sur l'API : silence de 30 min, les offres connues restent affichées            |
+| `debug.offersRead` monte, `offersWritten` reste à 0              | Les conversations sont lues mais ne concernent aucun favori — normal si l'on vend      |
 
 ## Étendre le rapport
 

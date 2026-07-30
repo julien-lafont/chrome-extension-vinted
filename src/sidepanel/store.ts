@@ -1,14 +1,20 @@
 /**
- * Vinted Favoris — accès au stockage.
+ * Vinted Favoris — les gestes du panneau sur le stockage.
  *
- * Quatre clés dans chrome.storage.local :
+ * Quatre des cinq clés passent par ici :
  *   savedItems  { [id]: item }                        écrit aussi par le content script
  *   collections { [id]: { id, name, createdAt, order } }  écrit aussi par le content script
  *   settings    { activeCollectionId, sortMode, sortDir }
  *   noise       règles de filtrage du catalogue       écrit aussi par le content script
  *
- * (`watch` est la cinquième, mais elle ne passe pas par ici : le suivi de prix
- * la lit et l'écrit depuis `sidepanel/watch.ts` et le content script.)
+ * (`watch` est la cinquième : le suivi de prix la lit et l'écrit depuis
+ * `sidepanel/watch.ts` et le content script.)
+ *
+ * Les clés, leur forme et la primitive de lecture-écriture vivent dans
+ * `shared/storage.ts` — ce fichier n'exprime que ce que le panneau en fait.
+ * Chaque `update()` y relit le storage et s'exécute sans qu'aucune autre
+ * écriture ne s'intercale ; c'est ce qui autorise à décider *dans* la mutation
+ * (`deleteCollection` refuse une collection qu'un autre onglet vient de remplir).
  *
  * Un article appartient à une collection via `item.collectionId`. Le content
  * script ne renseigne ce champ qu'à la capture avec choix de collection (appui
@@ -25,17 +31,20 @@ import {
   COLLECTIONS_KEY,
   DEFAULT_COLLECTION_ID,
   ITEMS_KEY,
+  OFFERS_VIEW_ID,
   assignCollection,
   collectionOf,
   createCollection,
+  isView,
   makeArchiveCollection,
   makeDefaultCollection,
   sortCollections,
 } from '../shared/collections.ts';
-import { NOISE_KEY, normalizeNoise } from '../shared/noise.ts';
+import { normalizeNoise } from '../shared/noise.ts';
 import type { NoiseFilters } from '../shared/noise.ts';
 import { patchNoise } from '../shared/noise-storage.ts';
-import type { Collection, CollectionMap, ItemMap, SavedItem, Settings } from '../shared/types.ts';
+import { NOISE_KEY, SETTINGS_KEY, read, update } from '../shared/storage.ts';
+import type { Collection, CollectionMap, SavedItem, Settings } from '../shared/types.ts';
 
 export {
   ARCHIVE_COLLECTION_ID,
@@ -43,12 +52,13 @@ export {
   DEFAULT_COLLECTION_ID,
   ITEMS_KEY,
   NOISE_KEY,
+  OFFERS_VIEW_ID,
+  SETTINGS_KEY,
   collectionOf,
   createCollection,
+  isView,
   sortCollections,
 };
-
-export const SETTINGS_KEY = 'settings';
 
 /** Le rangement d'un article est le même geste depuis le panneau et depuis une carte. */
 export const moveItemToCollection = assignCollection;
@@ -61,23 +71,6 @@ const DEFAULT_SETTINGS: Settings = {
   revealHidden: false,
   hideAds: false,
 };
-
-/**
- * `chrome.storage.local.get` renvoie un objet indexé non typé. Toutes les
- * conversions vers le modèle passent par ici, plutôt que d'éparpiller des
- * assertions dans chaque lecture : le jour où le schéma stocké évolue, c'est le
- * seul endroit où poser une migration.
- */
-type StoredShape = {
-  [ITEMS_KEY]: ItemMap;
-  [COLLECTIONS_KEY]: CollectionMap;
-  [SETTINGS_KEY]: Partial<Settings>;
-  [NOISE_KEY]: Partial<NoiseFilters>;
-};
-
-async function read<K extends keyof StoredShape>(...keys: K[]): Promise<Partial<StoredShape>> {
-  return await chrome.storage.local.get(keys);
-}
 
 // --- Lecture -----------------------------------------------------------------
 
@@ -97,14 +90,22 @@ export async function readAll(): Promise<Snapshot> {
   }
 
   const settings = { ...DEFAULT_SETTINGS, ...(res[SETTINGS_KEY] || {}) };
+  const items = Object.values(res[ITEMS_KEY] || {});
 
-  // La collection active a pu être supprimée depuis une autre fenêtre.
-  if (!collections[settings.activeCollectionId]) {
+  // La collection active a pu être supprimée depuis une autre fenêtre. Une vue
+  // (`view:…`) n'est pas dans `collections` et n'a donc rien à y trouver : elle
+  // ne survit qu'à la condition d'avoir encore quelque chose à montrer — son
+  // onglet disparaît avec la dernière offre, et l'y laisser afficherait une
+  // liste vide sans onglet actif visible.
+  const activeId = settings.activeCollectionId;
+  const viewIsLive = activeId === OFFERS_VIEW_ID && items.some((item) => item.offer);
+
+  if (!viewIsLive && !collections[activeId]) {
     settings.activeCollectionId = DEFAULT_COLLECTION_ID;
   }
 
   return {
-    items: Object.values(res[ITEMS_KEY] || {}),
+    items,
     collections,
     settings,
     noise: normalizeNoise(res[NOISE_KEY]),
@@ -119,33 +120,23 @@ export const updateNoise = patchNoise;
 
 // --- Écriture ----------------------------------------------------------------
 
-/**
- * Relit puis réécrit une clé de façon atomique côté extension : le content
- * script écrit sur `savedItems` en parallèle, on ne veut pas écraser son travail.
- */
-async function update<K extends keyof StoredShape>(
-  key: K,
-  mutate: (current: NonNullable<StoredShape[K]>) => StoredShape[K]
-): Promise<StoredShape[K]> {
-  const res = await read(key);
-  const current = (res[key] || {}) as NonNullable<StoredShape[K]>;
-  const next = mutate(current);
-  await chrome.storage.local.set({ [key]: next });
-  return next;
-}
-
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
-  const res = await read(SETTINGS_KEY);
-  const next: Settings = { ...DEFAULT_SETTINGS, ...(res[SETTINGS_KEY] || {}), ...patch };
-  await chrome.storage.local.set({ [SETTINGS_KEY]: next });
+  let next: Settings = DEFAULT_SETTINGS;
+
+  await update([SETTINGS_KEY], (current) => {
+    next = { ...DEFAULT_SETTINGS, ...(current[SETTINGS_KEY] || {}), ...patch };
+    return { [SETTINGS_KEY]: next };
+  });
+
   return next;
 }
 
 export async function renameCollection(id: string, name: string): Promise<void> {
-  await update(COLLECTIONS_KEY, (current) => {
-    const collection = current[id];
-    if (!collection) return current;
-    return { ...current, [id]: { ...collection, name: name.trim() } };
+  await update([COLLECTIONS_KEY], (current) => {
+    const collections = current[COLLECTIONS_KEY] || {};
+    const collection = collections[id];
+    if (!collection) return null;
+    return { [COLLECTIONS_KEY]: { ...collections, [id]: { ...collection, name: name.trim() } } };
   });
 }
 
@@ -164,22 +155,32 @@ export type DeleteResult =
 export async function deleteCollection(id: string): Promise<DeleteResult> {
   if (id === DEFAULT_COLLECTION_ID) return { ok: false, reason: 'default' };
 
-  const res = await read(ITEMS_KEY, COLLECTIONS_KEY);
-  const collections = res[COLLECTIONS_KEY] || {};
-  if (!collections[id]) return { ok: false, reason: 'unknown' };
+  // Le verdict se décide sur l'état relu, dans la même section critique que
+  // l'écriture : sans cela, un rangement concurrent glisserait un article dans
+  // la collection entre le contrôle et la suppression.
+  let result: DeleteResult = { ok: true };
 
-  const items = Object.values(res[ITEMS_KEY] || {});
-  if (items.some((item) => item.collectionId === id)) {
-    return { ok: false, reason: 'not-empty' };
-  }
+  await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
+    const collections = current[COLLECTIONS_KEY] || {};
+    if (!collections[id]) {
+      result = { ok: false, reason: 'unknown' };
+      return null;
+    }
 
-  const next = { ...collections };
-  delete next[id];
-  await chrome.storage.local.set({ [COLLECTIONS_KEY]: next });
+    const items = Object.values(current[ITEMS_KEY] || {});
+    if (items.some((item) => item.collectionId === id)) {
+      result = { ok: false, reason: 'not-empty' };
+      return null;
+    }
+
+    const next = { ...collections };
+    delete next[id];
+    return { [COLLECTIONS_KEY]: next };
+  });
 
   // Aucun article à rapatrier : la collection était vide. Une référence résiduelle
   // vers une collection disparue retomberait de toute façon sur celle par défaut.
-  return { ok: true };
+  return result;
 }
 
 /**
@@ -197,44 +198,54 @@ export async function commitCustomOrder(
   collectionId: string,
   orderedIds: string[]
 ): Promise<Settings> {
-  const res = await read(COLLECTIONS_KEY, SETTINGS_KEY);
+  let settings: Settings = DEFAULT_SETTINGS;
 
-  const collections: CollectionMap = res[COLLECTIONS_KEY] || {};
-  const collection: Collection = collections[collectionId] || {
-    id: collectionId,
-    name: 'Mes favoris',
-    createdAt: Date.now(),
-    order: [],
-  };
+  await update([COLLECTIONS_KEY, SETTINGS_KEY], (current) => {
+    const collections: CollectionMap = current[COLLECTIONS_KEY] || {};
+    const collection: Collection = collections[collectionId] || {
+      id: collectionId,
+      name: 'Mes favoris',
+      createdAt: Date.now(),
+      order: [],
+    };
 
-  const settings: Settings = {
-    ...DEFAULT_SETTINGS,
-    ...(res[SETTINGS_KEY] || {}),
-    sortMode: 'custom',
-    sortDir: 'asc',
-  };
+    settings = {
+      ...DEFAULT_SETTINGS,
+      ...(current[SETTINGS_KEY] || {}),
+      sortMode: 'custom',
+      sortDir: 'asc',
+    };
 
-  await chrome.storage.local.set({
-    [COLLECTIONS_KEY]: { ...collections, [collectionId]: { ...collection, order: orderedIds } },
-    [SETTINGS_KEY]: settings,
+    return {
+      [COLLECTIONS_KEY]: { ...collections, [collectionId]: { ...collection, order: orderedIds } },
+      [SETTINGS_KEY]: settings,
+    };
   });
 
   return settings;
 }
 
+/**
+ * Retire un article et son entrée dans les ordres personnalisés.
+ *
+ * Les deux clés partent dans un **seul** `set`, pour la raison exposée sur
+ * `commitCustomOrder()` : en deux écritures, le rendu déclenché par la première
+ * montre une liste dont l'ordre cite encore un article qui n'existe plus.
+ */
 export async function removeItem(itemId: string): Promise<void> {
-  await update(ITEMS_KEY, (current) => {
-    const next = { ...current };
-    delete next[itemId];
-    return next;
-  });
+  await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
+    const items = { ...(current[ITEMS_KEY] || {}) };
+    delete items[itemId];
 
-  await update(COLLECTIONS_KEY, (current) => {
-    const next: CollectionMap = {};
-    for (const [id, collection] of Object.entries(current)) {
-      next[id] = { ...collection, order: (collection.order || []).filter((e) => e !== itemId) };
+    const collections: CollectionMap = {};
+    for (const [id, collection] of Object.entries(current[COLLECTIONS_KEY] || {})) {
+      collections[id] = {
+        ...collection,
+        order: (collection.order || []).filter((e) => e !== itemId),
+      };
     }
-    return next;
+
+    return { [ITEMS_KEY]: items, [COLLECTIONS_KEY]: collections };
   });
 }
 
@@ -244,13 +255,24 @@ export async function removeItem(itemId: string): Promise<void> {
  * quel et on le replace en tête de l'ordre personnalisé de sa collection.
  */
 export async function restoreItem(item: SavedItem): Promise<void> {
-  await update(ITEMS_KEY, (current) => ({ ...current, [item.id]: item }));
-
   const collectionId = item.collectionId || DEFAULT_COLLECTION_ID;
-  await update(COLLECTIONS_KEY, (current) => {
-    const collection = current[collectionId];
-    if (!collection || (collection.order || []).includes(item.id)) return current;
-    return { ...current, [collectionId]: { ...collection, order: [item.id, ...collection.order] } };
+
+  await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
+    const items = { ...(current[ITEMS_KEY] || {}), [item.id]: item };
+    const collections = current[COLLECTIONS_KEY] || {};
+
+    const collection = collections[collectionId];
+    if (!collection || (collection.order || []).includes(item.id)) {
+      return { [ITEMS_KEY]: items };
+    }
+
+    return {
+      [ITEMS_KEY]: items,
+      [COLLECTIONS_KEY]: {
+        ...collections,
+        [collectionId]: { ...collection, order: [item.id, ...collection.order] },
+      },
+    };
   });
 }
 
@@ -267,41 +289,46 @@ export type ArchiveResult = { movedIds: string[]; sourceCollectionId: string };
  * « Archives » qui n'existe pas encore.
  */
 export async function archiveSold(collectionId: string): Promise<ArchiveResult> {
-  const res = await read(ITEMS_KEY, COLLECTIONS_KEY);
-  const items = res[ITEMS_KEY] || {};
-  const collections: CollectionMap = { ...(res[COLLECTIONS_KEY] || {}) };
+  const result: ArchiveResult = { movedIds: [], sourceCollectionId: collectionId };
 
-  const targets = Object.values(items).filter(
-    (item) =>
-      collectionOf(item, collections) === collectionId &&
-      (item.status === 'sold' || item.status === 'gone')
-  );
-  if (!targets.length) return { movedIds: [], sourceCollectionId: collectionId };
+  await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
+    const items = current[ITEMS_KEY] || {};
+    const collections: CollectionMap = { ...(current[COLLECTIONS_KEY] || {}) };
 
-  if (!collections[ARCHIVE_COLLECTION_ID]) {
-    collections[ARCHIVE_COLLECTION_ID] = makeArchiveCollection();
-  }
+    const targets = Object.values(items).filter(
+      (item) =>
+        collectionOf(item, collections) === collectionId &&
+        (item.status === 'sold' || item.status === 'gone')
+    );
+    if (!targets.length) return null;
 
-  const movedIds = targets.map((item) => item.id);
-  const moved = new Set(movedIds);
+    if (!collections[ARCHIVE_COLLECTION_ID]) {
+      collections[ARCHIVE_COLLECTION_ID] = makeArchiveCollection();
+    }
 
-  const nextItems: ItemMap = { ...items };
-  for (const id of movedIds) {
-    const item = nextItems[id];
-    if (item) nextItems[id] = { ...item, collectionId: ARCHIVE_COLLECTION_ID };
-  }
+    const movedIds = targets.map((item) => item.id);
+    const moved = new Set(movedIds);
+    result.movedIds = movedIds;
 
-  const nextCollections: CollectionMap = {};
-  for (const [id, collection] of Object.entries(collections)) {
-    const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
-    nextCollections[id] =
-      id === ARCHIVE_COLLECTION_ID
-        ? { ...collection, order: [...movedIds, ...order] }
-        : { ...collection, order };
-  }
+    const nextItems = { ...items };
+    for (const id of movedIds) {
+      const item = nextItems[id];
+      if (item) nextItems[id] = { ...item, collectionId: ARCHIVE_COLLECTION_ID };
+    }
 
-  await chrome.storage.local.set({ [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections });
-  return { movedIds, sourceCollectionId: collectionId };
+    const nextCollections: CollectionMap = {};
+    for (const [id, collection] of Object.entries(collections)) {
+      const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
+      nextCollections[id] =
+        id === ARCHIVE_COLLECTION_ID
+          ? { ...collection, order: [...movedIds, ...order] }
+          : { ...collection, order };
+    }
+
+    return { [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections };
+  });
+
+  return result;
 }
 
 /** Annule un archivage : remet chaque article dans la collection d'où il venait. */
@@ -310,32 +337,33 @@ export async function restoreArchived({
   sourceCollectionId,
 }: ArchiveResult): Promise<void> {
   if (!movedIds.length) return;
-
-  const res = await read(ITEMS_KEY, COLLECTIONS_KEY);
-  const items = res[ITEMS_KEY] || {};
-  const collections = res[COLLECTIONS_KEY] || {};
   const moved = new Set(movedIds);
 
-  const nextItems: ItemMap = { ...items };
-  for (const id of movedIds) {
-    const item = nextItems[id];
-    if (!item) continue;
-    const patched: SavedItem = { ...item, collectionId: sourceCollectionId };
-    // Absent = collection par défaut (voir `collectionOf()`) : ne pas écrire
-    // une valeur qui vaudrait la même chose, pour rester cohérent avec ce que
-    // le content script produit lui-même (il ne renseigne jamais ce champ).
-    if (sourceCollectionId === DEFAULT_COLLECTION_ID) delete patched.collectionId;
-    nextItems[id] = patched;
-  }
+  await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
+    const items = current[ITEMS_KEY] || {};
+    const collections = current[COLLECTIONS_KEY] || {};
 
-  const nextCollections: CollectionMap = {};
-  for (const [id, collection] of Object.entries(collections)) {
-    const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
-    nextCollections[id] =
-      id === sourceCollectionId
-        ? { ...collection, order: [...movedIds, ...order] }
-        : { ...collection, order };
-  }
+    const nextItems = { ...items };
+    for (const id of movedIds) {
+      const item = nextItems[id];
+      if (!item) continue;
+      const patched: SavedItem = { ...item, collectionId: sourceCollectionId };
+      // Absent = collection par défaut (voir `collectionOf()`) : ne pas écrire
+      // une valeur qui vaudrait la même chose, pour rester cohérent avec ce que
+      // le content script produit lui-même (il ne renseigne jamais ce champ).
+      if (sourceCollectionId === DEFAULT_COLLECTION_ID) delete patched.collectionId;
+      nextItems[id] = patched;
+    }
 
-  await chrome.storage.local.set({ [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections });
+    const nextCollections: CollectionMap = {};
+    for (const [id, collection] of Object.entries(collections)) {
+      const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
+      nextCollections[id] =
+        id === sourceCollectionId
+          ? { ...collection, order: [...movedIds, ...order] }
+          : { ...collection, order };
+    }
+
+    return { [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections };
+  });
 }

@@ -8,18 +8,13 @@
  * vérifient directement ce que ces fonctions y écrivent.
  */
 import { countryName, flagEmoji } from '../shared/countries.ts';
+import { offerLabel } from '../shared/offers.ts';
 import { priceDropRatio, isMeaningfulDrop } from '../shared/watch.ts';
 import type { SavedItem } from '../shared/types.ts';
 import { formatEuro } from '../shared/price.ts';
 import { formatAgo } from './watch.ts';
 import { openPriceHistory } from './price-history.ts';
-
-/** Même intention que `required()` dans `sidepanel.ts`, pour un descendant d'un nœud déjà obtenu. */
-function within<T extends Element>(root: ParentNode, selector: string): T {
-  const el = root.querySelector<T>(selector);
-  if (!el) throw new Error(`sidepanel.html : ${selector} introuvable`);
-  return el;
-}
+import { within } from './dom.ts';
 
 /**
  * Le badge n'apparaît que lorsqu'il y a quelque chose à dire : c'est la
@@ -70,6 +65,66 @@ export function renderPriceAndStatus(
   deltaEl.addEventListener('click', () => {
     openPriceHistory(item, deltaEl);
   });
+}
+
+/**
+ * Le badge d'offre, à la suite du prix — `docs/specs/offres.md` §5.
+ *
+ * Trois choses s'y jouent :
+ *
+ * - **il n'apparaît que s'il y a une offre.** Comme le badge de variation, il
+ *   n'ajoute aucune ligne à un article ordinaire ;
+ * - **l'ancienneté est calculée, jamais stockée.** Seule la date d'envoi vit en
+ *   storage ; le texte se recompose ici, et {@link refreshOfferAges} le refait
+ *   toutes les 5 minutes sans relire quoi que ce soit ;
+ * - **une offre éteinte reste affichée**, grisée. « Refusée à 42 € il y a trois
+ *   semaines » est précisément ce qui évite de refaire la même offre au même
+ *   vendeur ; seule la vue « Sous offres » s'en tient aux offres vivantes.
+ *
+ * @param onOpen ouvre une URL dans un onglet — le badge mène à la conversation
+ */
+export function renderOffer(
+  node: ParentNode,
+  item: SavedItem,
+  onOpen: (url: string) => void
+): void {
+  const offer = item.offer;
+  if (!offer) return;
+
+  const el = within<HTMLButtonElement>(node, '.item-offer');
+  el.hidden = false;
+  el.className = `item-offer ${offer.status === 'pending' ? 'item-offer--live' : 'item-offer--dead'}`;
+
+  // Le texte fixe et la date vivent dans le dataset : le rafraîchissement
+  // périodique recompose la ligne sans rien avoir à relire du modèle.
+  el.dataset.offerAt = String(offer.at);
+  el.dataset.offerText = `${offerLabel(offer)} ${formatEuro(offer.price)}`;
+  paintOfferAge(el);
+
+  const who = offer.by === 'me' ? 'Ton offre' : 'Proposition du vendeur';
+  el.title = `${who} — ouvrir la conversation`;
+  el.addEventListener('click', () => {
+    onOpen(`https://www.vinted.fr/inbox/${offer.conversationId}`);
+  });
+}
+
+function paintOfferAge(el: HTMLElement): void {
+  const at = Number(el.dataset.offerAt);
+  const text = el.dataset.offerText ?? '';
+  el.textContent = Number.isFinite(at) && at > 0 ? `${text} · ${formatAgo(at)}` : text;
+}
+
+/**
+ * Recalcule l'ancienneté de tous les badges d'offre affichés.
+ *
+ * Appelé toutes les 5 minutes par le panneau. **Ne touche qu'au texte** : pas de
+ * lecture du storage, pas de rendu de liste, donc rien qui puisse bouger sous la
+ * souris ni interrompre un glisser en cours.
+ */
+export function refreshOfferAges(root: ParentNode): void {
+  for (const el of root.querySelectorAll<HTMLElement>('.item-offer[data-offer-at]')) {
+    paintOfferAge(el);
+  }
 }
 
 /**

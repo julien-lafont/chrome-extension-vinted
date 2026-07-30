@@ -7,6 +7,39 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Suivi des offres en cours** (`docs/specs/offres.md`). La ligne d'un article sous
+  offre porte désormais le prix proposé et depuis quand — « Offre 399 € · il y a 3 h »,
+  ou « Vendeur 205 € » quand c'est lui qui a fixé un prix. Une offre refusée, acceptée ou
+  annulée reste affichée en gris : « déjà tenté à 42 € » évite de refaire deux fois la
+  même offre au même vendeur. L'ancienneté se recalcule toutes les 5 minutes à partir de
+  la date d'envoi, sans rendu de liste ni relecture du storage — seul le texte des
+  badges change.
+
+  **La fiche article ne dit rien d'une offre** (vérifié : dans les 2,6 Mo servis, les
+  seules occurrences de `offer` sont des chaînes de traduction). La donnée vient de
+  l'API des conversations, balayée depuis un onglet Vinted — elle répond 403 sans
+  cookies de session. Le balayage lit une page d'inbox et s'arrête à la première
+  conversation déjà vue : en régime courant, **une requête**. L'historique se rattrape
+  par tranches de 40 conversations. Les offres reçues sur ce que l'on vend sont écartées
+  (`current_user_side`), et seuls les articles enregistrés sont marqués.
+
+- **Vue « Sous offres »** (💸), à gauche d'« Archives ». Ce n'est pas une collection :
+  l'article reste rangé là où il est, rien ne s'y dépose, et l'onglet n'existe que
+  lorsqu'une offre existe. Sa pastille compte les offres en attente sur des articles ni
+  vendus ni retirés — la seule information qu'on pilote du regard.
+
+- **Collection par défaut de l'onglet.** L'épingle posée sur chaque ligne du menu de
+  rangement (appui long) range l'article **et** fait de cette collection la destination
+  de tous les clics courts suivants — le geste utile quand une session de chine a un
+  sujet. C'est un radio : une collection est toujours épinglée, « Mes favoris » tant
+  qu'on n'a rien choisi, puisque c'est là que les enregistrements vont de fait. Une
+  pastille flottante nomme en permanence tout écart à cette normale et porte son
+  annulation ; les
+  boutons injectés annoncent la destination au survol. La portée est réellement
+  l'onglet : l'épingle vit dans le `sessionStorage` de la page, survit au rechargement,
+  ne franchit pas la frontière de l'onglet et disparaît avec lui. Une collection
+  supprimée depuis le panneau emporte l'épingle plutôt que de laisser une référence
+  morte.
 - **Identifiant de marque extrait de la fiche** (`brandId`), lu dans le maillon du fil
   d'Ariane que la catégorie écarte, avec le flux d'hydratation en repli. « Rechercher
   un article similaire » et « explorer la marque » filtrent enfin sur la vraie marque :
@@ -46,6 +79,35 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Modifié
 
+- **Les fraîcheurs de plus de 48 h se comptent en jours** (« il y a 9 j » plutôt que
+  « il y a 216 h »). Une offre reste en attente des semaines, là où le suivi de prix ne
+  parlait que d'heures.
+- **Toute écriture en storage passe par `src/shared/storage.ts`**, qui relit *et*
+  sérialise. Relire avant d'écrire ne protégeait que des autres onglets : dans un même
+  contexte, la boucle d'événements passe la main entre le `get` et le `set`, si bien
+  qu'un article enregistré pendant qu'une fiche s'enrichissait pouvait être effacé par
+  l'écriture de celle-ci. Le fichier est aussi la seule description du contenu du
+  storage — les cinq clés étaient déclarées en dur dans autant de fichiers. Une règle
+  ESLint interdit désormais `chrome.storage.local` partout ailleurs.
+- **L'extraction du DOM Vinted vit dans `src/content/extract.ts`**, séparée de
+  l'injection des boutons : des fonctions pures sur un `Document`, éprouvées
+  directement par `tests/extract.test.ts` en une seconde, là où il fallait auparavant
+  bundler le content script et monter une fenêtre complète pour vérifier la lecture
+  d'un sous-titre. `content.ts` perd 570 lignes.
+- **Le panneau est découpé en modules éprouvables.** `sidepanel.ts` cherchait ses
+  éléments dès son chargement, si bien qu'aucun test ne pouvait l'importer : le rendu
+  d'une ligne d'article et la barre de collections n'étaient couverts par rien. Ils
+  vivent désormais dans `item-list.ts`, `collections-bar.ts` et `menus.ts`, qui ne
+  touchent qu'au DOM qu'on leur passe. `required()` et `within()`, jusqu'ici dupliqués
+  dans trois fichiers avec trois messages différents, sont réunis dans `dom.ts`.
+- **Le panneau ne reconstruit plus sa liste à chaque écriture.** Elle était vidée puis
+  recréée en entier ; comme vider un conteneur qui défile remet son `scrollTop` à zéro
+  et qu'un cycle de suivi de prix écrit une fois par article vérifié, la liste
+  remontait toute seule en haut toutes les quelques secondes. Les lignes inchangées
+  sont maintenant conservées telles quelles (`src/sidepanel/reconcile.ts`).
+- **Retirer ou restaurer un article n'écrit plus qu'une fois** au lieu de deux
+  (articles puis collections), ce qui supprime le rendu intermédiaire où l'ordre citait
+  encore un article disparu.
 - **Les sources passent de JavaScript à TypeScript** en mode strict, sans changement
   de comportement : les 81 tests d'origine restent verts à chaque étape.
 - **Chrome charge désormais `dist/`, plus la racine du dépôt.**
@@ -57,6 +119,14 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Corrigé
 
+- **Un seul article illisible mettait tout le rafraîchissement en sommeil 30 min.** La
+  page d'un article dont Vinted ne sert plus les informations affiche brièvement la fiche
+  puis renvoie vers le dressing du vendeur, redirection décidée côté client : la réponse
+  ne porte alors aucune ancre — exactement l'allure d'un challenge Cloudflare, qui, lui,
+  doit freiner le cycle. Ce qui les sépare est la portée, pas le contenu : un challenge
+  frappe toutes les requêtes, jamais une seule. L'article est désormais passé sans rien
+  conclure sur lui (aucune absence comptée, aucun `gone`), et le freinage n'intervient
+  qu'à la deuxième réponse illisible d'affilée.
 - `.vf-card-btn:hover` portait encore un `transform: scale(1.1)` — la règle 2 du
   projet, appliquée au bouton de la fiche article mais jamais reportée sur celui des
   cartes. Le survol ne change plus que des propriétés de peinture.

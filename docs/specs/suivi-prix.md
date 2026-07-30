@@ -142,10 +142,19 @@ tranches** d'une dizaine d'articles pour casser la régularité sans perdre la p
 
 ### 3.5 Un backoff sur signal
 
-`429`, `403`, ou une réponse dont le HTML ne contient aucune ancre connue (challenge
-Cloudflare) : arrêt immédiat du cycle, `throttledUntil = now + 30 min × 2^n` avec
+`429` ou `403` : arrêt immédiat du cycle, `throttledUntil = now + 30 min × 2^n` avec
 jitter, et on n'y retouche pas. **Un article en échec n'est jamais rejoué dans le même
 cycle.**
+
+Une réponse dont le HTML ne contient aucune ancre connue est plus ambiguë : c'est le
+visage d'un challenge Cloudflare, mais aussi celui d'un article dont Vinted ne sert plus
+les informations — sa page affiche brièvement la fiche puis renvoie vers le dressing du
+vendeur, redirection décidée côté client. Rien dans la réponse ne les distingue, et
+freiner dès la première mettait tout le cycle en sommeil 30 min pour un seul article
+momentanément illisible. Ce qui les sépare, c'est la portée : **un challenge frappe
+toutes les requêtes, jamais une seule.** On passe donc à l'article suivant, et l'on ne
+freine qu'à la **deuxième réponse illisible d'affilée** — une requête de plus, contre un
+cycle entier perdu.
 
 ### 3.6 Le piggyback sur la navigation réelle
 
@@ -163,8 +172,13 @@ La règle, en cas de doute : **ne rien écrire.**
 | `[data-testid="item-status--content"]` = « vendu » (`isSoldDetail()`) | `status: 'sold'` — signal explicite, une occurrence suffit                   |
 | `404` / `410`                                                         | `missCount += 1` ; `status: 'gone'` seulement à 2, sur deux cycles distincts |
 | Id servi ≠ id demandé (garde-fou existant d'`enrichFromDetail()`)     | **rien** — l'échec est compté, jamais interprété                             |
+| Réponse sans aucune ancre connue (§3.5)                               | `lastCheckedAt` **seulement** — interrogé, rien de lisible à en conclure     |
 | JSON-LD `availability` ≠ `InStock`                                    | corroboration seulement, jamais seule source                                 |
 | Timeout, erreur réseau, `429`, `5xx`                                  | **rien du tout** — ni `lastCheckedAt`, ni `missCount`                        |
+
+La ligne « sans ancre » est la seule à écrire `lastCheckedAt` sans rien conclure : sans
+cette date, l'article resterait le plus périmé de la file (§3.4) et repasserait en tête
+à chaque cycle, indéfiniment.
 
 `discardSoldItem()` reste strictement réservé aux ajouts `pending`, comme aujourd'hui :
 un article **suivi** qui se vend est marqué, jamais supprimé.

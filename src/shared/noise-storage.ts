@@ -7,13 +7,12 @@
  * divergé — c'est exactement la raison d'être de `shared/collections.ts`, et le
  * même partage s'applique.
  */
-import { NOISE_KEY, normalizeNoise } from './noise.ts';
+import { normalizeNoise } from './noise.ts';
 import type { NoiseFilters } from './noise.ts';
-
-type Stored = { [NOISE_KEY]?: Partial<NoiseFilters> };
+import { NOISE_KEY, read, update } from './storage.ts';
 
 export async function readNoise(): Promise<NoiseFilters> {
-  const res: Stored = await chrome.storage.local.get(NOISE_KEY);
+  const res = await read(NOISE_KEY);
   return normalizeNoise(res[NOISE_KEY]);
 }
 
@@ -32,10 +31,18 @@ export async function readNoise(): Promise<NoiseFilters> {
 export async function patchNoise(
   mutate: (current: NoiseFilters) => NoiseFilters
 ): Promise<NoiseFilters> {
-  const current = await readNoise();
-  const next = mutate(current);
-  if (next === current) return current;
+  const result = await update([NOISE_KEY], (stored) => {
+    const current = normalizeNoise(stored[NOISE_KEY]);
+    const next = mutate(current);
+    // `normalizeNoise` reconstruit l'objet : l'identité ne peut être conservée
+    // que par un `mutate` qui rend son argument, ce qui est justement la
+    // convention pour dire « rien à changer ».
+    return next === current ? null : { [NOISE_KEY]: next };
+  });
 
-  await chrome.storage.local.set({ [NOISE_KEY]: next });
-  return next;
+  // `update` rend ce qui a été écrit, ou l'état relu si `mutate` a renoncé :
+  // dans les deux cas c'est la valeur courante, qu'il reste à compléter (la
+  // normalisation est idempotente, la repasser sur ce qu'on vient d'écrire ne
+  // change rien).
+  return normalizeNoise(result[NOISE_KEY]);
 }

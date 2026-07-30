@@ -7,8 +7,8 @@
  * là que naissent les désaccords silencieux (un champ renommé d'un côté, lu de
  * l'autre, sans erreur nulle part). Il n'existe plus qu'ici.
  *
- * Trois clés dans `chrome.storage.local` : `savedItems`, `collections`,
- * `settings`. Voir `docs/architecture.md`.
+ * Six clés dans `chrome.storage.local` : `savedItems`, `collections`,
+ * `settings`, `noise`, `watch` et `offers`. Voir `docs/architecture.md`.
  */
 
 /**
@@ -181,6 +181,75 @@ export type SavedItem = {
 
   /** Absences consécutives (404/410). Remis à 0 dès qu'une lecture aboutit. */
   missCount?: number;
+
+  // --- Offres, voir docs/specs/offres.md ---------------------------------------
+
+  /**
+   * L'offre en cours sur cet article, s'il y en a une. **Pas un historique** :
+   * une seule offre, celle qui décrit l'état courant de la négociation.
+   *
+   * Elle ne vient pas de la fiche — celle-ci n'en porte aucune trace, vérifié le
+   * 29/07/2026 — mais de l'API des conversations, balayée par `offers-scan.ts`.
+   * Absent tant qu'aucun scan n'a rien trouvé, et effacé dès que la conversation
+   * qui l'avait posée n'en montre plus.
+   */
+  offer?: ItemOffer;
+};
+
+/** Qui a proposé le prix. Les deux comptent : `seller` est une balle dans mon camp. */
+export type OfferSide = 'me' | 'seller';
+
+/**
+ * État d'une offre. Le code numérique de Vinted (10/20/30/40) est traduit ici
+ * une fois pour toutes ; `status_title` est traduit par le site et ne sert à
+ * rien d'autre qu'à la lecture humaine d'un relevé.
+ */
+export type OfferStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled';
+
+/** Une offre sur un article suivi. Voir `shared/offers.ts` pour sa lecture. */
+export type ItemOffer = {
+  by: OfferSide;
+  price: number;
+  /**
+   * Envoi de l'offre (`created_at_ts` du message), **jamais la date du scan** :
+   * c'est cette date que le panneau affiche en relatif, et la confondre avec
+   * celle de la vérification rajeunirait toutes les offres à chaque passage.
+   */
+  at: number;
+  status: OfferStatus;
+  /** Conversation d'origine : le badge y mène d'un clic. */
+  conversationId: string;
+};
+
+/**
+ * État du balayage des offres, clé `offers` de `chrome.storage.local`. Il ne
+ * porte **pas** les offres — elles vivent sur leur article — mais de quoi ne pas
+ * relire toute l'inbox à chaque fois. Voir `docs/specs/offres.md` §4.
+ */
+export type OffersScanState = {
+  /**
+   * Identifiant du compte, lu une fois via `/api/v2/users/current`. Sans lui,
+   * impossible de distinguer une offre faite d'une offre reçue : c'est la seule
+   * donnée qui départage les deux côtés d'une conversation.
+   */
+  userId?: string;
+  /** Fin du dernier scan abouti. Base du déclencheur du panneau. */
+  lastScanAt: number;
+  /**
+   * `updated_at` le plus récent déjà traité. L'inbox étant triée du plus récent
+   * au plus ancien et toute évolution d'offre remontant sa conversation en tête,
+   * un scan peut s'arrêter à la première conversation qui ne le dépasse pas.
+   */
+  cursor?: number;
+  /**
+   * Borne du balayage historique restant : les conversations plus anciennes que
+   * cette date n'ont jamais été lues. Absent = tout l'historique a été vu, seul
+   * l'incrémental reste. Voir §4 de la spec — une inbox de 500 conversations
+   * s'étale sur plusieurs scans plutôt que de tenir la page une minute.
+   */
+  backfillBefore?: number;
+  /** Fenêtre de silence après un 429 ou un 403. Aucune requête avant. */
+  throttledUntil?: number;
 };
 
 /** Un relevé de prix, horodaté. Voir `SavedItem.priceHistory`. */

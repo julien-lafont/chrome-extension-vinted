@@ -10,10 +10,10 @@
  * `sidepanel/store.ts` réexporte ce qui suit : le panneau continue de tout
  * importer depuis `store.ts`, il n'a pas à savoir où vit la primitive.
  */
-import type { Collection, CollectionMap, ItemMap } from './types.ts';
+import { COLLECTIONS_KEY, ITEMS_KEY, read, update } from './storage.ts';
+import type { Collection, CollectionMap } from './types.ts';
 
-export const ITEMS_KEY = 'savedItems';
-export const COLLECTIONS_KEY = 'collections';
+export { COLLECTIONS_KEY, ITEMS_KEY };
 
 export const DEFAULT_COLLECTION_ID = 'default';
 
@@ -36,6 +36,25 @@ export const ARCHIVE_COLLECTION_ID = 'archives';
 
 export function makeArchiveCollection(): Collection {
   return { id: ARCHIVE_COLLECTION_ID, name: 'Archives', createdAt: Date.now(), order: [] };
+}
+
+/**
+ * Vue « Sous offres » — `docs/specs/offres.md` §5.
+ *
+ * **Ce n'est pas une collection**, et rien dans ce module ne la traite comme
+ * telle : elle n'existe pas dans `CollectionMap`, `collectionOf()` ne la rend
+ * jamais, et un article sous offre reste rangé là où l'utilisateur l'a mis. Elle
+ * ne vit que comme valeur de `settings.activeCollectionId`, que le panneau
+ * interprète alors comme un filtre plutôt que comme un rangement.
+ *
+ * Le préfixe `view:` la distingue à coup sûr d'un identifiant de collection
+ * (`col-…`, `default`, `archives`), y compris dans un storage déjà écrit.
+ */
+export const OFFERS_VIEW_ID = 'view:offers';
+
+/** Une vue parallèle, pas une collection : rien ne s'y range, rien ne s'y dépose. */
+export function isView(id: string): boolean {
+  return id.startsWith('view:');
 }
 
 /** Identifiant court, lisible dans le storage : "col-lq3x8f-4b2". */
@@ -69,16 +88,19 @@ export function collectionOf(item: { collectionId?: string }, collections: Colle
   return id && collections[id] ? id : DEFAULT_COLLECTION_ID;
 }
 
-type Stored = { [ITEMS_KEY]?: ItemMap; [COLLECTIONS_KEY]?: CollectionMap };
-
 /**
  * Les collections telles qu'elles sont rangées, la collection par défaut
  * garantie présente — elle n'est écrite en storage qu'au premier rangement,
  * ce qui laisserait un menu vide sur une installation neuve.
  */
 export async function readCollections(): Promise<CollectionMap> {
-  const res: Stored = await chrome.storage.local.get(COLLECTIONS_KEY);
-  const collections: CollectionMap = { ...(res[COLLECTIONS_KEY] || {}) };
+  const res = await read(COLLECTIONS_KEY);
+  return withDefault(res[COLLECTIONS_KEY]);
+}
+
+/** La carte des collections complétée de celle par défaut, sans toucher au storage. */
+export function withDefault(stored: CollectionMap | undefined): CollectionMap {
+  const collections: CollectionMap = { ...(stored || {}) };
   if (!collections[DEFAULT_COLLECTION_ID]) {
     collections[DEFAULT_COLLECTION_ID] = makeDefaultCollection();
   }
@@ -94,12 +116,38 @@ export async function createCollection(name: string): Promise<Collection> {
     order: [],
   };
 
-  const res: Stored = await chrome.storage.local.get(COLLECTIONS_KEY);
-  await chrome.storage.local.set({
-    [COLLECTIONS_KEY]: { ...(res[COLLECTIONS_KEY] || {}), [collection.id]: collection },
-  });
+  await update([COLLECTIONS_KEY], (current) => ({
+    [COLLECTIONS_KEY]: { ...(current[COLLECTIONS_KEY] || {}), [collection.id]: collection },
+  }));
 
   return collection;
+}
+
+/**
+ * Les collections avec `itemId` en tête de l'ordre de `collectionId`, retiré de
+ * l'ordre de toutes les autres.
+ *
+ * Pur, et exporté pour ça : deux appelants rangent un article, `assignCollection()`
+ * ci-dessous et le clic court quand l'onglet a une collection par défaut (voir
+ * `content.ts`). Le second écrit `savedItems` et `collections` dans le même `set`
+ * et ne peut donc pas passer par le premier — sans cette fonction, l'ordre
+ * personnalisé aurait deux implémentations, dont une oublierait le retrait des
+ * autres collections.
+ */
+export function placeInOrder(
+  collections: CollectionMap,
+  itemId: string,
+  collectionId: string
+): CollectionMap {
+  const next: CollectionMap = {};
+
+  for (const [id, collection] of Object.entries(collections)) {
+    const order = (collection.order || []).filter((entry) => entry !== itemId);
+    next[id] =
+      id === collectionId ? { ...collection, order: [itemId, ...order] } : { ...collection, order };
+  }
+
+  return next;
 }
 
 /**
@@ -115,31 +163,21 @@ export async function createCollection(name: string): Promise<Collection> {
  * écrivent sur `savedItems` en parallèle.
  */
 export async function assignCollection(itemId: string, collectionId: string): Promise<void> {
-  const res: Stored = await chrome.storage.local.get([ITEMS_KEY, COLLECTIONS_KEY]);
+  await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
+    const items = current[ITEMS_KEY] || {};
+    const item = items[itemId];
+    // L'article a pu être retiré depuis un autre onglet pendant que le menu était
+    // ouvert : ne pas le ressusciter par un rangement.
+    if (!item) return null;
 
-  const items: ItemMap = res[ITEMS_KEY] || {};
-  const item = items[itemId];
-  // L'article a pu être retiré depuis un autre onglet pendant que le menu était
-  // ouvert : ne pas le ressusciter par un rangement.
-  if (!item) return;
+    const collections = withDefault(current[COLLECTIONS_KEY]);
+    // Collection disparue entre l'ouverture du menu et le choix : rien à faire
+    // plutôt qu'écrire une référence morte.
+    if (!collections[collectionId]) return null;
 
-  const collections: CollectionMap = { ...(res[COLLECTIONS_KEY] || {}) };
-  if (!collections[DEFAULT_COLLECTION_ID]) {
-    collections[DEFAULT_COLLECTION_ID] = makeDefaultCollection();
-  }
-  // Collection disparue entre l'ouverture du menu et le choix : rien à faire
-  // plutôt qu'écrire une référence morte.
-  if (!collections[collectionId]) return;
-
-  const nextCollections: CollectionMap = {};
-  for (const [id, collection] of Object.entries(collections)) {
-    const order = (collection.order || []).filter((entry) => entry !== itemId);
-    nextCollections[id] =
-      id === collectionId ? { ...collection, order: [itemId, ...order] } : { ...collection, order };
-  }
-
-  await chrome.storage.local.set({
-    [ITEMS_KEY]: { ...items, [itemId]: { ...item, collectionId } },
-    [COLLECTIONS_KEY]: nextCollections,
+    return {
+      [ITEMS_KEY]: { ...items, [itemId]: { ...item, collectionId } },
+      [COLLECTIONS_KEY]: placeInOrder(collections, itemId, collectionId),
+    };
   });
 }

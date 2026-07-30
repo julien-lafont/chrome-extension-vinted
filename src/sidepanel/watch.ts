@@ -7,11 +7,10 @@
  * la progression — pas de port, pas de second message, le panneau écoute déjà
  * `chrome.storage.onChanged`.
  */
+import { WATCH_KEY, read, update } from '../shared/storage.ts';
 import { isThrottled, orderForCheck, isMeaningfulDrop, RATE } from '../shared/watch.ts';
 import type { SavedItem, WatchState } from '../shared/types.ts';
 import type { WatchStartResponse } from '../shared/messages.ts';
-
-const WATCH_KEY = 'watch';
 
 /** `chrome.tabs.sendMessage` n'est pas typé : la conversion est concentrée ici. */
 function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
@@ -24,10 +23,14 @@ function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
  * élection d'onglet / envoi du message ; `[Vinted Favoris][watch]` dans la
  * console de l'onglet Vinted montre ce que le content script en a fait.
  *
- * Désactivé (no-op) une fois le diagnostic terminé — les points d'appel
- * restent en place pour une réactivation rapide en cas de nouveau bug muet.
+ * Se neutralise en `function log(..._args: unknown[]): void {}` une fois le
+ * diagnostic terminé — les points d'appel restent en place pour une
+ * réactivation rapide en cas de nouveau bug muet.
  */
-function log(..._args: unknown[]): void {}
+function log(...args: unknown[]): void {
+  // eslint-disable-next-line no-console -- journal de diagnostic assumé, pas une erreur
+  console.log('[Vinted Favoris][panneau]', ...args);
+}
 
 /** §5.2 : silencieux, et seulement si le dernier cycle date d'assez loin — plus de plafond d'articles. */
 const SILENT_SWEEP_AFTER_MS = 60 * 60 * 1000;
@@ -61,12 +64,12 @@ let snapshot: Map<string, { status?: SavedItem['status']; priceValue: number | n
   null;
 
 async function readWatch(): Promise<WatchState | undefined> {
-  const res: { watch?: WatchState } = await chrome.storage.local.get(WATCH_KEY);
-  return res.watch;
+  const res = await read(WATCH_KEY);
+  return res[WATCH_KEY];
 }
 
 /** Un onglet Vinted quelconque : peu importe lequel, un seul suffit à porter l'ordre. */
-async function findVintedTab(): Promise<chrome.tabs.Tab | null> {
+export async function findVintedTab(): Promise<chrome.tabs.Tab | null> {
   const tabs = await chrome.tabs.query({ url: 'https://www.vinted.fr/*' });
   return tabs.find((tab) => tab.id !== undefined) ?? null;
 }
@@ -105,12 +108,21 @@ function reportSweepSummary(): void {
   hooks.onSweepSummary(parts.join(', '));
 }
 
-/** Fraîcheur relative, en français — aussi utilisé par le popover d'historique (§6.4). */
+/**
+ * Fraîcheur relative, en français — le popover d'historique (§6.4) et le badge
+ * d'offre (`docs/specs/offres.md` §5) s'en servent aussi.
+ *
+ * Les jours au-delà de 48 h ne sont pas cosmétiques : une offre reste en attente
+ * des semaines, et « il y a 168 h » ne se lit pas.
+ */
 export function formatAgo(at: number): string {
   const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
   if (minutes < 1) return "à l'instant";
   if (minutes < 60) return `il y a ${minutes} min`;
-  return `il y a ${Math.round(minutes / 60)} h`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `il y a ${hours} h`;
+  return `il y a ${Math.round(hours / 24)} j`;
 }
 
 function formatEta(until: number): string {
@@ -283,6 +295,14 @@ export function initWatch(elements: WatchElements, watchHooks: WatchHooks): void
   void render();
 }
 
+/** L'état des garde-fous de débit tel qu'il était avant leur remise à zéro. */
+export type RateLimitCounters = {
+  freine: boolean;
+  coupsDeFrein: number;
+  budgetDuJour: number;
+  jetons: number;
+};
+
 /**
  * Remet à zéro tous les garde-fous de débit (§3.2 et §3.5) : seau à jetons
  * rempli, budget du jour effacé, fenêtre de silence levée et compteur de coups
@@ -297,33 +317,38 @@ export function initWatch(elements: WatchElements, watchHooks: WatchHooks): void
  * Relit avant d'écrire (règle 6) : un onglet Vinted peut écrire la même clé au
  * même moment.
  */
-export async function resetRateLimits(): Promise<{
-  freine: boolean;
-  coupsDeFrein: number;
-  budgetDuJour: number;
-  jetons: number;
-}> {
-  const current = await readWatch();
+export async function resetRateLimits(): Promise<RateLimitCounters> {
   const now = Date.now();
-
-  const before = {
-    freine: current ? isThrottled(current, now) : false,
-    coupsDeFrein: current?.throttleStrikes ?? 0,
-    budgetDuJour: current?.dailyBudget?.used ?? 0,
-    jetons: Math.floor(current?.bucket.tokens ?? RATE.capacity),
+  let before: RateLimitCounters = {
+    freine: false,
+    coupsDeFrein: 0,
+    budgetDuJour: 0,
+    jetons: RATE.capacity,
   };
 
-  const next: WatchState = {
-    ...(current ?? { lastSweepAt: 0, bucket: { tokens: RATE.capacity, at: now } }),
-    bucket: { tokens: RATE.capacity, at: now },
-  };
-  // `delete` plutôt que `undefined` : ces clés sont optionnelles, et le storage
-  // sérialise — une clé à `undefined` disparaît de toute façon à la relecture.
-  delete next.throttledUntil;
-  delete next.throttleStrikes;
-  delete next.dailyBudget;
+  await update([WATCH_KEY], (stored) => {
+    const current = stored[WATCH_KEY];
 
-  await chrome.storage.local.set({ [WATCH_KEY]: next });
+    before = {
+      freine: current ? isThrottled(current, now) : false,
+      coupsDeFrein: current?.throttleStrikes ?? 0,
+      budgetDuJour: current?.dailyBudget?.used ?? 0,
+      jetons: Math.floor(current?.bucket.tokens ?? RATE.capacity),
+    };
+
+    const next: WatchState = {
+      ...(current ?? { lastSweepAt: 0, bucket: { tokens: RATE.capacity, at: now } }),
+      bucket: { tokens: RATE.capacity, at: now },
+    };
+    // `delete` plutôt que `undefined` : ces clés sont optionnelles, et le storage
+    // sérialise — une clé à `undefined` disparaît de toute façon à la relecture.
+    delete next.throttledUntil;
+    delete next.throttleStrikes;
+    delete next.dailyBudget;
+
+    return { [WATCH_KEY]: next };
+  });
+
   log('compteurs de débit remis à zéro', before);
 
   // Le repeint du bouton suit tout seul : `initWatch` écoute `onChanged`, qui

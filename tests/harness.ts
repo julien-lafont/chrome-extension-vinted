@@ -173,10 +173,18 @@ export function createSharedBackend(saved: Record<string, unknown> = {}): Shared
 /** Ce qu'un test lit d'une collection rangée en storage. */
 type StoredCollection = { id: string; name: string; createdAt: number; order: string[] };
 
-/** @param options état initial du storage, ou un backend partagé entre plusieurs instances */
+/** Clé du storage de session où vit la collection par défaut de l'onglet. */
+const TAB_DEFAULT_KEY = 'vf:defaultCollection';
+
+/**
+ * @param options état initial du storage, backend partagé entre plusieurs
+ *   instances, ou collection déjà épinglée sur l'onglet — ce que voit un content
+ *   script qui démarre dans un onglet où l'épinglage a été fait avant un
+ *   rechargement de page.
+ */
 export async function loadContentScript(
   fixture: Fixture,
-  options: { saved?: Record<string, unknown>; shared?: SharedBackend } = {}
+  options: { saved?: Record<string, unknown>; shared?: SharedBackend; tabDefault?: string } = {}
 ) {
   const url = (URLS[fixture] || URLS.catalog)();
 
@@ -247,6 +255,10 @@ export async function loadContentScript(
       },
     },
   };
+
+  // Chaque JSDOM a son propre `sessionStorage`, comme deux onglets ont le leur :
+  // c'est ce qui rend testable la portée « cet onglet seulement ».
+  if (options.tabDefault) window.sessionStorage.setItem(TAB_DEFAULT_KEY, options.tabDefault);
 
   window.eval(CONTENT_JS);
   await settle(300); // le script démarre sur loadSaved().then()
@@ -388,6 +400,29 @@ export async function loadContentScript(
 
     /** Confirmation affichée après un rangement. */
     toastText: (): string | null => window.document.querySelector('.vf-toast')?.textContent ?? null,
+
+    // --- Collection par défaut de l'onglet (épingle du menu) ---
+
+    /** L'épingle de la ligne portant ce libellé : « ranger ici et en faire le défaut ». */
+    pickerPin(name: string): any {
+      return this.pickerItem(name)?.closest('.vf-picker-row')?.querySelector('.vf-picker-pin');
+    },
+
+    /** L'épingle du formulaire de création : créer, ranger et épingler d'un geste. */
+    pickerPinNew: (): any => window.document.querySelector('.vf-picker-new .vf-picker-pin'),
+
+    /** Pastille de la collection épinglée — son libellé, ou `null` si elle est absente. */
+    defaultPillText: (): string | null =>
+      window.document.querySelector('.vf-pill-default .vf-pill-label')?.textContent ?? null,
+
+    /** Le « ✕ » qui retire l'épingle. */
+    defaultPillClear: (): any => window.document.querySelector('.vf-pill-clear'),
+
+    /** Collection épinglée telle qu'elle est rangée, du point de vue de cet onglet. */
+    tabDefault: (): string | null => window.sessionStorage.getItem(TAB_DEFAULT_KEY),
+
+    /** Les pastilles affichées, dans l'ordre du DOM — elles partagent une pile. */
+    pills: (): any[] => [...window.document.querySelectorAll('.vf-pills > .vf-pill')],
 
     /**
      * Appui maintenu au-delà du seuil, puis relâché — le geste qui doit ouvrir

@@ -120,6 +120,33 @@ identifiants, elles n'arrivent qu'aux articles enregistrés depuis la 0.4. Le cy
 veille relit pourtant ces fiches — propager la réputation au passage ne coûterait aucune
 requête, et reste à faire.
 
+## Offres
+
+Voir [docs/specs/offres.md](specs/offres.md) pour le mécanisme ; ce qui suit est ce
+qu'il ne fait pas.
+
+**Une offre n'apparaît qu'après un balayage**, déclenché à l'ouverture du panneau et au
+plus une fois par quart d'heure — et jamais sans onglet Vinted ouvert, l'API refusant
+les requêtes sans cookies de session. Une offre faite à l'instant peut donc mettre
+quelques minutes à s'afficher.
+
+**Le premier balayage est étalé.** L'historique se lit par tranches de 40 conversations,
+une par ouverture du panneau : sur une messagerie de plusieurs centaines d'échanges, les
+offres les plus anciennes n'apparaissent qu'au bout de quelques sessions. Les plus
+récentes, elles, arrivent au premier passage.
+
+**L'état d'une proposition du vendeur est déduit, pas lu.** Ces messages
+(`offer_message`) ne portent aucun statut : « en attente » n'est affiché que sur une
+transaction explicitement ouverte, et tout le reste est présenté comme éteint. Une
+proposition en cours peut donc apparaître grisée si Vinted introduit un code de
+transaction inconnu.
+
+**Aucune action.** L'extension ne fait, n'accepte ni ne refuse d'offre : la lecture est
+sans effet de bord, écrire exigerait le `X-CSRF-Token` et engagerait l'utilisateur.
+
+**Rien sur les offres reçues en tant que vendeur.** Elles vivent dans la même messagerie
+et sont écartées délibérément (`current_user_side`).
+
 ## Galerie de photos
 
 **Les articles enregistrés avant la 0.3 n'en ont pas.** Rien ne rétro-remplit `images` :

@@ -83,6 +83,7 @@ export type CheckOutcome =
   | { kind: 'active'; price: number; priceText: string }
   | { kind: 'sold' }
   | { kind: 'notFound' }
+  | { kind: 'unreadable' }
   | { kind: 'idMismatch' }
   | { kind: 'failure' };
 
@@ -98,6 +99,10 @@ export type CheckOutcome =
  * - `notFound` (404/410) incrémente `missCount` ; `status: 'gone'` n'arrive qu'à
  *   la deuxième absence, sur deux cycles distincts — Vinted peut renvoyer un 404
  *   transitoire sans que l'article ait bougé.
+ * - `unreadable` (réponse sans aucune ancre connue) n'écrit **que**
+ *   `lastCheckedAt` : rien à conclure sur l'article, mais il a bel et bien été
+ *   interrogé. Sans cette date, il resterait le plus périmé de la file et
+ *   repasserait en tête à chaque cycle, indéfiniment.
  * - `active` remet `missCount` à 0, met à jour `price`/`priceValue` — sans quoi
  *   la ligne resterait figée sur le prix d'enregistrement même après un
  *   changement détecté — et pousse un point de prix si besoin.
@@ -112,6 +117,13 @@ export function applyCheckResult(
   if (outcome.kind === 'sold') {
     return { lastCheckedAt: now, status: 'sold', missCount: 0 };
   }
+
+  // Une page servie mais illisible ne dit rien : ni que l'article existe encore
+  // (`missCount` ne bouge pas), ni qu'il a disparu (aucun `status`). Vinted rend
+  // parfois la fiche d'un article dont les informations ne sont plus servies,
+  // puis renvoie vers le dressing du vendeur — cas transitoire, observé le
+  // 29/07/2026 sur un article de nouveau lisible le lendemain.
+  if (outcome.kind === 'unreadable') return { lastCheckedAt: now };
 
   if (outcome.kind === 'notFound') {
     const missCount = (item.missCount ?? 0) + 1;

@@ -133,6 +133,14 @@ describe('applyCheckResult', () => {
     assert.equal(patch.missCount, 0);
   });
 
+  test('une réponse illisible n’avance que lastCheckedAt', () => {
+    // Ni disparu (aucun `missCount`, sinon deux cycles suffiraient à marquer
+    // gone un article bien vivant), ni intact : seulement interrogé. La date
+    // avance pour qu'il cède sa place en tête de file au cycle suivant.
+    const item = makeItem({ id: '1', missCount: 1, lastCheckedAt: 1 });
+    assert.deepEqual(applyCheckResult(item, { kind: 'unreadable' }, now), { lastCheckedAt: now });
+  });
+
   test('un timeout ne touche à rien', () => {
     const item = makeItem({ id: '1', missCount: 1, lastCheckedAt: 1 });
     assert.deepEqual(applyCheckResult(item, { kind: 'failure' }, now), {});

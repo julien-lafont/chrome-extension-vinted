@@ -29,5 +29,25 @@ export type WatchStartResponse = {
   reason?: string;
 };
 
+/**
+ * Lance un balayage des offres (`docs/specs/offres.md` §4). Comme le cycle de
+ * suivi, le content script répond tout de suite et le résultat se lit ensuite
+ * dans `chrome.storage.local` — les offres sur leurs articles, l'avancement du
+ * balayage sur la clé `offers`.
+ *
+ * Message distinct de `VF_WATCH_START`, et non un ajout à son cycle : le suivi
+ * de prix est freiné par un budget quotidien et une fenêtre d'une heure, dont
+ * les offres n'ont pas à hériter — elles coûtent une requête JSON là où il
+ * télécharge des fiches entières.
+ */
+export type OffersScanRequest = { type: 'VF_OFFERS_SCAN' };
+
+export type OffersScanResponse = {
+  accepted: boolean;
+  /** Raison du refus, en français. */
+  reason?: string;
+};
+
 /** Union de tout ce qu'un content script peut recevoir. */
-export type ExtensionMessage = DiagnoseRequest | WatchStartRequest | WatchCancelRequest;
+export type ExtensionMessage =
+  DiagnoseRequest | WatchStartRequest | WatchCancelRequest | OffersScanRequest;

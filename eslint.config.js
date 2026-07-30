@@ -108,11 +108,31 @@ export default tseslint.config(
             'Classe CSS obfusquée de Vinted : elle changera au prochain déploiement. ' +
             "S'ancrer sur un data-testid — voir docs/vinted-dom.md.",
         },
+        // Règle 6 du projet. Un `get` suivi d'un `set` laisse la boucle
+        // d'événements passer la main entre les deux : deux écritures du même
+        // contexte s'écrasent, sans erreur. `shared/storage.ts` est le seul
+        // fichier autorisé à toucher l'API — d'où l'exception ci-dessous.
+        {
+          selector:
+            "MemberExpression[object.object.object.name='chrome'][object.object.property.name='storage'][object.property.name='local'][property.name=/^(get|set|remove|clear)$/]",
+          message:
+            'Écrire ou lire le storage passe par `shared/storage.ts` (read/update) : ' +
+            "l'accès direct rouvre la fenêtre d'entrelacement — voir CLAUDE.md, règle 6.",
+        },
       ],
 
       // Le diagnostic passe par le panneau, pas par la console (voir CLAUDE.md) ;
       // `console.error` reste permis pour ce qui ne doit jamais passer inaperçu.
       'no-console': ['error', { allow: ['error', 'warn'] }],
+    },
+  },
+
+  // Le seul fichier qui a le droit de parler à `chrome.storage.local` : c'est
+  // lui qui implémente la relecture-écriture sérialisée que les autres utilisent.
+  {
+    files: ['src/shared/storage.ts'],
+    rules: {
+      'no-restricted-syntax': 'off',
     },
   },
 

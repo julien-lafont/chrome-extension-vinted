@@ -2,10 +2,10 @@
 
 ```bash
 pnpm install
-ppnpm test
+pnpm test
 ```
 
-216 tests, ~30 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
+447 tests, ~30 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
 pour qu'il lise directement les sources TypeScript. Node 22 minimum.
 
 **Les tests chargent le bundle esbuild, pas le fichier source.** `content.ts` importe du
@@ -19,28 +19,42 @@ le dossier de tests n'y entre jamais.
 
 ## Ce qui est couvert
 
-| Fichier                     | Question posée                                                                            |
-| --------------------------- | ----------------------------------------------------------------------------------------- |
-| `extraction.test.ts`        | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ? |
-| `click-gestures.test.ts`    | Les boutons répondent-ils à tous les gestes ?                                             |
-| `repaint-loop.test.ts`      | Le content script se repeint-il en boucle ?                                               |
-| `drag-slots.test.ts`        | Où se pose une carte qu'on fait glisser ?                                                 |
-| `collections.test.ts`       | Une collection ne se supprime-t-elle que vide ?                                           |
-| `similar-search.test.ts`    | L'URL de recherche est-elle correctement filtrée ?                                        |
-| `photos.test.ts`            | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?          |
-| `gallery.test.ts`           | La visionneuse montre-t-elle la bonne photo ?                                             |
-| `saved-pulse.test.ts`       | L'icône ne confirme-t-elle _que_ les enregistrements ?                                    |
-| `hydration.test.ts`         | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                  |
-| `size-ids.test.ts`          | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?            |
-| `watch.test.ts`             | La logique pure du suivi de prix (historique, verdicts, débit) est-elle correcte ?        |
-| `content-watch.test.ts`     | Le cycle marque-t-il « vendu » sans supprimer, et laisse-t-il un id divergent intact ?    |
-| `watch-lease.test.ts`       | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                 |
-| `watch-render.test.ts`      | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?       |
-| `collection-picker.test.ts` | L'appui long range-t-il sans jamais perdre l'article qu'il vient de capturer ?            |
+| Fichier                     | Question posée                                                                               |
+| --------------------------- | -------------------------------------------------------------------------------------------- |
+| `extract.test.ts`           | Les ancres Vinted, lues seules : fiche, carte, fil d'Ariane, libellés                        |
+| `extraction.test.ts`        | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ?    |
+| `storage.test.ts`           | Deux écritures simultanées s'écrasent-elles ?                                                |
+| `click-gestures.test.ts`    | Les boutons répondent-ils à tous les gestes ?                                                |
+| `repaint-loop.test.ts`      | Le content script se repeint-il en boucle ?                                                  |
+| `drag-slots.test.ts`        | Où se pose une carte qu'on fait glisser ?                                                    |
+| `collections.test.ts`       | Une collection ne se supprime-t-elle que vide ?                                              |
+| `similar-search.test.ts`    | L'URL de recherche est-elle correctement filtrée ?                                           |
+| `photos.test.ts`            | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?             |
+| `gallery.test.ts`           | La visionneuse montre-t-elle la bonne photo ?                                                |
+| `saved-pulse.test.ts`       | L'icône ne confirme-t-elle _que_ les enregistrements ?                                       |
+| `hydration.test.ts`         | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                     |
+| `size-ids.test.ts`          | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?               |
+| `watch.test.ts`             | La logique pure du suivi de prix (historique, verdicts, débit) est-elle correcte ?           |
+| `content-watch.test.ts`     | Le cycle marque-t-il « vendu » sans supprimer, et laisse-t-il un id divergent intact ?       |
+| `watch-lease.test.ts`       | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                    |
+| `watch-render.test.ts`      | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?          |
+| `collection-picker.test.ts` | L'appui long range-t-il sans jamais perdre l'article qu'il vient de capturer ?               |
+| `tab-default.test.ts`       | L'épingle tient-elle sur le seul onglet, et tombe-t-elle avec sa collection ?                |
+| `offers.test.ts`            | Une offre est-elle lue dans une conversation, et refusée quand rien ne la rend sûre ?        |
+| `offers-scan.test.ts`       | Le balayage lit-il le moins possible, et n'écrit-il que ce qui a changé ?                    |
+| `offers-render.test.ts`     | Le badge d'offre vieillit-il tout seul, et l'onglet ne compte-t-il que ce qui est en cours ? |
 
-Les trois dernières suites verrouillent les correctifs décrits dans
-[pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber 6
-tests, neutraliser la garde `vfPainted` en fait tomber 1.
+`click-gestures`, `repaint-loop` et `drag-slots` verrouillent les correctifs décrits
+dans [pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber
+6 tests, neutraliser la garde `vfPainted` en fait tomber 1.
+
+Vérifié de même pour `tab-default` : ignorer l'épingle au clic court fait tomber 3
+tests, oublier l'ordre personnalisé 1, et laisser survivre une épingle dont la
+collection a été supprimée 1.
+
+Vérifié de même pour les offres (`docs/specs/offres.md`) : supprimer l'arrêt du balayage
+sur la première conversation déjà vue, ou traiter un 429 comme une conversation sans
+offre — le bug qui effacerait tous les badges d'un coup — fait rougir un cas chacun.
 
 Les quatre suites du suivi de prix couvrent `docs/specs/suivi-prix.md` — détail des
 verdicts, du bail et du débit dans `shared/watch.ts`, jamais dans le content script
@@ -106,6 +120,31 @@ décide de l'emplacement visé. Ce calcul dépend de positions à l'écran, que 
 produit pas — d'où une fonction pure alimentée par des rectangles décrits à la main,
 plutôt qu'un DOM simulé. Le cas qui échouait avant correction : un déplacement de 0,7
 carte doit faire gagner un rang, et n'en faisait gagner aucun.
+
+## Les modules du panneau
+
+`sidepanel.ts` cherche ses éléments dès son chargement (`required('list')`) : l'importer
+hors du panneau lève avant qu'on ait pu appeler quoi que ce soit, et rien de ce qu'il
+contient n'est donc atteignable par un test. Tout ce qui mérite d'être éprouvé en sort —
+`gallery.ts`, `item-render.ts`, `price-history.ts`, puis `item-list.ts`,
+`collections-bar.ts`, `menus.ts` et `reconcile.ts`. Ces modules ne touchent qu'au DOM
+qu'on leur passe, n'agissent que par rappels, et ne connaissent pas `chrome` : un test
+monte `sidepanel.html` dans jsdom, appelle leur `init…()` avec des rappels espions, et
+lit le résultat.
+
+Ce qui reste dans `sidepanel.ts` est l'orchestration : l'état courant, les écouteurs, et
+le `render()` qui distribue le travail. C'est la part qu'on relit plutôt qu'on ne teste.
+
+## Deux niveaux, et lequel choisir
+
+`extract.test.ts` appelle `content/extract.ts` directement sur un `Document` jsdom :
+aucun bundle, aucun faux `chrome`, aucun faux `fetch`, ~1 s. C'est le niveau à préférer
+pour tout ce qui **lit** le markup Vinted — une ancre déplacée y désigne la fonction
+fautive plutôt qu'un compteur de `diagnose()`.
+
+`extraction.test.ts` et les autres suites du harness évaluent le content script bundlé
+dans une fenêtre complète. C'est le niveau nécessaire dès qu'un geste, une écriture en
+storage ou un repeint entre en jeu — donc pour tout ce qui **agit**.
 
 ## Le harness
 

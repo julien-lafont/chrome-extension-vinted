@@ -122,6 +122,10 @@
             <s class="item-price-was" hidden></s>
             <button type="button" class="item-price-delta" hidden></button>
             <span class="item-status-badge" hidden></span>
+            <!-- Offre en cours (docs/specs/offres.md §5). Un bouton : il ouvre la
+                 conversation d'où l'offre vient. Son ancienneté est recalculée
+                 toutes les 5 min à partir de `data-offer-at`, sans rendu. -->
+            <button type="button" class="item-offer" hidden></button>
           </p>
 
           <!-- Le vendeur a sa propre ligne : sur une pièce rare, il compte

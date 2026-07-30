@@ -16,9 +16,10 @@
  * seul écrit en storage.
  */
 import { errorText } from '../shared/errors.ts';
+import { PILLS_SELECTOR, button, pillStack } from './ui.ts';
 
 /** Classes de nos surcouches. Le `MutationObserver` de `content.ts` les ignore. */
-export const NOISE_OVERLAY_SELECTOR = '.vf-undo, .vf-pill, .vf-noise-menu';
+export const NOISE_OVERLAY_SELECTOR = `.vf-undo, .vf-pill, .vf-noise-menu, ${PILLS_SELECTOR}`;
 
 /**
  * Durée du repli différé. Assez pour rattraper un clic de travers, assez court
@@ -29,36 +30,6 @@ export const NOISE_OVERLAY_SELECTOR = '.vf-undo, .vf-pill, .vf-noise-menu';
  * avant ou après le repli est le genre de détail qui fait douter du reste.
  */
 export const DISMISS_DELAY_MS = 2000;
-
-/**
- * Câble une commande sur les deux gestes — identique à `collection-picker.ts`.
- *
- * `pointerdown` pour la souris (règle 1), `click` uniquement pour le clavier :
- * un clic souris émet les deux, et le second doit être neutralisé sans
- * re-déclencher l'action, d'où le test sur `detail`.
- */
-function onActivate(el: HTMLElement, run: () => void): void {
-  el.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    run();
-  });
-
-  el.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if ((event as MouseEvent).detail === 0) run();
-  });
-}
-
-function button(className: string, label: string, run: () => void): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = className;
-  btn.textContent = label;
-  onActivate(btn, run);
-  return btn;
-}
 
 // --- Panneau d'annulation -----------------------------------------------------
 
@@ -237,6 +208,10 @@ let pill: HTMLElement | null = null;
  * infini charge des pages. Le précédent existe : `.vf-detail-btn` est fixe pour
  * exactement cette raison.
  *
+ * Posée dans la pile de `ui.ts` et non directement sur le corps de page : la
+ * collection par défaut de l'onglet occupe le même coin, et deux éléments fixes
+ * aux mêmes coordonnées se recouvrent.
+ *
  * Idempotent, comme tout ce qui touche au DOM ici : on ne réécrit que ce qui
  * change réellement.
  */
@@ -247,7 +222,7 @@ export function renderPill(count: number, revealed: boolean, onToggle: () => voi
     return;
   }
 
-  if (!pill) {
+  if (!pill?.isConnected) {
     pill = document.createElement('div');
     pill.className = 'vf-pill';
 
@@ -260,7 +235,7 @@ export function renderPill(count: number, revealed: boolean, onToggle: () => voi
     text.className = 'vf-pill-count';
 
     pill.append(icon, text, button('vf-pill-toggle', '', onToggle));
-    document.body.appendChild(pill);
+    pillStack().appendChild(pill);
   }
 
   const text = pill.querySelector<HTMLElement>('.vf-pill-count');

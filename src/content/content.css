@@ -193,6 +193,16 @@
   gap: 2px;
 }
 
+/* Une ligne porte la collection **et** son épingle, côte à côte. L'épingle ne
+   peut pas être un enfant du bouton de rangement : la règle 2 rend les enfants
+   des boutons injectés transparents aux événements, elle ne recevrait aucun
+   clic. */
+.vf-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .vf-picker-item {
   display: block;
   width: 100%;
@@ -225,8 +235,51 @@
 /* Le clic doit toujours cibler le <button>, jamais un enfant recréé entre le
    mousedown et le mouseup. */
 .vf-picker-item > *,
+.vf-picker-pin > *,
 .vf-picker-create > * {
   pointer-events: none;
+}
+
+/* L'épingle : « range ici, et fais-en le défaut de cet onglet ».
+
+   Toujours visible, mais en retrait — au survol seulement, elle serait
+   introuvable au doigt, or l'appui long qui ouvre ce menu est d'abord un geste
+   tactile. 30 px de côté : la zone tactile minimale tient, sans écraser le nom
+   de la collection dans un menu large de 240 px. */
+.vf-picker-pin {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vf-picker-pin svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* Aucun `transform` au survol : voir .vf-detail-btn:hover. */
+.vf-picker-pin:hover,
+.vf-picker-pin:focus-visible {
+  background: #e2e8f0;
+  color: #374151;
+  outline: none;
+}
+
+/* Épinglée : la même couleur que la collection courante, pour que les deux états
+   du menu se lisent dans la même grammaire. */
+.vf-picker-pin[aria-pressed='true'] {
+  color: #09b1ba;
 }
 
 .vf-picker-sep {
@@ -527,16 +580,32 @@ html.vf-reveal [data-vf-hidden]:not([data-vf-hidden='0']) {
   }
 }
 
-/* --- Pastille de comptage --------------------------------------------------
-   Flottante et non ancrée en tête des résultats : Vinted n'expose aucune ancre
+/* --- Pastilles flottantes ---------------------------------------------------
+   Flottantes et non ancrées en tête des résultats : Vinted n'expose aucune ancre
    stable pour la grille, et une pastille fixe suit le défilement — ce qui compte
-   puisque le compteur monte à mesure que le scroll infini charge des pages. */
+   puisque le compteur monte à mesure que le scroll infini charge des pages.
 
-.vf-pill {
+   Deux pastilles cohabitent (comptage du filtrage, collection par défaut de
+   l'onglet) : elles s'empilent dans un conteneur commun au lieu de se recouvrir.
+   `column-reverse` les fait pousser vers le haut, la première arrivée gardant sa
+   place au ras du bord. */
+.vf-pills {
   position: fixed;
   bottom: 20px;
   left: 20px;
   z-index: 2147482999;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  gap: 8px;
+
+  /* Conteneur transparent aux clics : hors des pastilles, il ne doit rien
+     intercepter du catalogue qu'il recouvre. */
+  pointer-events: none;
+}
+
+.vf-pill {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -552,6 +621,57 @@ html.vf-reveal [data-vf-hidden]:not([data-vf-hidden='0']) {
 
 .vf-pill-icon {
   opacity: 0.7;
+}
+
+/* Pastille de la collection par défaut de l'onglet (src/content/tab-default.ts).
+   L'épinglage n'a aucune autre trace à l'écran : elle est permanente tant qu'il
+   dure, et porte son annulation. */
+.vf-pill-default {
+  padding-right: 6px;
+}
+
+.vf-pill-default .vf-pill-icon {
+  display: flex;
+  opacity: 0.85;
+}
+
+.vf-pill-default svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* Un nom de collection peut aller jusqu'à 40 caractères : la pastille flotte
+   au-dessus du catalogue, elle ne doit pas le barrer. */
+.vf-pill-label {
+  max-width: 220px;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.vf-pill-clear {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: #cbd5f5;
+  cursor: pointer;
+}
+
+/* Aucun `transform` au survol : voir .vf-detail-btn:hover. */
+.vf-pill-clear:hover,
+.vf-pill-clear:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  outline: none;
 }
 
 .vf-pill-toggle {

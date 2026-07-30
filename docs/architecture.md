@@ -8,12 +8,23 @@ icons/                             icônes générées (marque-page sur fond tea
 src/
   background/service-worker.ts     ouvre le panneau au clic sur l'icône
   background/saved-pulse.ts        badge + pulsation de l'icône à l'enregistrement
-  content/content.ts               extraction + injection des boutons
+  content/content.ts               injection des boutons, enrichissement, suivi, filtrage
+  content/extract.ts               lecture du DOM Vinted → SavedItem (pur, testé seul)
   content/content.css              styles des boutons injectés et du menu de collection
   content/collection-picker.ts     choix de collection à la capture (appui long)
+  content/tab-default.ts           collection épinglée sur l'onglet, et sa pastille
+  content/ui.ts                    activation à deux gestes, pile de pastilles
   content/noise-ui.ts              filtrage : annulation, pastille, menu de la fiche
-  sidepanel/sidepanel.ts           orchestration de l'interface
+  content/offers-scan.ts           balayage de l'inbox : offres en cours (réseau)
+  sidepanel/sidepanel.ts           orchestration : état, rendu global, écouteurs
+  sidepanel/dom.ts                 required() / within() — accès au DOM du panneau
+  sidepanel/item-list.ts           la liste d'articles : une ligne, et leur mise à jour
+  sidepanel/item-render.ts         prix, état, offre et vendeur d'une ligne
+  sidepanel/collections-bar.ts     la barre d'onglets des collections
+  sidepanel/offers.ts              déclenche le balayage des offres sur un onglet
+  sidepanel/menus.ts               le menu contextuel (contenu bâti par l'appelant)
   sidepanel/store.ts               lecture/écriture chrome.storage.local
+  sidepanel/reconcile.ts           mise à jour de la liste sans la reconstruire
   sidepanel/sorting.ts             clés et modes de tri
   sidepanel/dnd.ts                 réorganisation par glisser-déposer
   sidepanel/search.ts              URLs de catalogue (similaires, marque)
@@ -21,9 +32,11 @@ src/
   sidepanel/gallery.ts             visionneuse des photos d'un article
   sidepanel/filters.ts             modale de gestion des règles de filtrage
   shared/types.ts                  modèle de données (SavedItem, Collection, Settings)
+  shared/storage.ts                clés, forme du storage, écritures sérialisées
   shared/collections.ts            clé `collections` : lecture, création, rangement
   shared/noise.ts                  règles de filtrage du catalogue (pur, testé)
   shared/noise-storage.ts          clé `noise` : relecture puis écriture
+  shared/offers.ts                 offres lues dans l'API des conversations (pur)
   shared/messages.ts               protocole panneau ↔ content scripts
   shared/photos.ts                 photos d'une fiche, du flux RSC ou du DOM
   shared/hydration.ts              identifiants lus dans le flux RSC (repli du DOM)
@@ -71,9 +84,10 @@ d'enregistrement et lit les métadonnées des articles.
 
 ## Stockage
 
-Cinq clés dans `chrome.storage.local` : `savedItems`, `collections`, `settings`, `watch`
-(état du cycle de rafraîchissement — voir `docs/specs/suivi-prix.md`) et `noise` (règles
-de filtrage du catalogue — voir `docs/specs/filtrage-bruit.md`).
+Six clés dans `chrome.storage.local` : `savedItems`, `collections`, `settings`, `watch`
+(état du cycle de rafraîchissement — voir `docs/specs/suivi-prix.md`), `noise` (règles
+de filtrage du catalogue — voir `docs/specs/filtrage-bruit.md`) et `offers` (avancement
+du balayage des offres — voir `docs/specs/offres.md`).
 
 ```js
 savedItems = {
@@ -130,6 +144,16 @@ savedItems = {
     status: undefined, // 'sold' | 'gone', absent = actif
     priceHistory: [{ at: 1753500000000, price: 1 }],
     missCount: 0,
+    // Offre en cours, absente tant qu'aucune n'a été trouvée dans l'inbox — la
+    // fiche article n'en dit rien. Une seule, jamais d'historique. Voir
+    // docs/specs/offres.md.
+    offer: {
+      by: 'me', // ou 'seller' : le vendeur a fixé un prix de son côté
+      price: 399,
+      at: 1753500000000, // envoi de l'offre, jamais la date du scan
+      status: 'pending', // 'accepted' | 'rejected' | 'cancelled'
+      conversationId: '24027793606', // /inbox/{id}
+    },
   },
 };
 
@@ -231,6 +255,27 @@ réexporte sous le nom `moveItemToCollection` : deux implémentations du même r
 auraient fini par diverger sur `order`. `order` ne référence que les articles déjà
 réordonnés à la main ; un ajout récent apparaît en tête tant qu'on ne l'a pas déplacé.
 
+### La collection par défaut de l'onglet
+
+L'épingle du menu de rangement (`content/tab-default.ts`) fait du clic court un
+enregistrement direct dans une collection choisie. C'est un **radio, pas une bascule** :
+une collection est toujours épinglée, et c'est « Mes favoris » tant qu'on n'a rien
+choisi — puisque c'est là que les clics courts atterrissent de fait. La collection par
+défaut ne s'écrit donc jamais : elle _est_ l'absence de valeur. Retirer une épingle,
+c'est y revenir, et la pastille ne s'affiche que pour un écart à cet état normal.
+
+Cet état-là **ne vit pas dans `chrome.storage.local`** mais dans le `sessionStorage` de
+la page, sous `vf:defaultCollection` : la portée voulue est l'onglet, et c'est
+exactement ce que `sessionStorage` donne — conservé au rechargement comme à travers la
+navigation SPA, jamais partagé avec les autres onglets, effacé à la fermeture. Le
+storage de l'extension ferait l'inverse, et un défaut oublié y survivrait des semaines.
+
+Le clic court écrit alors `savedItems` **et** `collections` dans un seul `set` (voir
+`toggleItem()` dans `content.ts`), via la même primitive d'ordre que le rangement manuel
+: `placeInOrder()` de `shared/collections.ts`. Une collection épinglée puis supprimée
+depuis le panneau ne laisse pas de référence morte — `syncTabDefault()` retire l'épingle
+à la notification du storage.
+
 **Une collection ne se supprime que vide** (`deleteCollection`), et jamais celle par
 défaut. La vérification est faite dans le storage après relecture, pas seulement à
 l'affichage : la croix est rendue à partir d'un état qui peut dater d'avant qu'un autre
@@ -241,13 +286,37 @@ déplacé par une suppression.
 
 ## Concurrence
 
-Plusieurs onglets Vinted peuvent écrire en même temps. Toute écriture relit donc le
-storage juste avant d'écrire, plutôt que de partir d'un état en cache.
-`chrome.storage.onChanged` propage ensuite le changement à tous les onglets et au
-panneau, qui repeignent leur état.
+Toute écriture passe par `update()` de [`shared/storage.ts`](../src/shared/storage.ts),
+qui relit le storage, applique la transformation et réécrit — **sans qu'aucune autre
+écriture du même contexte ne puisse s'intercaler entre les trois**. Les mutations sont
+sérialisées dans une file unique, une seule pour toutes les clés : une file par clé
+ferait prendre deux verrous aux opérations qui touchent `savedItems` et `collections`,
+et deux verrous pris dans un ordre variable finissent en interblocage.
 
-Attention : `onChanged` notifie **aussi** l'onglet qui vient d'écrire. C'est le chaînon
-qui a provoqué la boucle de repeint décrite dans [pitfalls.md](pitfalls.md).
+La relecture seule ne suffisait pas. `chrome.storage.local.get()` rend une promesse :
+entre le `get` et le `set`, la boucle d'événements passe la main, et deux écritures
+lancées dans le même onglet s'entrelacent —
+
+```
+enrichissement  get(savedItems) ──────────────► set({a, b'})
+clic utilisateur       get(savedItems) ──► set({a, b, c})
+                                               ▲ écrase c
+```
+
+— ce qui fait disparaître l'article tout juste enregistré, sans erreur en console. Le
+content script fait tourner en parallèle une file d'enrichissement, un cycle de suivi de
+prix et les gestes de l'utilisateur : le cas n'a rien de théorique.
+`tests/storage.test.ts` le reproduit.
+
+Ce que cela ne couvre pas : deux onglets Vinted sont deux contextes JavaScript, chacun
+avec sa file. `chrome.storage` n'offre ni transaction ni comparaison-échange ; la
+relecture juste avant l'écriture reste ce qui s'en approche le plus, et c'est ce que
+`update()` impose par construction.
+
+`chrome.storage.onChanged` propage ensuite le changement à tous les onglets et au
+panneau, qui repeignent leur état. Attention : `onChanged` notifie **aussi** l'onglet
+qui vient d'écrire. C'est le chaînon qui a provoqué la boucle de repeint décrite dans
+[pitfalls.md](pitfalls.md).
 
 ## La galerie de photos
 

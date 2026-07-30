@@ -373,6 +373,45 @@ Ce qui figure aussi sur cette page, et qu'on ne lit pas : `positive_feedback_cou
 compte n'y est pas** — aucun `created_at` dans le HTML servi, sur les deux profils
 relevés.
 
+## API des conversations : les offres
+
+Relevé le 29/07/2026 sur un compte réel (55 conversations). **Aucune page ne porte
+l'information** : sur une fiche dont l'offre est en attente, les 15 occurrences de
+`offer` dans les 2,6 Mo servis sont des chaînes de traduction
+(`"conversation.offer_request.accept": "Accepter l'offre"`). L'API est la seule voie, et
+elle exige la session — d'où un appel depuis le content script, comme `size_groups`.
+
+| Requête                                | Ce qu'elle donne                                               |
+| -------------------------------------- | -------------------------------------------------------------- |
+| `GET /api/v2/users/current`            | `user.id` — sans lui, offre faite et offre reçue se confondent |
+| `GET /api/v2/inbox?page=N&per_page=20` | `conversations[]` : `id` et `updated_at`, **rien de plus**     |
+| `GET /api/v2/conversations/{id}`       | `transaction` (article, côté) et `messages` (offres)           |
+
+`/api/v2/conversations?page=…` répond **404** malgré la symétrie des noms : la liste,
+c'est `/api/v2/inbox`.
+
+Deux entités portent un prix, et ne se lisent pas pareil :
+
+| `entity_type`           | Qui                        | Statut                                  |
+| ----------------------- | -------------------------- | --------------------------------------- |
+| `offer_request_message` | l'acheteur propose un prix | `entity.status` : 10, 20, 30, 40        |
+| `offer_message`         | le vendeur fixe un prix    | **aucun** — se déduit de la transaction |
+
+Les codes valent en attente (10), acceptée (20), refusée (30), annulée (40).
+`status_title` les double en clair mais il est **traduit** : la règle 4 vaut aussi pour
+l'API. Quatre pièges, tous constatés :
+
+- **`created_at_ts` est la date d'envoi de l'offre**, même si l'entité s'intitule «
+  Rappel : tu as fait une offre à ce membre » (conversation 21639250773 : offre le
+  31/03, conversation mise à jour le 15/04) ;
+- **`transaction.item_id` est `null` avant avril 2026** ; seul `item_ids[]` est rempli ;
+- **`current: true` vaut par auteur**, pas par conversation : les deux côtés peuvent
+  avoir chacun leur message courant ;
+- **`current_user_side`** (`buyer`/`seller`) distingue ce qu'on achète de ce qu'on vend,
+  avec `buyer_id` en repli sur les conversations anciennes.
+
+Voir `src/shared/offers.ts` et `docs/specs/offres.md`.
+
 ## URL de recherche du catalogue
 
 `src/sidepanel/search.ts` construit deux URLs de catalogue : « article similaire »

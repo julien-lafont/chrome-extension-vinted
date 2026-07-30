@@ -10,8 +10,9 @@ import {
   COLLECTIONS_KEY,
   SETTINGS_KEY,
   NOISE_KEY,
-  ARCHIVE_COLLECTION_ID,
   DEFAULT_COLLECTION_ID,
+  OFFERS_VIEW_ID,
+  isView,
   readAll,
   sortCollections,
   collectionOf,
@@ -38,33 +39,19 @@ import {
 } from './sorting.ts';
 
 import { enableDragAndDrop } from './dnd.ts';
+import { required } from './dom.ts';
 import { initGallery, openGallery } from './gallery.ts';
-import { similarSearchUrl, brandSearchUrl } from './search.ts';
-import { elsewhereSearches } from './elsewhere.ts';
+import { initItemList, renderEmpty, renderItems } from './item-list.ts';
+import { refreshOfferAges } from './item-render.ts';
+import { maybeScanOffers, offersReport } from './offers.ts';
+import { isLiveOffer } from '../shared/offers.ts';
+import { renderCollectionsBar } from './collections-bar.ts';
+import { closeMenu, initMenus, menuButton, menuSeparator, menuTitle, openMenu } from './menus.ts';
 import { initWatch, maybeStartSilentSweep, resetRateLimits } from './watch.ts';
 import { initPriceHistory } from './price-history.ts';
-import { renderPriceAndStatus, renderSeller } from './item-render.ts';
 import { setFilters } from './filters.ts';
 
 import type { CollectionMap, Collection, SavedItem, Settings, SortMode } from '../shared/types.ts';
-
-/**
- * Élément du panneau dont l'absence serait un bug de `sidepanel.html`, pas un cas
- * à gérer : sans ses conteneurs, le panneau n'a rien à afficher. Échouer ici, avec
- * l'identifiant fautif, vaut mieux que propager des `null` jusqu'au premier accès.
- */
-function required<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id);
-  if (!el) throw new Error(`sidepanel.html : élément #${id} introuvable`);
-  return el as T;
-}
-
-/** Même intention que `required`, pour un descendant d'un nœud déjà obtenu. */
-function within<T extends Element>(root: ParentNode, selector: string): T {
-  const el = root.querySelector<T>(selector);
-  if (!el) throw new Error(`sidepanel.html : ${selector} introuvable`);
-  return el;
-}
 
 const listEl = required('list');
 const countEl = required('count');
@@ -136,10 +123,34 @@ async function reload(): Promise<void> {
 const activeCollection = () =>
   collections[settings.activeCollectionId] || collections[DEFAULT_COLLECTION_ID];
 
-/** Articles de la collection active, avant tri et avant filtre de recherche. */
+/** La vue « Sous offres » est active — un filtre, pas une collection (offres.md §5). */
+const inOffersView = () => settings.activeCollectionId === OFFERS_VIEW_ID;
+
+/**
+ * Articles de la collection active, avant tri et avant filtre de recherche.
+ *
+ * Dans la vue « Sous offres », ce n'est pas un rangement qu'on lit mais un état :
+ * les articles y sont **empruntés** à leurs collections, qu'ils ne quittent pas.
+ */
 function itemsOfActiveCollection(): SavedItem[] {
+  if (inOffersView()) return items.filter(isLiveOffer);
+
   const activeId = settings.activeCollectionId;
   return items.filter((item) => collectionOf(item, collections) === activeId);
+}
+
+/**
+ * Ordre manuel de la liste affichée. La vue n'en a pas — rien ne s'y réordonne —
+ * et retomber sur celui d'une collection quelconque y mélangerait deux logiques :
+ * on la classe donc de l'offre la plus récente à la plus ancienne, ce qui est
+ * l'ordre dans lequel on les traite.
+ */
+function customOrderForActive(visible: SavedItem[]): string[] {
+  if (!inOffersView()) return activeCollection()?.order ?? [];
+
+  return [...visible]
+    .sort((a, b) => (b.offer?.at ?? 0) - (a.offer?.at ?? 0))
+    .map((item) => item.id);
 }
 
 function matches(item: SavedItem): boolean {
@@ -154,116 +165,21 @@ function matches(item: SavedItem): boolean {
 // --- Rendu : collections ------------------------------------------------------
 
 function renderCollections(): void {
-  collectionsEl.textContent = '';
-
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const id = collectionOf(item, collections);
-    counts.set(id, (counts.get(id) || 0) + 1);
-  }
-
-  for (const collection of sortCollections(collections)) {
-    const size = counts.get(collection.id) || 0;
-
-    // « Archives » n'est pas une collection parmi d'autres : c'est le dépôt de
-    // ce qui est vendu ou parti. Elle se rend en icône seule, sans compteur —
-    // le nombre d'articles archivés n'est pas une information qu'on pilote — et
-    // `sortCollections()` la place toujours en dernier.
-    const isArchive = collection.id === ARCHIVE_COLLECTION_ID;
-
-    // Conteneur plutôt que bouton : un bouton ne peut pas en contenir un autre,
-    // et l'onglet accueille la croix de suppression.
-    const tab = document.createElement('div');
-    tab.className = isArchive ? 'tab tab-archive' : 'tab';
-    tab.dataset.dropCollection = collection.id;
-    if (collection.id === settings.activeCollectionId) tab.classList.add('active');
-
-    const select = document.createElement('button');
-    select.type = 'button';
-    select.className = 'tab-select';
-    select.title = isArchive ? 'Archives' : `${collection.name} — clic droit pour renommer`;
-
-    const name = document.createElement('span');
-    name.className = 'tab-name';
-    name.textContent = isArchive ? '🗄️' : collection.name;
-    if (isArchive) select.setAttribute('aria-label', 'Archives');
-
-    select.append(name);
-
-    if (!isArchive) {
-      const count = document.createElement('span');
-      count.className = 'tab-count';
-      count.textContent = String(size);
-      select.append(count);
+  renderCollectionsBar(
+    collectionsEl,
+    { collections, items, activeCollectionId: settings.activeCollectionId },
+    {
+      onSelect: (collectionId) => {
+        void saveSettings({ activeCollectionId: collectionId }).then((next) => {
+          settings = next;
+          render();
+        });
+      },
+      onDelete: (collection) => void removeCollection(collection),
+      onContextMenu: openCollectionMenu,
+      onCreate: () => openCollectionDialog(null),
     }
-
-    select.addEventListener('click', () => {
-      void saveSettings({ activeCollectionId: collection.id }).then((next) => {
-        settings = next;
-        render();
-      });
-    });
-
-    tab.append(select);
-
-    // Supprimable seulement une fois vidée : la collection par défaut, jamais.
-    // « Archives » non plus — elle est recréée d'elle-même au prochain archivage,
-    // et une croix à côté d'une icône seule ferait un onglet illisible.
-    if (collection.id !== DEFAULT_COLLECTION_ID && !isArchive && size === 0) {
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'tab-delete';
-      remove.textContent = '×';
-      remove.title = `Supprimer la collection « ${collection.name} »`;
-      remove.setAttribute('aria-label', remove.title);
-      remove.addEventListener('click', () => {
-        void removeCollection(collection);
-      });
-      tab.append(remove);
-    }
-
-    // Renommer « Archives » n'aurait aucun effet visible : son onglet ne montre
-    // que son icône.
-    if (!isArchive) {
-      tab.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-        openCollectionMenu(collection, tab);
-      });
-    }
-
-    // Le `+` reste au bout des collections ordinaires ; « Archives » est poussée
-    // contre le bord droit (voir `.tab-archive` dans la feuille de style).
-    if (isArchive) collectionsEl.append(archiveSpacer(), tab);
-    else collectionsEl.append(tab);
-  }
-
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'tab-add';
-  add.textContent = '+';
-  add.title = 'Nouvelle collection';
-  add.addEventListener('click', () => openCollectionDialog(null));
-
-  // Avant « Archives », qui doit rester le dernier élément de la barre.
-  const archive = collectionsEl.querySelector('.tab-archive');
-  collectionsEl.insertBefore(add, archive?.previousElementSibling ?? null);
-}
-
-/**
- * Pousse « Archives » contre le bord droit tant que la barre n'est pas pleine.
- *
- * Un élément flexible plutôt qu'un `margin-left: auto` sur l'onglet : la barre
- * défile horizontalement (`overflow-x: auto`), et une marge automatique y
- * calcule sa place sur la largeur visible, pas sur le contenu — l'onglet
- * s'échappait hors de la zone de défilement dès que les collections
- * débordaient. Un ressort, lui, se comprime à zéro et « Archives » reprend
- * simplement sa place au bout de la file.
- */
-function archiveSpacer(): HTMLElement {
-  const spacer = document.createElement('span');
-  spacer.className = 'tab-spacer';
-  spacer.setAttribute('aria-hidden', 'true');
-  return spacer;
+  );
 }
 
 // --- Rendu : barre de tri -----------------------------------------------------
@@ -382,129 +298,18 @@ async function archiveSoldFromButton(): Promise<void> {
 
 // --- Rendu : liste ------------------------------------------------------------
 
-function renderEmpty(message: string, hint: string): void {
-  const div = document.createElement('div');
-  div.className = 'empty';
-  const strong = document.createElement('strong');
-  strong.textContent = message;
-  div.append(strong, document.createTextNode(hint));
-  listEl.append(div);
-}
-
-function renderItem(item: SavedItem): DocumentFragment {
-  const node = template.content.cloneNode(true) as DocumentFragment;
-  const article = within<HTMLElement>(node, '.item');
-  article.dataset.id = item.id;
-
-  const thumb = within<HTMLButtonElement>(node, '.item-thumb');
-  const img = within<HTMLImageElement>(node, '.item-thumb img');
-  if (item.imageUrl) {
-    img.src = item.imageUrl;
-    img.alt = item.title || '';
+initItemList(
+  { list: listEl, template },
+  {
+    openPhotos: openGallery,
+    openTab: (url) => void chrome.tabs.create({ url, active: true }),
+    openMoveMenu: (item, anchor) => openMoveMenu(item, anchor),
+    onRemove: (item) => {
+      void removeItem(item.id);
+      flash('Article retiré', () => void restoreItem(item));
+    },
   }
-
-  // La galerie n'existe que sur les articles dont la fiche a été lue depuis la
-  // 0.3 : les autres gardent le comportement d'avant, l'onglet Vinted.
-  const photos = item.images?.length ?? 0;
-
-  if (photos) {
-    thumb.title = photos > 1 ? `Voir les ${photos} photos` : 'Voir la photo';
-    thumb.addEventListener('click', () => {
-      openGallery(item);
-    });
-  } else {
-    thumb.title = 'Ouvrir sur Vinted';
-    thumb.addEventListener('click', () => {
-      void chrome.tabs.create({ url: item.url, active: true });
-    });
-  }
-
-  if (photos > 1) {
-    const count = within<HTMLElement>(node, '.item-photo-count');
-    count.textContent = String(photos);
-    count.hidden = false;
-  }
-
-  const title = within<HTMLAnchorElement>(node, '.item-title');
-  title.href = item.url;
-  title.textContent = item.title || `Article ${item.id}`;
-
-  // "Nike · 42 · Neuf avec étiquette", en sautant les champs absents. La marque
-  // devient un lien vers le catalogue quand on peut la filtrer.
-  const meta: Node[] = [];
-
-  if (item.brand) {
-    const brandUrl = brandSearchUrl(item);
-    if (brandUrl) {
-      const link = document.createElement('a');
-      link.className = 'item-brand';
-      link.href = brandUrl;
-      link.target = '_blank';
-      link.rel = 'noreferrer';
-      link.textContent = item.brand;
-      link.title = item.category?.exact
-        ? `Voir les ${item.brand} dans « ${item.category.name} »`
-        : `Voir tous les articles ${item.brand}`;
-      meta.push(link);
-    } else {
-      meta.push(document.createTextNode(item.brand));
-    }
-  }
-
-  for (const value of [item.size, item.condition]) {
-    if (value) meta.push(document.createTextNode(value));
-  }
-
-  const likes = item.favouriteCount ?? item.likes;
-  if (typeof likes === 'number') meta.push(document.createTextNode(`♥ ${likes}`));
-
-  const metaEl = within(node, '.item-meta');
-  metaEl.textContent = '';
-  meta.forEach((part, index) => {
-    if (index) metaEl.append(document.createTextNode(' · '));
-    metaEl.append(part);
-  });
-
-  // Enregistré depuis une carte : la fiche est en cours de lecture et va
-  // compléter l'article (catégorie, taille, état…). L'article est déjà là et
-  // reste manipulable — seule la ligne de métadonnées signale l'attente.
-  if (item.pending) {
-    article.classList.add('item--pending');
-
-    const loader = document.createElement('span');
-    loader.className = 'item-loading';
-    loader.textContent = meta.length ? ' · complément…' : 'Lecture de la fiche…';
-    loader.title = 'Lecture de la fiche article pour compléter les informations';
-    metaEl.append(loader);
-  }
-
-  renderPriceAndStatus(node, article, item);
-  renderSeller(node, item);
-
-  within(node, '.item-similar').addEventListener('click', () => {
-    void chrome.tabs.create({ url: similarSearchUrl(item), active: true });
-  });
-
-  const elsewhere = elsewhereSearches(item)[0];
-  const elsewhereBtn = within<HTMLButtonElement>(node, '.item-elsewhere');
-  elsewhereBtn.title =
-    elsewhere.kind === 'lens'
-      ? 'Rechercher cette photo sur Google Lens'
-      : 'Rechercher ce modèle sur Google (pas de photo lisible)';
-  elsewhereBtn.addEventListener('click', () => {
-    void chrome.tabs.create({ url: elsewhere.url, active: true });
-  });
-
-  within(node, '.item-move').addEventListener('click', (event) => {
-    if (event.currentTarget instanceof HTMLElement) openMoveMenu(item, event.currentTarget);
-  });
-  within(node, '.item-remove').addEventListener('click', () => {
-    void removeItem(item.id);
-    flash('Article retiré', () => void restoreItem(item));
-  });
-
-  return node;
-}
+);
 
 function render(): void {
   if (dragging) {
@@ -529,16 +334,22 @@ function render(): void {
     visible,
     settings.sortMode,
     settings.sortDir,
-    activeCollection()?.order ?? []
+    customOrderForActive(visible)
   );
 
   visibleOrdered = ordered;
   openAllEl.disabled = ordered.length === 0;
   openAllLabelEl.textContent = ordered.length ? `Tout ouvrir (${ordered.length})` : 'Tout ouvrir';
 
-  listEl.textContent = '';
-
   if (!inCollection.length) {
+    if (inOffersView()) {
+      renderEmpty(
+        'Aucune offre en cours',
+        'Les offres refusées ou acceptées restent visibles sur leur article, dans sa collection.'
+      );
+      return;
+    }
+
     renderEmpty(
       'Collection vide',
       settings.activeCollectionId === DEFAULT_COLLECTION_ID
@@ -553,15 +364,15 @@ function render(): void {
     return;
   }
 
-  const frag = document.createDocumentFragment();
-  for (const item of ordered) frag.append(renderItem(item));
-  listEl.append(frag);
+  renderItems(ordered);
 }
 
 // --- Glisser-déposer ----------------------------------------------------------
 
 enableDragAndDrop(listEl, {
-  canDrag: () => settings.sortMode === 'custom',
+  // Jamais dans une vue : son ordre est celui des offres, et un dépôt y écrirait
+  // un ordre personnalisé sur une collection qui n'existe pas.
+  canDrag: () => settings.sortMode === 'custom' && !isView(settings.activeCollectionId),
 
   /**
    * Glisser dans un tri automatique bascule en ordre personnalisé : on fige
@@ -626,55 +437,13 @@ document.addEventListener('pointerup', () => {
 
 // --- Menus contextuels --------------------------------------------------------
 
-function closeMenu(): void {
-  menuEl.hidden = true;
-  menuEl.textContent = '';
-}
-
-/** Ouvre `menuEl` sous l'élément d'ancrage, recalé pour rester dans le panneau. */
-function openMenu(anchor: HTMLElement, build: (menu: HTMLElement) => void): void {
-  menuEl.textContent = '';
-  build(menuEl);
-  menuEl.hidden = false;
-
-  const rect = anchor.getBoundingClientRect();
-  const menuRect = menuEl.getBoundingClientRect();
-
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuRect.width - 8));
-  const top =
-    rect.bottom + menuRect.height + 8 > window.innerHeight
-      ? Math.max(8, rect.top - menuRect.height - 4)
-      : rect.bottom + 4;
-
-  menuEl.style.left = `${left}px`;
-  menuEl.style.top = `${top}px`;
-}
-
-function menuButton(
-  label: string,
-  onClick: () => void,
-  { current = false, danger = false }: { current?: boolean; danger?: boolean } = {}
-): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = danger ? 'menu-item danger' : 'menu-item';
-  btn.textContent = label;
-  if (current) btn.setAttribute('aria-current', 'true');
-  btn.addEventListener('click', () => {
-    closeMenu();
-    onClick();
-  });
-  return btn;
-}
+initMenus(menuEl);
 
 function openMoveMenu(item: SavedItem, anchor: HTMLElement): void {
   const currentId = collectionOf(item, collections);
 
   openMenu(anchor, (menu) => {
-    const title = document.createElement('p');
-    title.className = 'menu-title';
-    title.textContent = 'Déplacer vers';
-    menu.append(title);
+    menu.append(menuTitle('Déplacer vers'));
 
     for (const collection of sortCollections(collections)) {
       menu.append(
@@ -688,10 +457,8 @@ function openMoveMenu(item: SavedItem, anchor: HTMLElement): void {
       );
     }
 
-    const separator = document.createElement('hr');
-    separator.className = 'menu-sep';
     menu.append(
-      separator,
+      menuSeparator(),
       menuButton('Nouvelle collection…', () => openCollectionDialog(null, item.id))
     );
   });
@@ -727,11 +494,6 @@ function openCollectionMenu(collection: Collection, anchor: HTMLElement): void {
     menu.append(menuButton('Renommer…', () => openCollectionDialog(collection)));
   });
 }
-
-document.addEventListener('pointerdown', (event) => {
-  const target = event.target;
-  if (!menuEl.hidden && target instanceof Node && !menuEl.contains(target)) closeMenu();
-});
 
 // --- Modale : collection ------------------------------------------------------
 
@@ -813,6 +575,25 @@ initWatch(
 // Silencieux : si aucun onglet Vinted n'est ouvert, ou si le dernier cycle est
 // récent, ne fait rien et ne le signale pas (§5.2).
 void maybeStartSilentSweep();
+
+// --- Offres en cours — docs/specs/offres.md ------------------------------------
+
+void maybeScanOffers();
+
+/**
+ * L'ancienneté des offres est calculée à l'affichage, jamais stockée : ce
+ * minuteur la recompose pour que « il y a 3 h » ne reste pas figé sur un panneau
+ * ouvert depuis le matin.
+ *
+ * Il ne touche **que le texte des badges** — pas de relecture du storage, pas de
+ * rendu de liste. Un `render()` toutes les 5 minutes détruirait les nœuds sous
+ * la souris, interromprait un glisser, et remonterait la liste en cours de
+ * lecture, tout cela pour changer un mot.
+ */
+const OFFER_AGE_REFRESH_MS = 5 * 60 * 1000;
+setInterval(() => {
+  refreshOfferAges(listEl);
+}, OFFER_AGE_REFRESH_MS);
 
 // --- Fermeture des modales ----------------------------------------------------
 
@@ -903,6 +684,10 @@ async function runDiagnostic(): Promise<void> {
     // que celle de l'article : enregistré depuis une page catégorie, pas une fiche.
     categorieApprochee: items.filter((item) => item.category && !item.category.exact).length,
   };
+
+  // Offres : leur nombre, et où en est le balayage de l'inbox — voir
+  // docs/specs/offres.md §4.
+  report.offres = await offersReport(items);
 
   // Les articles enregistrés, tels quels. Les compteurs ci-dessus disent *combien*
   // d'articles n'ont pas telle donnée ; seul le contenu dit *ce qui* a été

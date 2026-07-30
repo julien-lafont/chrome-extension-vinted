@@ -19,9 +19,7 @@
  * vert au plus fort.
  */
 import { ICON_PATHS } from '../shared/icons.ts';
-
-/** Clé du storage écrite par le content script (voir `content.ts`). */
-const ITEMS_KEY = 'savedItems';
+import { ITEMS_KEY } from '../shared/storage.ts';
 
 const BADGE_COLOR = '#16a34a';
 const BADGE_TEXT_COLOR = '#ffffff';
