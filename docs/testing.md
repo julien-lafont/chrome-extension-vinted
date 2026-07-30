@@ -5,7 +5,7 @@ pnpm install
 pnpm test
 ```
 
-481 tests, ~30 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
+498 tests, ~31 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
 pour qu'il lise directement les sources TypeScript. Node 22 minimum.
 
 **Les tests chargent le bundle esbuild, pas le fichier source.** `content.ts` importe du
@@ -39,6 +39,7 @@ le dossier de tests n'y entre jamais.
 | `watch-lease.test.ts`       | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                                |
 | `watch-render.test.ts`      | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?                      |
 | `watch-tabs.test.ts`        | Le bouton « Rafraîchir » élit-il un onglet capable d'émettre, et un clic dit-il toujours quelque chose ? |
+| `watch-scope.test.ts`       | L'appui long dépasse-t-il la collection affichée, sans qu'aucun clic soit perdu ni doublé ?              |
 | `watch-pause.test.ts`       | Un onglet passé en arrière-plan suspend-il le cycle, au lieu de le perdre ?                              |
 | `watch-banner.test.ts`      | L'onglet qui porte le cycle se reconnaît-il à son titre et à son bandeau ?                               |
 | `collection-picker.test.ts` | L'appui long range-t-il sans jamais perdre l'article qu'il vient de capturer ?                           |
@@ -59,7 +60,7 @@ Vérifié de même pour les offres (`docs/specs/offres.md`) : supprimer l'arrêt
 sur la première conversation déjà vue, ou traiter un 429 comme une conversation sans
 offre — le bug qui effacerait tous les badges d'un coup — fait rougir un cas chacun.
 
-Les sept suites du suivi de prix couvrent `docs/specs/suivi-prix.md` — détail des
+Les huit suites du suivi de prix couvrent `docs/specs/suivi-prix.md` — détail des
 verdicts, du bail et du débit dans `shared/watch.ts`, jamais dans le content script
 directement testable autrement qu'à travers `content-watch.test.ts` et
 `watch-lease.test.ts`.
@@ -70,7 +71,17 @@ liste) fait rougir 3 cas, faire mentir `isSweepStale()` en fait rougir 2, reveni
 `break` sur onglet caché 2, et retirer le réveil de la pause à l'annulation 1. Pour le
 marquage de l'onglet porteur (§6.10) : neutraliser `showSweepProgress()` fait rougir 8
 cas — dont 2 dans `watch-pause.test.ts`, qui exercent le **câblage** dans `content.ts`
-et pas seulement le module — et retirer le lien de la ligne d'état 2.
+et pas seulement le module — et retirer le lien de la ligne d'état 2. Pour l'appui long
+qui rafraîchit toutes les collections (§5.1 bis) : ramener sa portée à la liste affichée
+ou retirer la garde contre le `click` d'écho fait rougir 11 des 16 cas de
+`watch-scope.test.ts`.
+
+Ce fichier-là simule les gestes avec des `MouseEvent` nommés `pointerdown` / `pointerup`
+/ `pointermove` : jsdom ne connaît pas `PointerEvent`, et `MouseEvent` porte tout ce que
+le geste lit — bouton, coordonnées, `altKey`. Les durées sont de vrais délais (620 ms
+pour dépasser le seuil de 480), pas une horloge simulée : le minuteur d'appui vit dans
+`setTimeout`, et le remplacer par une fausse horloge ne prouverait plus que le geste
+tient dans le temps réel du navigateur.
 
 `watch-pause.test.ts` pilote `document.visibilityState` par `Object.defineProperty` puis
 dispatche `visibilitychange`, comme le navigateur. **Un test qui laisse un cycle en

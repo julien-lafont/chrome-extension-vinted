@@ -7,6 +7,19 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Appui long sur « Rafraîchir » : toutes les collections d'un coup**
+  (`docs/specs/suivi-prix.md` §5.1 bis). Un clic court continue de ne rafraîchir que la
+  liste affichée — c'est celle qu'on regarde ; un appui maintenu une demi-seconde lance
+  un seul cycle sur tous les articles enregistrés, collections confondues, en laissant de
+  côté les vendus, les disparus et ceux qui attendent encore leur première fiche. Alt+clic
+  et Alt+Entrée y mènent sans l'attente.
+
+  **Le geste s'annonce** : le bouton se remplit pendant l'appui — qui appuie une
+  demi-seconde de trop voit qu'il se passe quelque chose — et son infobulle le dit. Un
+  glissement pendant l'appui annule l'escalade, jamais le clic : le geste redevient un
+  rafraîchissement de la collection affichée. C'est le point que `watch-scope.test.ts`
+  garde, ce bouton ayant une longue histoire de clics perdus.
+
 - **Suivi des offres en cours** (`docs/specs/offres.md`). La ligne d'un article sous
   offre porte désormais le prix proposé et depuis quand — « Offre 399 € · il y a 3 h »,
   ou « Vendeur 205 € » quand c'est lui qui a fixé un prix. Une offre refusée, acceptée ou

@@ -263,6 +263,59 @@ doit répondre au clic. Corollaire côté content script : la boucle ne recrée 
 `progress` effacé, sous peine de faire clignoter le bouton en « en cours » juste après
 un clic sur Annuler.
 
+### 5.1 bis L'appui long : toutes les collections d'un coup
+
+Ajouté le 30 juillet 2026. Le bouton ne rafraîchit que ce qui est **affiché** (§5.1), ce
+qui est le bon défaut — c'est la liste qu'on regarde — mais rend le rafraîchissement de
+dix collections aussi laborieux que dix clics et neuf changements d'onglet. **Un appui
+maintenu 480 ms sur « Rafraîchir » lance un seul cycle sur tous les articles
+enregistrés**, collections confondues.
+
+La portée n'est pas la liste brute : c'est `orderForCheck()`, comme le déclencheur
+silencieux de §5.2 — ni les vendus, ni les disparus, ni les articles encore en attente
+de leur première fiche, et le plus périmé d'abord. À l'échelle de toute la collection,
+envoyer des articles dont le verdict est définitif ne ferait que brûler le budget de
+§3.2. Le clic court, lui, continue d'envoyer la liste affichée telle quelle :
+l'utilisateur y désigne des articles précis, il est seul juge.
+
+**Le geste se décide au relâchement**, contrairement à l'appui long des boutons injectés
+(`content.ts`), où il _ajoute_ une action à celle du `pointerdown`. Ici il en
+**remplace** une autre : impossible de lancer un cycle sur la collection affichée puis
+un second sur toutes. C'est donc `pointerup` qui tranche — jamais `click`, que le
+navigateur supprime dès qu'une sélection démarre ou que le pointeur glisse (règle 1), et
+ce bouton a déjà une histoire de clics perdus. Le `click` que le navigateur émet ensuite
+est ignoré comme l'écho du geste, via une fenêtre de 700 ms plutôt qu'un drapeau : le
+`click` n'est pas garanti, et un drapeau resté armé avalerait le clic suivant.
+
+Corollaire, et c'est le point à ne pas casser : **un glissement pendant l'appui annule
+l'escalade, jamais le clic.** Le geste redevient un rafraîchissement de la collection
+affichée, qui part au relâchement. Désarmer complètement rendrait au bouton son défaut
+d'origine — un clic un peu tremblant qui ne produit rien.
+
+Pendant un cycle, le bouton annule (§5.1) : il n'y a rien à escalader, l'appui n'arme
+donc pas, et rien ne se remplit.
+
+**Découvrabilité.** Un geste que rien n'annonce n'existe pas. Deux signes, aucun message
+répétitif :
+
+- le `title` du bouton au repos se termine par « · appui long : toutes les collections
+  », et l'`aria-label` le reprend ;
+- **le bouton se remplit pendant l'appui** (`.dir.is-holding::before`, 480 ms), du même
+  langage visuel que l'anneau de l'appui long sur les boutons injectés. C'est le vrai
+  vecteur : qui appuie une demi-seconde de trop voit qu'il se passe quelque chose, et
+  recommence pour savoir quoi. La durée CSS est couplée à `LONG_PRESS_MS` — le
+  remplissage doit se terminer à l'instant où le cycle part, sinon il promet plus tôt ou
+  plus tard que ce qui arrive.
+
+Le départ est confirmé par un message passager : « Rafraîchissement de toutes les
+collections (137 articles) ». Il est émis **avant** l'élection de l'onglet, pour qu'un
+message plus actionnable (onglet en arrière-plan, onglet à recharger) puisse le
+remplacer.
+
+Alt+clic et Alt+Entrée mènent au même endroit sans l'attente — mêmes raccourcis que le
+choix de collection du content script, et le seul accès clavier : un appui long n'existe
+pas au clavier, la répétition de touche n'en est pas un.
+
 ### 5.2 À l'ouverture du panneau, si `lastSweepAt` remonte à plus d'une heure
 
 Cycle silencieux en tâche de fond, non bloquant, sans indicateur intrusif — seulement le
@@ -652,6 +705,14 @@ panneau en jsdom — `watch-render.test.ts` : une baisse de 2 % n'affiche aucun 
 baisse de 20 % affiche la pastille et l'ancien prix, un article `sold` garde sa ligne
 dans la liste, et le popover d'historique ne s'ouvre pas sur un article à un seul point
 de prix.
+
+Un cinquième depuis l'appui long (§5.1 bis) — `watch-scope.test.ts`, même montage jsdom.
+Il tient les deux moitiés du geste : la **portée** (l'appui long dépasse la collection
+affichée, sans les vendus ni les disparus ; le clic court s'y tient) et le **geste**
+lui-même (le `click` d'écho ne lance pas de second cycle, deux clics rapprochés en
+lancent bien deux, un pointeur qui glisse produit quand même le rafraîchissement
+affiché, et rien ne se remplit pendant un cycle). Vérifié : ramener la portée au visible
+ou retirer la garde d'écho fait rougir 11 des 16 cas.
 
 **Vigilance liée à la règle 3.** Le panneau n'écoute `storage.onChanged` sur la clé
 `watch` que dans `sidepanel/watch.ts`, pour repeindre le seul bouton — le rendu complet

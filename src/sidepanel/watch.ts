@@ -53,9 +53,13 @@ export type WatchElements = {
 };
 
 export type WatchHooks = {
-  /** Articles actuellement affichés (collection + recherche) : ce que rafraîchit le bouton manuel. */
+  /** Articles actuellement affichés (collection + recherche) : ce que rafraîchit un clic court. */
   visibleIds: () => string[];
-  /** Tous les articles connus, pour mesurer ce qu'un cycle a changé et pour le déclencheur silencieux. */
+  /**
+   * Tous les articles connus : de quoi mesurer ce qu'un cycle a changé, alimenter
+   * le déclencheur silencieux, et servir l'appui long (§5.1 bis), qui rafraîchit
+   * toutes les collections d'un coup.
+   */
   getItems: () => SavedItem[];
   /**
    * Message passager, câblé sur le `flash()` du panneau (5 s puis il s'effacce) :
@@ -412,11 +416,13 @@ async function render(): Promise<void> {
 
   setButton({
     label: 'Rafraîchir',
-    title: vintedOpen
-      ? watch?.lastSweepAt
-        ? `Dernière vérification ${formatAgo(watch.lastSweepAt)}`
-        : 'Jamais vérifié'
-      : 'Ouvre un onglet Vinted et lance le rafraîchissement',
+    title: `${
+      vintedOpen
+        ? watch?.lastSweepAt
+          ? `Dernière vérification ${formatAgo(watch.lastSweepAt)}`
+          : 'Jamais vérifié'
+        : 'Ouvre un onglet Vinted et lance le rafraîchissement'
+    }${ALL_SCOPE_HINT}`,
     running: false,
   });
   setNotice(vintedOpen ? null : NO_TAB_NOTICE);
@@ -509,13 +515,38 @@ async function claimTab(): Promise<Host | null> {
   return { tabId: created.id, windowId: created.windowId };
 }
 
-async function startFromButton(): Promise<void> {
-  log('clic sur Rafraîchir');
+/**
+ * Ce que le geste demande de rafraîchir (§5.1 bis).
+ *
+ * - `visible` : la liste affichée — collection active, recherche comprise.
+ * - `all` : tous les articles enregistrés, toutes collections confondues.
+ */
+type Scope = 'visible' | 'all';
 
-  const ids = hooks.visibleIds();
+/**
+ * Les articles d'un cycle « toutes collections ».
+ *
+ * `orderForCheck()` plutôt que la liste brute, comme le déclencheur silencieux :
+ * à cette échelle, envoyer les vendus, les disparus et les articles encore en
+ * attente de leur première fiche ne ferait que brûler du débit (§3.2) pour des
+ * verdicts déjà connus. Le clic court, lui, garde la liste affichée telle
+ * quelle — l'utilisateur y désigne des articles précis, il est le seul juge.
+ */
+function allIds(): string[] {
+  return orderForCheck(hooks.getItems()).map((item) => item.id);
+}
+
+async function startFromButton(scope: Scope): Promise<void> {
+  log(`clic sur Rafraîchir (portée : ${scope})`);
+
+  const ids = scope === 'all' ? allIds() : hooks.visibleIds();
   if (!ids.length) {
-    log('abandon : aucun article affiché dans la collection courante');
-    hooks.onFlash('Aucun article à rafraîchir dans cette collection.');
+    log('abandon : aucun article à vérifier');
+    hooks.onFlash(
+      scope === 'all'
+        ? 'Aucun article à rafraîchir.'
+        : 'Aucun article à rafraîchir dans cette collection.'
+    );
     return;
   }
 
@@ -530,10 +561,19 @@ async function startFromButton(): Promise<void> {
     return;
   }
 
+  // Avant `claimTab()`, pas après : lui aussi parle (onglet d'une autre fenêtre,
+  // onglet caché, ouverture d'un onglet), et ce qu'il a à dire demande un geste.
+  // Dans le cas courant — onglet Vinted sous les yeux — il se tait, et c'est
+  // cette phrase qui reste : la seule confirmation que l'appui long a bien été
+  // compris comme tel.
+  if (scope === 'all') {
+    hooks.onFlash(`Rafraîchissement de toutes les collections (${ids.length} articles)`);
+  }
+
   const host = await claimTab();
   if (!host) return; // `claimTab()` a déjà dit ce qui manquait
 
-  log(`onglet ${host.tabId} élu, ${ids.length} article(s) affiché(s) à vérifier`);
+  log(`onglet ${host.tabId} élu, ${ids.length} article(s) à vérifier`);
   await sendStart(host, ids);
 }
 
@@ -565,15 +605,154 @@ async function cancelFromButton(): Promise<void> {
   void render();
 }
 
+/**
+ * Durée d'appui qui fait passer le bouton de la collection affichée à toutes les
+ * collections. Même seuil que l'appui long du content script (`LONG_PRESS_MS`
+ * dans `content.ts`) : c'est le même geste, il doit avoir la même durée.
+ *
+ * **Couplé au CSS** : `@keyframes vf-hold` remplit le bouton en 480 ms, et ce
+ * remplissage n'a de sens que s'il se termine à l'instant où le cycle part.
+ */
+const LONG_PRESS_MS = 480;
+
+/** Au-delà, le pointeur glisse : l'appui n'escalade plus (le clic, lui, reste). */
+const LONG_PRESS_SLOP_PX = 10;
+
+/**
+ * Un `click` émis dans la foulée d'un geste pointeur déjà traité est l'écho de
+ * ce geste, pas un second clic — le navigateur émet toujours les deux.
+ *
+ * Fenêtre volontairement large : le `click` suit le `pointerup` immédiatement,
+ * mais il n'est **pas garanti** (règle 1 : une sélection de texte ou un
+ * glissement le supprime). Un simple booléen resterait alors armé et avalerait
+ * le clic suivant.
+ */
+const POINTER_ECHO_MS = 700;
+
+/** Rappel d'existence, ajouté au `title` du bouton au repos — voir §5.1 bis. */
+const ALL_SCOPE_HINT = ' · appui long : toutes les collections';
+
 /** Câble le bouton. À appeler une fois, au démarrage du panneau. */
 export function initWatch(elements: WatchElements, watchHooks: WatchHooks): void {
   el = elements;
   hooks = watchHooks;
 
-  el.button.addEventListener('click', () => {
-    log('clic détecté sur le bouton', { mode });
+  /** Ce que fait un geste court, selon le dernier rendu. */
+  const runShort = (): void => {
     if (mode === 'cancel') void cancelFromButton();
-    else void startFromButton();
+    else void startFromButton('visible');
+  };
+
+  // --- Appui long : toutes les collections -----------------------------------
+  //
+  // Le geste se décide au **relâchement**, contrairement aux boutons injectés du
+  // content script : là-bas l'appui long ajoute une action à celle du
+  // `pointerdown`, ici il en remplace une autre — on ne peut pas lancer un cycle
+  // sur la collection affichée puis en lancer un second sur toutes.
+  //
+  // C'est `pointerup` qui tranche, jamais `click` : ce dernier disparaît dès
+  // qu'une sélection démarre ou que le pointeur glisse (règle 1), et ce bouton a
+  // déjà eu une longue histoire de « je clique et rien ne se passe ».
+
+  const doc = el.button.ownerDocument;
+
+  let pressTimer: number | null = null;
+  let disarm: (() => void) | null = null;
+  /** Le seuil a été franchi : le relâchement ne doit plus rien déclencher. */
+  let longFired = false;
+  /** Date du dernier geste pointeur déjà servi, pour ignorer son écho `click`. */
+  let pointerHandledAt = 0;
+
+  const stopHold = (): void => {
+    if (pressTimer !== null) clearTimeout(pressTimer);
+    pressTimer = null;
+    el.button.classList.remove('is-holding');
+  };
+
+  const release = (): void => {
+    stopHold();
+    disarm?.();
+    disarm = null;
+  };
+
+  el.button.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return; // bouton secondaire : geste du navigateur
+    release();
+    longFired = false;
+
+    // Alt+clic : la même destination sans l'attente, comme sur les boutons
+    // injectés. Ce sont deux chemins vers un seul comportement, pas deux
+    // fonctions à documenter séparément.
+    if (event.altKey) {
+      pointerHandledAt = Date.now();
+      void startFromButton('all');
+      return;
+    }
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+
+    const onMove = (move: PointerEvent): void => {
+      // Un glissement annule **l'escalade**, pas le clic : le geste redevient un
+      // rafraîchissement de la collection affichée, qui partira au relâchement.
+      // Tout annuler ici rendrait au bouton son défaut historique — un clic un
+      // peu tremblant qui ne produit rien.
+      if (Math.abs(move.clientX - startX) + Math.abs(move.clientY - startY) > LONG_PRESS_SLOP_PX) {
+        stopHold();
+      }
+    };
+
+    const onUp = (): void => {
+      release();
+      if (longFired) return; // le cycle « toutes collections » est déjà parti
+      pointerHandledAt = Date.now();
+      runShort();
+    };
+
+    // Un `pointercancel` (le système reprend le pointeur : scroll, geste
+    // d'interface) n'est pas un clic : on démonte sans rien lancer.
+    const onCancel = (): void => {
+      release();
+    };
+
+    // Sur le document et en capture : le relâchement peut avoir lieu hors du
+    // bouton, et un repeint peut avoir remplacé le libellé entre-temps.
+    doc.addEventListener('pointerup', onUp, true);
+    doc.addEventListener('pointercancel', onCancel, true);
+    doc.addEventListener('pointermove', onMove, true);
+    disarm = () => {
+      doc.removeEventListener('pointerup', onUp, true);
+      doc.removeEventListener('pointercancel', onCancel, true);
+      doc.removeEventListener('pointermove', onMove, true);
+    };
+
+    // Pendant un cycle, le bouton annule : rien à escalader, et un remplissage
+    // qui progresse promettrait une action qui n'existe pas.
+    if (mode === 'cancel') return;
+
+    el.button.classList.add('is-holding');
+    pressTimer = setTimeout(() => {
+      stopHold();
+      longFired = true;
+      pointerHandledAt = Date.now();
+      void startFromButton('all');
+    }, LONG_PRESS_MS) as unknown as number;
+  });
+
+  el.button.addEventListener('click', (event) => {
+    // L'écho du geste pointeur ci-dessus, déjà servi.
+    if (Date.now() - pointerHandledAt < POINTER_ECHO_MS) return;
+
+    log('clic détecté sur le bouton', { mode });
+
+    // Alt+Entrée : le seul accès clavier aux autres collections — un appui long
+    // n'existe pas au clavier, la répétition de touche n'en est pas un.
+    if (event.altKey && mode === 'start') {
+      void startFromButton('all');
+      return;
+    }
+
+    runShort();
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -695,7 +874,7 @@ export async function maybeStartSilentSweep(): Promise<void> {
     return;
   }
 
-  const ids = orderForCheck(hooks.getItems()).map((item) => item.id);
+  const ids = allIds();
   if (!ids.length) {
     log('abandon : aucun article éligible (en attente, vendu ou disparu)');
     return;

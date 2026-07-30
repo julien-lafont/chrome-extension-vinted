@@ -11,7 +11,7 @@ transmet à Google l'URL de la photo, à la demande, jamais en tâche de fond.
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 481 tests, ~30 s, runner Node natif via tsx
+pnpm test         # 498 tests, ~31 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-favoris-<version>.zip
 ```

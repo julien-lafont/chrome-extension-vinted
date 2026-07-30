@@ -281,6 +281,7 @@ h1 {
 }
 
 .dir {
+  position: relative; /* pour le remplissage d'appui long, voir .is-holding */
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -294,6 +295,11 @@ h1 {
   font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
+
+  /* Le double-tap zoom transforme l'appui long tactile en geste ambigu, et une
+     sélection de texte démarrée sur le libellé supprime le `click` (règle 1). */
+  touch-action: manipulation;
+  user-select: none;
 }
 
 .dir:hover {
@@ -330,6 +336,55 @@ h1 {
 @media (prefers-reduced-motion: reduce) {
   .dir.is-running svg {
     animation: none;
+  }
+}
+
+/* Appui long sur « Rafraîchir » : le bouton se remplit pendant les 480 ms qui
+   mènent au rafraîchissement de toutes les collections, puis le cycle part.
+   C'est le seul retour pendant le geste — et surtout ce qui le rend
+   découvrable : qui appuie une demi-seconde de trop voit qu'il se passe quelque
+   chose, et recommence pour savoir quoi.
+
+   La durée est couplée à `LONG_PRESS_MS` dans `sidepanel/watch.ts` : le
+   remplissage doit se terminer à l'instant où le cycle démarre, sinon il promet
+   plus tôt ou plus tard que ce qui arrive. */
+.dir.is-holding::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit; /* sinon les coins du remplissage débordent des arrondis */
+  background: var(--accent);
+  opacity: 0.18;
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: vf-hold 480ms linear forwards;
+
+  /* Le remplissage ne fait pas partie du geste : sans ça il devient la cible du
+     `pointerup` et vole le relâchement au bouton (règle 2). */
+  pointer-events: none;
+}
+
+/* Le contenu passe au-dessus du remplissage : un pseudo-élément positionné se
+   peint sinon par-dessus des enfants qui, eux, ne le sont pas. Et il ne prend
+   pas le pointeur (règle 2) : le geste appartient au bouton, du `pointerdown`
+   au `pointerup`, quelle que soit la partie survolée. */
+.dir > * {
+  position: relative;
+  pointer-events: none;
+}
+
+@keyframes vf-hold {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Le remplissage porte une information (« continue d'appuyer »), pas une
+   décoration : on ne le supprime pas, on le pose d'un coup. */
+@media (prefers-reduced-motion: reduce) {
+  .dir.is-holding::before {
+    animation: none;
+    transform: scaleX(1);
   }
 }
 
