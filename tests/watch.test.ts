@@ -11,7 +11,10 @@ import {
   applyCheckResult,
   dueForCheck,
   isMeaningfulDrop,
+  isSweepRunning,
+  isSweepStale,
   isThrottled,
+  SWEEP_STALE_MS,
   nextThrottle,
   orderForCheck,
   priceDropRatio,
@@ -315,5 +318,40 @@ describe('backoff', () => {
     const first = nextThrottle(0, 0) - 0;
     const second = nextThrottle(0, 1) - 0;
     assert.ok(second > first, 'un deuxième coup de frein doit imposer une pause plus longue');
+  });
+});
+
+describe('signe de vie d’un cycle', () => {
+  const now = 1_000_000_000;
+
+  test('un cycle qui bat est vivant, même en pause', () => {
+    // La pause de §3.6 fait battre `at` exprès : c'est ce qui la distingue d'un
+    // onglet fermé, et le seul moyen de garder l'avancement acquis à l'écran.
+    const paused = { done: 3, total: 9, startedAt: now - 300_000, at: now - 5_000, paused: true };
+    assert.equal(isSweepStale(paused, now), false);
+    assert.equal(isSweepRunning({ progress: paused }, now), true);
+  });
+
+  test('un cycle silencieux depuis trop longtemps est mort', () => {
+    // Onglet fermé en plein cycle : personne ne nettoiera `progress`. Sans ce
+    // verdict, le bouton reste figé sur « 3/9 » et chaque clic annule un cycle
+    // qui n'existe plus.
+    const orphan = { done: 3, total: 9, startedAt: now - 600_000, at: now - SWEEP_STALE_MS - 1 };
+    assert.equal(isSweepStale(orphan, now), true);
+    assert.equal(isSweepRunning({ progress: orphan }, now), false);
+  });
+
+  test('un progress d’avant le battement se juge sur son démarrage', () => {
+    // Compatibilité : `at` est arrivé après `startedAt`, et un cycle interrompu
+    // par la mise à jour de l'extension n'en a pas.
+    const legacy = { done: 1, total: 9, startedAt: now - SWEEP_STALE_MS - 1 };
+    assert.equal(isSweepStale(legacy, now), true);
+    assert.equal(isSweepStale({ done: 1, total: 9, startedAt: now - 1_000 }, now), false);
+  });
+
+  test('sans cycle annoncé, il n’y a rien de périmé ni rien en cours', () => {
+    assert.equal(isSweepStale(undefined, now), false);
+    assert.equal(isSweepRunning({}, now), false);
+    assert.equal(isSweepRunning(undefined, now), false);
   });
 });

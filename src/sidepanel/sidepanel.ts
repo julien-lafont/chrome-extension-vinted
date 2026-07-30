@@ -568,7 +568,7 @@ initWatch(
   {
     visibleIds: () => visibleOrdered.map((item) => item.id),
     getItems: () => items,
-    onSweepSummary: (message) => flash(message),
+    onFlash: (message) => flash(message),
   }
 );
 

@@ -119,6 +119,48 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Corrigé
 
+- **« Cliquer sur Rafraîchir ne fait rien. »** Ce n'était jamais une panne, toujours une
+  décision prise en silence — et il y en avait quatre. Le panneau élisait le **premier**
+  onglet Vinted rendu par Chrome, souvent un onglet en arrière-plan, que la règle de
+  l'onglet visible stoppait aussitôt ; sans onglet Vinted du tout, le bouton était
+  `disabled`, donc muet par construction ; un refus du content script (« Un autre onglet
+  Vinted rafraîchit déjà ») partait dans une console que personne ne regarde ; et un onglet
+  fermé en plein cycle laissait en storage un état « 12/48 » que rien n'effaçait plus,
+  figeant le bouton à vie et transformant chaque clic suivant en annulation d'un cycle
+  inexistant.
+
+  Le rafraîchissement part désormais de n'importe quel onglet Vinted, en élisant celui qui
+  peut réellement émettre : l'onglet actif de la fenêtre, sinon un onglet Vinted de la même
+  fenêtre qu'il active, sinon celui d'une autre fenêtre — et s'il n'y en a aucun, **le clic
+  ouvre un onglet Vinted** et lance le cycle dès que la page répond. Plus aucun état ne
+  désactive le bouton : freinage, collection vide, onglet à recharger, chaque cas dit ce
+  qu'il en est et ce qu'il reste à faire. Le libellé suit aussi l'ouverture et la fermeture
+  des onglets, là où il était figé sur l'état du moment où le panneau s'était ouvert.
+
+- **On voit maintenant quel onglet Vinted porte le rafraîchissement.** Avec trois onglets
+  ouverts, « reviens sur ton onglet Vinted » ne désignait rien de précis. L'onglet qui
+  travaille prend un `🔄` en tête de son titre (`⏸` s'il est en pause) — la seule marque
+  qui se lise **sans le quitter**, donc la seule qui serve à le retrouver dans la barre
+  d'onglets — et affiche un bandeau « Rafraîchissement des favoris — 12/48 » en haut de la
+  page, avec une jauge d'avancement, gris quand le cycle est en pause. Le bandeau recouvre
+  l'en-tête de Vinted le temps du cycle sans décaler la page, et reste inerte aux clics
+  pour ne pas avaler ceux qui visaient la barre de recherche. Les deux marques
+  disparaissent à la fin du cycle. Côté
+  panneau, la ligne d'état porte désormais un lien, « l'onglet Vinted responsable du
+  rafraîchissement », qui y ramène d'un clic : il active l'onglet et remet sa fenêtre au
+  premier plan, faute de quoi l'onglet serait actif dans une fenêtre restée derrière —
+  donc toujours invisible, donc toujours en pause.
+
+- **Changer d'onglet ne perd plus le rafraîchissement en cours.** La spec disait
+  « suspendre », le code faisait `break` : un onglet effleuré une seconde suffisait à
+  perdre le cycle entier, sans un mot. Il se met maintenant en pause — l'avancement acquis
+  reste affiché, l'icône cesse de tourner, une ligne indique qu'il reprendra au retour — et
+  il reprend là où il en était. Il rend la main au bout d'un quart d'heure en
+  arrière-plan, et son bail est libéré pendant la pause pour qu'un autre onglet Vinted,
+  lui visible, puisse prendre le relais. La contrainte de l'onglet au premier plan reste
+  entière : les requêtes doivent partir de la page Vinted (cookies de session, en-têtes
+  cohérents), et Chrome bride les minuteurs des onglets cachés.
+
 - **Un seul article illisible mettait tout le rafraîchissement en sommeil 30 min.** La
   page d'un article dont Vinted ne sert plus les informations affiche brièvement la fiche
   puis renvoie vers le dressing du vendeur, redirection décidée côté client : la réponse

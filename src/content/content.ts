@@ -85,6 +85,7 @@ import {
 } from './collection-picker.ts';
 import { readTabDefault, renderDefaultPill, writeTabDefault } from './tab-default.ts';
 import { PILLS_SELECTOR } from './ui.ts';
+import { showSweepProgress, SWEEP_BAR_SELECTOR, type SweepDisplay } from './watch-ui.ts';
 import {
   HYDRATED_KEYS,
   brandIdFromBreadcrumb,
@@ -799,12 +800,111 @@ import {
       setTimeout(resolve, ms);
     });
 
+  /** Battement de cœur pendant une pause : voir `WatchProgress.at`. */
+  const PAUSE_HEARTBEAT_MS = 20000;
+
+  /**
+   * Au-delà, on rend la main plutôt que de tenir le cycle ouvert
+   * indéfiniment. L'utilisateur a fermé l'onglet des yeux depuis un quart
+   * d'heure : reprendre ne lui rendrait plus service, et le prochain clic (ou
+   * le déclencheur de §5.2) repartira de la file recomposée.
+   */
+  const PAUSE_GIVE_UP_MS = 15 * 60 * 1000;
+
+  /**
+   * Réveille l'attente d'une pause en cours. Armé par {@link waitVisibleOrTimeout},
+   * déclenché par `cancelWatch()` : sans lui, une annulation demandée pendant une
+   * pause n'était prise en compte qu'au battement suivant — jusqu'à 20 s de
+   * bouton qui ne répond pas, exactement le symptôme qu'on corrige.
+   */
+  let wakePause: (() => void) | null = null;
+
+  /**
+   * Attend le retour au premier plan, l'échéance, ou une annulation. Écoute
+   * `visibilitychange` plutôt que de sonder : la reprise doit être immédiate,
+   * sinon l'utilisateur revient sur l'onglet et croit le cycle mort le temps du
+   * prochain sondage.
+   */
+  function waitVisibleOrTimeout(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const done = (): void => {
+        document.removeEventListener('visibilitychange', done);
+        clearTimeout(timer);
+        wakePause = null;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      document.addEventListener('visibilitychange', done);
+      wakePause = done;
+    });
+  }
+
+  /**
+   * §3.6 : l'onglet doit être au premier plan pour émettre. Un onglet caché ne
+   * fait plus **abandonner** le cycle, il le **suspend** — c'est ce que dit la
+   * spec, et c'est ce qui rend la contrainte supportable : l'utilisateur change
+   * d'onglet, revient, et le cycle reprend là où il en était au lieu d'être
+   * perdu sans un mot.
+   *
+   * Le battement de `progress.at` pendant l'attente n'est pas décoratif : c'est
+   * lui qui distingue « en pause » de « onglet fermé » pour le panneau
+   * (`isSweepStale()`).
+   *
+   * Le bail n'est **pas** renouvelé pendant la pause, volontairement : il expire
+   * au bout d'une minute et un autre onglet Vinted, lui visible, peut reprendre
+   * le travail. Un cycle qui dort ne doit pas garder le verrou contre un cycle
+   * qui peut tourner.
+   *
+   * @param display avancement du cycle, pour la pastille et le titre de l'onglet
+   *   (`watch-ui.ts`) : c'est en pause qu'on cherche le plus à savoir *quel*
+   *   onglet attend, et le storage n'en dit rien à la page.
+   * @returns `false` s'il faut arrêter le cycle (annulation, ou attente trop
+   *   longue).
+   */
+  async function awaitForeground(display: SweepDisplay): Promise<boolean> {
+    // Par une fonction, et non par la lecture directe : TypeScript réduirait
+    // sinon le type de `visibilityState` après le premier test et refuserait le
+    // second, alors que la valeur change justement entre les deux.
+    const foreground = (): boolean => document.visibilityState === 'visible';
+    if (foreground()) return true;
+
+    const pausedAt = Date.now();
+    watchLog('pause : onglet passé en arrière-plan (§3.6), attente du retour');
+
+    while (!foreground()) {
+      if (watchCancelled) {
+        watchLog('arrêt pendant la pause : annulation demandée');
+        return false;
+      }
+      if (Date.now() - pausedAt > PAUSE_GIVE_UP_MS) {
+        watchLog('arrêt : onglet resté en arrière-plan trop longtemps');
+        return false;
+      }
+
+      await patchWatch((w) =>
+        w.progress ? { ...w, progress: { ...w.progress, at: Date.now(), paused: true } } : w
+      );
+      // La pastille et le titre suivent l'état : l'onglet caché qu'on cherche
+      // dans la barre d'onglets porte un ⏸, pas un 🔄 qui tournerait pour rien.
+      showSweepProgress({ ...display, paused: true });
+      await waitVisibleOrTimeout(PAUSE_HEARTBEAT_MS);
+    }
+
+    watchLog(`reprise après ${Math.round((Date.now() - pausedAt) / 1000)} s de pause`);
+    await patchWatch((w) =>
+      w.progress ? { ...w, progress: { ...w.progress, at: Date.now(), paused: false } } : w
+    );
+    showSweepProgress(display);
+    return true;
+  }
+
   /**
    * Cycle de vérification sur les articles donnés. S'arrête — sans backoff — dès
-   * que le bail est perdu, le débit ou le budget du jour épuisé, l'onglet passe
-   * en arrière-plan (§3.6) ou une annulation est demandée ; s'arrête avec
-   * backoff sur un signal de freinage (§3.5). `lastSweepAt` n'avance que si la
-   * file entière a été parcourue — c'est ce qui déclenche §5.2.
+   * que le bail est perdu, le débit ou le budget du jour épuisé, ou une
+   * annulation est demandée ; s'arrête avec backoff sur un signal de freinage
+   * (§3.5). Un onglet passé en arrière-plan ne l'arrête pas : il le suspend, voir
+   * `awaitForeground()`. `lastSweepAt` n'avance que si la file entière a été
+   * parcourue — c'est ce qui déclenche §5.2.
    */
   async function runWatchQueue(ids: string[]): Promise<void> {
     const idSet = new Set(ids);
@@ -830,7 +930,10 @@ import {
     /** Réponses illisibles consécutives — voir le traitement de `suspect`. */
     let suspects = 0;
 
-    await patchWatch((w) => ({ ...w, progress: { done: 0, total, startedAt } }));
+    await patchWatch((w) => ({ ...w, progress: { done: 0, total, startedAt, at: startedAt } }));
+    // Dès le premier article : c'est cette pastille et ce 🔄 qui désignent
+    // l'onglet porteur, et le panneau y renvoie par un lien (§6.10).
+    if (total) showSweepProgress({ done: 0, total });
 
     for (const item of queue) {
       if (watchCancelled) {
@@ -838,8 +941,7 @@ import {
         completed = false;
         break;
       }
-      if (document.visibilityState !== 'visible') {
-        watchLog('arrêt : onglet passé en arrière-plan (§3.6)');
+      if (!(await awaitForeground({ done, total }))) {
         completed = false;
         break;
       }
@@ -904,7 +1006,14 @@ import {
       }
 
       done += 1;
-      await patchWatch((w) => ({ ...w, progress: { done, total, startedAt } }));
+      // Ne recrée jamais un `progress` effacé : le panneau l'efface lui-même en
+      // annulant (il ne peut pas attendre le battement d'un onglet en pause), et
+      // le rétablir ici ferait clignoter le bouton en « en cours » juste après
+      // un clic sur Annuler.
+      await patchWatch((w) =>
+        w.progress ? { ...w, progress: { done, total, startedAt, at: Date.now() } } : w
+      );
+      showSweepProgress({ done, total });
 
       if (done < total) await wait(nextDelay());
     }
@@ -912,6 +1021,10 @@ import {
     watchLog(
       `cycle terminé : ${done}/${total} vérifiés, ${completed ? 'file entièrement parcourue' : 'interrompu avant la fin'}`
     );
+
+    // La page redevient une page Vinted ordinaire : plus de pastille, plus de
+    // marque dans le titre. À faire même si le cycle s'est arrêté en chemin.
+    showSweepProgress(null);
 
     await patchWatch((w) => ({
       ...w,
@@ -926,6 +1039,7 @@ import {
 
   function cancelWatch(): void {
     watchCancelled = true;
+    wakePause?.();
   }
 
   async function startWatch(ids: string[]): Promise<WatchStartResponse> {
@@ -2216,6 +2330,13 @@ import {
       return false;
     }
 
+    // Sonde du panneau : répondre suffit, c'est la réponse elle-même qui prouve
+    // qu'un content script à jour est branché sur cet onglet.
+    if (message?.type === 'VF_PING') {
+      sendResponse({ ok: true });
+      return false;
+    }
+
     if (message?.type === 'VF_WATCH_START') {
       void startWatch(message.ids).then(sendResponse);
       return true; // réponse asynchrone : le canal doit rester ouvert
@@ -2300,14 +2421,14 @@ import {
       scan();
 
       /** Nos propres nœuds : leurs mutations ne doivent jamais relancer un scan. */
-      const OWN = `.vf-card-btn, .vf-detail-btn, .vf-hide-btn, .vf-detail-hide, ${OVERLAY_SELECTOR}, ${NOISE_OVERLAY_SELECTOR}`;
+      const OWN = `.vf-card-btn, .vf-detail-btn, .vf-hide-btn, .vf-detail-hide, ${OVERLAY_SELECTOR}, ${NOISE_OVERLAY_SELECTOR}, ${SWEEP_BAR_SELECTOR}`;
 
       /**
        * Le menu de collection et sa confirmation sont posés sur `document.body` :
        * la mutation a alors pour cible le body, que `closest()` ne rattachera
        * jamais à nous. On regarde donc aussi ce qui entre et sort.
        */
-      const BODY_OVERLAYS = `${OVERLAY_SELECTOR}, ${PILLS_SELECTOR}, .vf-pill, .vf-noise-menu, .vf-detail-hide`;
+      const BODY_OVERLAYS = `${OVERLAY_SELECTOR}, ${PILLS_SELECTOR}, .vf-pill, .vf-noise-menu, .vf-detail-hide, ${SWEEP_BAR_SELECTOR}`;
 
       const ownNodesOnly = (nodes: NodeList): boolean =>
         [...nodes].every((node) => node instanceof Element && node.matches(BODY_OVERLAYS));

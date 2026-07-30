@@ -7,7 +7,43 @@
  */
 
 import { PRICE_HISTORY_MAX } from './types.ts';
-import type { PricePoint, SavedItem, WatchState } from './types.ts';
+import type { PricePoint, SavedItem, WatchProgress, WatchState } from './types.ts';
+
+// ---------------------------------------------------------------------------
+// Signe de vie d'un cycle — §3.6
+// ---------------------------------------------------------------------------
+
+/**
+ * Au-delà de ce silence, le cycle annoncé par `progress` est réputé mort.
+ *
+ * Deux minutes tiennent large : entre deux articles il y a au pire le délai de
+ * §3.3 (jusqu'à ~30 s de « lecture ») plus le délai d'expiration d'une fiche
+ * (15 s), et pendant une pause le porteur bat toutes les 20 s.
+ */
+export const SWEEP_STALE_MS = 2 * 60 * 1000;
+
+/**
+ * Un `progress` sans porteur vivant — onglet fermé, page rechargée ou content
+ * script tué en plein cycle. Sans cette relecture, le bouton reste figé sur
+ * « 12/48 » pour toujours : le panneau y voit un cycle en cours, donc chaque clic
+ * suivant est compris comme une annulation, et plus rien ne se rafraîchit
+ * jusqu'à ce que quelqu'un vide le storage à la main.
+ *
+ * Une pause (§3.6) n'est pas un cycle mort : le porteur y bat toujours `at`.
+ * C'est bien l'absence de battement qui tranche, jamais le drapeau `paused`.
+ */
+export function isSweepStale(progress: WatchProgress | undefined, now: number): boolean {
+  if (!progress) return false;
+  return now - (progress.at ?? progress.startedAt) > SWEEP_STALE_MS;
+}
+
+/** Un cycle réellement en cours : annoncé, et dont le porteur donne signe de vie. */
+export function isSweepRunning(
+  state: Pick<WatchState, 'progress'> | undefined,
+  now: number
+): boolean {
+  return Boolean(state?.progress && !isSweepStale(state.progress, now));
+}
 
 // ---------------------------------------------------------------------------
 // Historique de prix

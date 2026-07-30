@@ -5,7 +5,7 @@ pnpm install
 pnpm test
 ```
 
-447 tests, ~30 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
+481 tests, ~30 s. Le runner est celui de Node (`node --test`), exécuté à travers `tsx`
 pour qu'il lise directement les sources TypeScript. Node 22 minimum.
 
 **Les tests chargent le bundle esbuild, pas le fichier source.** `content.ts` importe du
@@ -19,30 +19,33 @@ le dossier de tests n'y entre jamais.
 
 ## Ce qui est couvert
 
-| Fichier                     | Question posée                                                                               |
-| --------------------------- | -------------------------------------------------------------------------------------------- |
-| `extract.test.ts`           | Les ancres Vinted, lues seules : fiche, carte, fil d'Ariane, libellés                        |
-| `extraction.test.ts`        | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ?    |
-| `storage.test.ts`           | Deux écritures simultanées s'écrasent-elles ?                                                |
-| `click-gestures.test.ts`    | Les boutons répondent-ils à tous les gestes ?                                                |
-| `repaint-loop.test.ts`      | Le content script se repeint-il en boucle ?                                                  |
-| `drag-slots.test.ts`        | Où se pose une carte qu'on fait glisser ?                                                    |
-| `collections.test.ts`       | Une collection ne se supprime-t-elle que vide ?                                              |
-| `similar-search.test.ts`    | L'URL de recherche est-elle correctement filtrée ?                                           |
-| `photos.test.ts`            | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?             |
-| `gallery.test.ts`           | La visionneuse montre-t-elle la bonne photo ?                                                |
-| `saved-pulse.test.ts`       | L'icône ne confirme-t-elle _que_ les enregistrements ?                                       |
-| `hydration.test.ts`         | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                     |
-| `size-ids.test.ts`          | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?               |
-| `watch.test.ts`             | La logique pure du suivi de prix (historique, verdicts, débit) est-elle correcte ?           |
-| `content-watch.test.ts`     | Le cycle marque-t-il « vendu » sans supprimer, et laisse-t-il un id divergent intact ?       |
-| `watch-lease.test.ts`       | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                    |
-| `watch-render.test.ts`      | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?          |
-| `collection-picker.test.ts` | L'appui long range-t-il sans jamais perdre l'article qu'il vient de capturer ?               |
-| `tab-default.test.ts`       | L'épingle tient-elle sur le seul onglet, et tombe-t-elle avec sa collection ?                |
-| `offers.test.ts`            | Une offre est-elle lue dans une conversation, et refusée quand rien ne la rend sûre ?        |
-| `offers-scan.test.ts`       | Le balayage lit-il le moins possible, et n'écrit-il que ce qui a changé ?                    |
-| `offers-render.test.ts`     | Le badge d'offre vieillit-il tout seul, et l'onglet ne compte-t-il que ce qui est en cours ? |
+| Fichier                     | Question posée                                                                                           |
+| --------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `extract.test.ts`           | Les ancres Vinted, lues seules : fiche, carte, fil d'Ariane, libellés                                    |
+| `extraction.test.ts`        | L'extraction lit-elle correctement le markup Vinted, y compris les quatre champs de tri ?                |
+| `storage.test.ts`           | Deux écritures simultanées s'écrasent-elles ?                                                            |
+| `click-gestures.test.ts`    | Les boutons répondent-ils à tous les gestes ?                                                            |
+| `repaint-loop.test.ts`      | Le content script se repeint-il en boucle ?                                                              |
+| `drag-slots.test.ts`        | Où se pose une carte qu'on fait glisser ?                                                                |
+| `collections.test.ts`       | Une collection ne se supprime-t-elle que vide ?                                                          |
+| `similar-search.test.ts`    | L'URL de recherche est-elle correctement filtrée ?                                                       |
+| `photos.test.ts`            | La galerie lit-elle toutes les photos, dans le bon ordre et à la bonne qualité ?                         |
+| `gallery.test.ts`           | La visionneuse montre-t-elle la bonne photo ?                                                            |
+| `saved-pulse.test.ts`       | L'icône ne confirme-t-elle _que_ les enregistrements ?                                                   |
+| `hydration.test.ts`         | Les identifiants du flux RSC sont-ils lus, et rattachés au bon article ?                                 |
+| `size-ids.test.ts`          | La taille est-elle résolue en identifiant, et refusée quand elle est ambiguë ?                           |
+| `watch.test.ts`             | La logique pure du suivi de prix (historique, verdicts, débit) est-elle correcte ?                       |
+| `content-watch.test.ts`     | Le cycle marque-t-il « vendu » sans supprimer, et laisse-t-il un id divergent intact ?                   |
+| `watch-lease.test.ts`       | Un seul onglet à la fois tient le bail, et un bail expiré est-il repris ?                                |
+| `watch-render.test.ts`      | Le badge de variation et l'état vendu s'affichent-ils selon les seuils de la spec ?                      |
+| `watch-tabs.test.ts`        | Le bouton « Rafraîchir » élit-il un onglet capable d'émettre, et un clic dit-il toujours quelque chose ? |
+| `watch-pause.test.ts`       | Un onglet passé en arrière-plan suspend-il le cycle, au lieu de le perdre ?                              |
+| `watch-banner.test.ts`      | L'onglet qui porte le cycle se reconnaît-il à son titre et à son bandeau ?                               |
+| `collection-picker.test.ts` | L'appui long range-t-il sans jamais perdre l'article qu'il vient de capturer ?                           |
+| `tab-default.test.ts`       | L'épingle tient-elle sur le seul onglet, et tombe-t-elle avec sa collection ?                            |
+| `offers.test.ts`            | Une offre est-elle lue dans une conversation, et refusée quand rien ne la rend sûre ?                    |
+| `offers-scan.test.ts`       | Le balayage lit-il le moins possible, et n'écrit-il que ce qui a changé ?                                |
+| `offers-render.test.ts`     | Le badge d'offre vieillit-il tout seul, et l'onglet ne compte-t-il que ce qui est en cours ?             |
 
 `click-gestures`, `repaint-loop` et `drag-slots` verrouillent les correctifs décrits
 dans [pitfalls.md](pitfalls.md). Vérifié : retirer le listener `pointerdown` fait tomber
@@ -56,10 +59,35 @@ Vérifié de même pour les offres (`docs/specs/offres.md`) : supprimer l'arrêt
 sur la première conversation déjà vue, ou traiter un 429 comme une conversation sans
 offre — le bug qui effacerait tous les badges d'un coup — fait rougir un cas chacun.
 
-Les quatre suites du suivi de prix couvrent `docs/specs/suivi-prix.md` — détail des
+Les sept suites du suivi de prix couvrent `docs/specs/suivi-prix.md` — détail des
 verdicts, du bail et du débit dans `shared/watch.ts`, jamais dans le content script
 directement testable autrement qu'à travers `content-watch.test.ts` et
 `watch-lease.test.ts`.
+
+Vérifié de même pour la révision du bouton « Rafraîchir » (§5.1 et §3.6 de la spec), un
+correctif neutralisé à la fois : rendre l'élection d'onglet naïve (le premier de la
+liste) fait rougir 3 cas, faire mentir `isSweepStale()` en fait rougir 2, revenir au
+`break` sur onglet caché 2, et retirer le réveil de la pause à l'annulation 1. Pour le
+marquage de l'onglet porteur (§6.10) : neutraliser `showSweepProgress()` fait rougir 8
+cas — dont 2 dans `watch-pause.test.ts`, qui exercent le **câblage** dans `content.ts`
+et pas seulement le module — et retirer le lien de la ligne d'état 2.
+
+`watch-pause.test.ts` pilote `document.visibilityState` par `Object.defineProperty` puis
+dispatche `visibilitychange`, comme le navigateur. **Un test qui laisse un cycle en
+pause doit l'annuler avant de finir** : une pause est une chaîne de minuteurs bien
+vivante (un battement toutes les 20 s pendant un quart d'heure), et `settleFetches()`
+n'y peut rien — il ne solde que des requêtes, et une pause n'en émet aucune. Le process
+de test resterait ouvert quinze minutes. Corollaire : un cas qui **échoue** dans ce
+fichier lève avant son annulation et laisse donc le runner ouvert. Le rapport est
+complet malgré tout, il n'y a qu'à interrompre (Ctrl-C) ; ce n'est pas un test parti en
+boucle.
+
+`fake-chrome.ts` porte aussi un faux `chrome.tabs` (`query` avec ses filtres `url` /
+`active` / `currentWindow`, `update`, `create`, `sendMessage`) et le
+`chrome.windows.update` dont dépend le retour vers l'onglet porteur : c'est exactement
+ce sur quoi l'élection d'onglet se trompait, ça ne pouvait pas rester hors des tests.
+`tabs.update` lève sur un onglet absent, comme Chrome — le panneau s'appuie sur cette
+erreur pour dire que l'onglet porteur a été fermé.
 
 La suite « données de tri » d'`extraction.test.ts` couvre les quatre modes du panneau.
 Vérifié aussi, un correctif à la fois : ne plus désambiguïser le sous-titre, recouper le

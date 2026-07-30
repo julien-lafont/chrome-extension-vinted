@@ -18,6 +18,14 @@ déclencheur silencieux à l'ouverture (au-delà d'une heure) — voir
 onglet Vinted ouvert : un article resté longtemps sans onglet Vinted actif garde l'état
 de sa dernière vérification, éventuellement périmé.
 
+**Le cycle n'avance que sur un onglet Vinted au premier plan.** Contrainte structurelle
+(§1 et §3.6 de la spec) : les requêtes partent du content script, et un onglet caché
+voit ses minuteurs bridés par Chrome. Changer d'onglet en cours de cycle ne le perd pas
+— il se met en pause et reprend au retour, avec un rappel affiché sous la barre de tri —
+mais un rafraîchissement complet demande de laisser l'onglet Vinted devant soi. Au bout
+d'un quart d'heure en arrière-plan, le cycle rend la main et le suivant repartira d'une
+file recomposée.
+
 ## Données de tri incomplètes
 
 **Les articles enregistrés avant l'extraction des champs de tri gardent leurs lacunes.**

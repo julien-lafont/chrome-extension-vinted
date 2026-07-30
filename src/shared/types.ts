@@ -262,6 +262,29 @@ export type PricePoint = { at: number; price: number };
 export const PRICE_HISTORY_MAX = 24;
 
 /**
+ * Avancement d'un cycle en cours. Écrit par le content script qui le porte, lu
+ * par le panneau — c'est aussi le seul signe de vie de ce cycle.
+ *
+ * `at` avance à chaque article **et** pendant une pause (§3.6) : un onglet fermé
+ * en plein cycle laisserait sinon un `progress` éternel en storage, que le
+ * panneau afficherait comme un cycle en cours à jamais — bouton bloqué en
+ * « 12/48 », clic interprété comme une annulation, rien qui reparte. Voir
+ * `isSweepStale()`.
+ */
+export type WatchProgress = {
+  done: number;
+  total: number;
+  startedAt: number;
+  /**
+   * Dernier signe de vie. Optionnel : un `progress` écrit par une version
+   * antérieure n'en a pas, et se juge alors sur `startedAt`.
+   */
+  at?: number;
+  /** L'onglet porteur est passé en arrière-plan ; le cycle attend son retour (§3.6). */
+  paused?: boolean;
+};
+
+/**
  * État du cycle de rafraîchissement, clé `watch` de `chrome.storage.local`.
  * Pas un port, pas un message de progression : le panneau écoute déjà
  * `chrome.storage.onChanged`, la progression s'affiche gratuitement et survit à
@@ -276,7 +299,15 @@ export type WatchState = {
    * content script — mais un identifiant d'instance généré au chargement.
    */
   lease?: { tabId: string; until: number };
-  progress?: { done: number; total: number; startedAt: number };
+  progress?: WatchProgress;
+  /**
+   * L'onglet Chrome qui porte le cycle, écrit par le panneau au moment où il
+   * envoie l'ordre — lui seul connaît ces identifiants. Un content script ne peut
+   * pas les lire (d'où l'identifiant d'instance de `lease`, qui ne sert qu'à
+   * comparer), et le panneau en a besoin pour ramener l'utilisateur sur le bon
+   * onglet d'un clic (§6.10).
+   */
+  host?: { tabId: number; windowId?: number };
   /** Fenêtre de silence après un 429 ou un challenge. Aucune requête avant. */
   throttledUntil?: number;
   /**

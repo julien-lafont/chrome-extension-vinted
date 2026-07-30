@@ -11,7 +11,7 @@ transmet à Google l'URL de la photo, à la demande, jamais en tâche de fond.
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 447 tests, ~30 s, runner Node natif via tsx
+pnpm test         # 481 tests, ~30 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-favoris-<version>.zip
 ```
@@ -30,6 +30,7 @@ src/content/collection-picker.ts  menu de collection ouvert par l'appui long
 src/content/tab-default.ts   collection épinglée sur l'onglet (sessionStorage) + pastille
 src/content/ui.ts            briques des surcouches : activation à deux gestes, pastilles
 src/content/noise-ui.ts      filtrage : bouton d'écart, annulation, pastille, menu
+src/content/watch-ui.ts      marque du titre de l'onglet + bandeau pendant un cycle
 src/content/offers-scan.ts   balayage de l'inbox : les offres en cours (réseau)
 src/sidepanel/               panneau : sidepanel (orchestration) + un module par zone
                              (item-list, collections-bar, menus, gallery, filters, watch…)

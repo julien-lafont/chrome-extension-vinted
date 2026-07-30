@@ -1026,6 +1026,14 @@ h1 {
   text-decoration: underline;
 }
 
+/* Le lien de la ligne d'état (« reviens sur l'onglet Vinted responsable du
+   rafraîchissement ») est au milieu d'une phrase, là où les autres `.link` sont
+   des mots isolés en fin de ligne : sans soulignement permanent, rien ne dit
+   qu'il est cliquable avant de le survoler. */
+#watch-notice .link {
+  text-decoration: underline;
+}
+
 .primary {
   padding: 8px 12px;
   border: 1px solid var(--accent);

@@ -641,6 +641,100 @@ html.vf-reveal [data-vf-hidden]:not([data-vf-hidden='0']) {
   display: block;
 }
 
+/* --- Bandeau du cycle de rafraîchissement ------------------------------------
+   src/content/watch-ui.ts. Il ne s'affiche que dans l'onglet qui porte réellement
+   le cycle : c'est ce qui répond à « lequel de mes onglets Vinted s'en charge ? »,
+   avec le 🔄 du titre.
+
+   En surimpression sur l'en-tête de Vinted, sans décaler la page : décaler
+   demanderait de toucher au `padding` du `body`, et la mise en page collante de
+   Vinted s'en accommode mal.
+
+   Inerte aux clics : il masque la barre de recherche le temps du cycle, il ne
+   doit pas en plus avaler les clics qui la visent. */
+.vf-sweep-bar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 16px 10px;
+  background: #09b1ba;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.3;
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  user-select: none;
+
+  /* Voir plus haut : la barre de recherche de Vinted est dessous. */
+  pointer-events: none;
+}
+
+/* Un cycle en pause n'est pas un cycle qui travaille : le bandeau se met en
+   retrait plutôt que de crier la même chose dans la même couleur. */
+.vf-sweep-bar.vf-sweep-paused {
+  background: #4b5563;
+}
+
+.vf-sweep-text {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* La jauge occupe toute la largeur, collée au bas du bandeau : elle se lit sans
+   être lue, ce que « 12/48 » ne permet pas. */
+.vf-sweep-gauge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.vf-sweep-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #fff;
+  transition: width 0.3s ease-out;
+}
+
+/* Rotation continue pendant le travail effectif. Une animation `transform` est
+   ici sans risque : la règle 2 du projet ne vise que le `:hover`, et ce bandeau
+   n'a même pas de zone de survol (`pointer-events: none`). */
+.vf-sweep-icon {
+  display: inline-block;
+  animation: vf-sweep-spin 1.4s linear infinite;
+}
+
+.vf-sweep-paused .vf-sweep-icon {
+  animation: none;
+}
+
+@keyframes vf-sweep-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vf-sweep-icon {
+    animation: none;
+  }
+
+  .vf-sweep-fill {
+    transition: none;
+  }
+}
+
 /* Un nom de collection peut aller jusqu'à 40 caractères : la pastille flotte
    au-dessus du catalogue, elle ne doit pas le barrer. */
 .vf-pill-label {

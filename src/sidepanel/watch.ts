@@ -8,9 +8,15 @@
  * `chrome.storage.onChanged`.
  */
 import { WATCH_KEY, read, update } from '../shared/storage.ts';
-import { isThrottled, orderForCheck, isMeaningfulDrop, RATE } from '../shared/watch.ts';
+import {
+  isThrottled,
+  isSweepRunning,
+  orderForCheck,
+  isMeaningfulDrop,
+  RATE,
+} from '../shared/watch.ts';
 import type { SavedItem, WatchState } from '../shared/types.ts';
-import type { WatchStartResponse } from '../shared/messages.ts';
+import type { PingResponse, WatchStartResponse } from '../shared/messages.ts';
 
 /** `chrome.tabs.sendMessage` n'est pas typé : la conversion est concentrée ici. */
 function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
@@ -38,7 +44,11 @@ const SILENT_SWEEP_AFTER_MS = 60 * 60 * 1000;
 export type WatchElements = {
   button: HTMLButtonElement;
   label: HTMLElement;
-  /** Avertissement affiché seulement pendant un cycle en cours. */
+  /**
+   * Ligne d'**état** sous la barre de tri : cycle en cours, en pause, freinage,
+   * absence d'onglet Vinted. Elle dure autant que l'état qu'elle décrit — les
+   * messages passagers passent par `WatchHooks.onFlash`.
+   */
   notice: HTMLElement;
 };
 
@@ -47,8 +57,16 @@ export type WatchHooks = {
   visibleIds: () => string[];
   /** Tous les articles connus, pour mesurer ce qu'un cycle a changé et pour le déclencheur silencieux. */
   getItems: () => SavedItem[];
-  /** Résumé de fin de cycle (§6.7) ; jamais appelé si rien n'a été trouvé. */
-  onSweepSummary: (message: string) => void;
+  /**
+   * Message passager, câblé sur le `flash()` du panneau (5 s puis il s'effacce) :
+   * résumé de fin de cycle (§6.7), mais aussi retour immédiat d'un clic —
+   * onglet Vinted ouvert, cycle refusé, onglet à recharger. Un clic sans aucun
+   * retour visible est ce qui faisait passer le bouton pour cassé.
+   *
+   * À distinguer de `WatchElements.notice`, qui dit un **état** durable (cycle
+   * en cours, en pause, freiné) et reste affiché tant qu'il dure.
+   */
+  onFlash: (message: string) => void;
 };
 
 let el: WatchElements;
@@ -68,10 +86,121 @@ async function readWatch(): Promise<WatchState | undefined> {
   return res[WATCH_KEY];
 }
 
-/** Un onglet Vinted quelconque : peu importe lequel, un seul suffit à porter l'ordre. */
-export async function findVintedTab(): Promise<chrome.tabs.Tab | null> {
-  const tabs = await chrome.tabs.query({ url: 'https://www.vinted.fr/*' });
-  return tabs.find((tab) => tab.id !== undefined) ?? null;
+const VINTED_MATCH = 'https://www.vinted.fr/*';
+const VINTED_HOME = 'https://www.vinted.fr/';
+
+/** Les onglets Vinted répondant au filtre, réduits à ceux qui portent un id utilisable. */
+async function queryVinted(
+  extra: chrome.tabs.QueryInfo = {}
+): Promise<(chrome.tabs.Tab & { id: number })[]> {
+  const tabs = await chrome.tabs.query({ url: VINTED_MATCH, ...extra });
+  return tabs.filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.id !== undefined);
+}
+
+/**
+ * L'onglet Vinted qui portera le cycle, **par ordre de capacité réelle à
+ * émettre** — et non le premier de la liste comme avant.
+ *
+ * C'est la correction du « le bouton ne marche pas alors que Vinted est
+ * ouvert » : `chrome.tabs.query` rend les onglets dans l'ordre des fenêtres,
+ * donc avec trois onglets Vinted l'ordre partait souvent vers un onglet en
+ * arrière-plan — que §3.6 mettait aussitôt en pause, sans rien afficher.
+ *
+ * - `foreground` : l'onglet actif de la fenêtre du panneau. Le cycle tourne
+ *   tout de suite.
+ * - `otherWindow` : actif, mais dans une autre fenêtre. Il émet aussi (il est
+ *   visible), on le dit seulement pour que le compteur qui avance ailleurs ne
+ *   surprenne pas.
+ * - `background` : ouvert mais caché. Le cycle démarre en pause et reprend au
+ *   retour de l'utilisateur ; c'est ce qu'il faut lui dire.
+ * - `none` : aucun onglet Vinted.
+ */
+export type TabChoice =
+  ({ kind: 'foreground' | 'otherWindow' | 'background' } & Host) | { kind: 'none' };
+
+/** L'onglet porteur du cycle, tel qu'il est rangé en storage pour le lien de §6.10. */
+type Host = NonNullable<WatchState['host']>;
+
+export async function electVintedTab(): Promise<TabChoice> {
+  const [here] = await queryVinted({ active: true, currentWindow: true });
+  if (here) return { kind: 'foreground', tabId: here.id, windowId: here.windowId };
+
+  // Un onglet Vinted de cette fenêtre, mais pas celui qu'on regarde : l'activer
+  // est exactement ce que le clic demande, et c'est un geste que l'utilisateur
+  // aurait fait lui-même.
+  const [sameWindow] = await queryVinted({ currentWindow: true });
+  if (sameWindow) {
+    await chrome.tabs.update(sameWindow.id, { active: true });
+    return { kind: 'foreground', tabId: sameWindow.id, windowId: sameWindow.windowId };
+  }
+
+  const [activeElsewhere] = await queryVinted({ active: true });
+  if (activeElsewhere) {
+    return {
+      kind: 'otherWindow',
+      tabId: activeElsewhere.id,
+      windowId: activeElsewhere.windowId,
+    };
+  }
+
+  const [any] = await queryVinted();
+  if (any) return { kind: 'background', tabId: any.id, windowId: any.windowId };
+
+  return { kind: 'none' };
+}
+
+/**
+ * Un onglet Vinted *visible*, seul cas où un cycle démarre sans attendre. Le
+ * déclencheur silencieux (§5.2) s'en sert : lancer un cycle qui se mettrait
+ * aussitôt en pause afficherait un compteur figé que personne n'a demandé.
+ */
+async function findVisibleVintedTab(): Promise<(chrome.tabs.Tab & { id: number }) | null> {
+  const [here] = await queryVinted({ active: true, currentWindow: true });
+  if (here) return here;
+  const [elsewhere] = await queryVinted({ active: true });
+  return elsewhere ?? null;
+}
+
+/** Y a-t-il au moins un onglet Vinted, visible ou non ? Sert au libellé du bouton. */
+async function hasVintedTab(): Promise<boolean> {
+  return (await queryVinted()).length > 0;
+}
+
+/**
+ * Un onglet Vinted quelconque, **le plus apte à émettre d'abord**. Le balayage
+ * des offres (`offers.ts`) s'en sert : lui aussi s'arrête sur un onglet caché,
+ * et il n'a pas de bouton pour le dire.
+ */
+export async function findVintedTab(): Promise<(chrome.tabs.Tab & { id: number }) | null> {
+  return (await findVisibleVintedTab()) ?? (await queryVinted())[0] ?? null;
+}
+
+/** Cadence et patience de la sonde `VF_PING`, le temps qu'un onglet neuf s'injecte. */
+const PING_TRIES = 40;
+const PING_INTERVAL_MS = 250;
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * Attend qu'un content script réponde dans cet onglet. Un onglet tout juste
+ * créé n'a rien d'injecté avant `document_idle` : envoyer l'ordre sans attendre
+ * échouait silencieusement, ce qui donnait « le bouton n'a rien fait ».
+ */
+async function waitForContentScript(tabId: number): Promise<boolean> {
+  for (let attempt = 0; attempt < PING_TRIES; attempt += 1) {
+    try {
+      const response = await sendToTab<PingResponse | undefined>(tabId, { type: 'VF_PING' });
+      if (response?.ok) return true;
+    } catch {
+      // Pas encore injecté : on réessaie. C'est le cas normal juste après
+      // `chrome.tabs.create`, pas une anomalie à journaliser quarante fois.
+    }
+    await delay(PING_INTERVAL_MS);
+  }
+  return false;
 }
 
 function takeSnapshot(): void {
@@ -105,7 +234,7 @@ function reportSweepSummary(): void {
   const parts: string[] = [];
   if (drops) parts.push(`${drops} baisse${drops > 1 ? 's' : ''} de prix`);
   if (sold) parts.push(`${sold} vendu${sold > 1 ? 's' : ''}`);
-  hooks.onSweepSummary(parts.join(', '));
+  hooks.onFlash(parts.join(', '));
 }
 
 /**
@@ -132,94 +261,192 @@ function formatEta(until: number): string {
 function setButton({
   label,
   title,
-  disabled,
   running,
 }: {
   label: string;
   title: string;
-  disabled: boolean;
   running: boolean;
 }): void {
   el.label.textContent = label;
   el.button.title = title;
   el.button.setAttribute('aria-label', title);
-  el.button.disabled = disabled;
   // L'icône ne tourne que pendant le cycle — voir §6.1 et le CSS de `.dir.is-running`.
   el.button.classList.toggle('is-running', running);
 }
 
 /**
- * Rappel affiché seulement pendant un cycle : changer d'onglet suspend le
- * rafraîchissement (§3.6, l'onglet doit rester visible), et ce n'est pas une
- * évidence pour qui regarde juste le bouton tourner.
+ * Ramène sur l'onglet qui porte le cycle : c'est le geste que les deux messages
+ * de cycle demandent, autant le rendre cliquable plutôt que de le décrire.
+ *
+ * L'onglet peut avoir été fermé entretemps — `chrome.tabs.update` lève alors, et
+ * la seule chose utile à dire est qu'il n'y a plus d'onglet où retourner.
+ */
+async function focusHostTab(): Promise<void> {
+  const host = (await readWatch())?.host;
+  if (!host) return;
+
+  try {
+    await chrome.tabs.update(host.tabId, { active: true });
+    // La fenêtre aussi, sinon l'onglet devient actif dans une fenêtre restée
+    // derrière — activé, mais toujours invisible, donc toujours en pause.
+    if (host.windowId !== undefined) await chrome.windows.update(host.windowId, { focused: true });
+  } catch {
+    log('l’onglet porteur n’existe plus');
+    hooks.onFlash('L’onglet Vinted qui rafraîchissait a été fermé.');
+    void render();
+  }
+}
+
+/** Libellé du lien, tel que demandé : il désigne un onglet précis, pas « un onglet Vinted ». */
+const HOST_LINK_LABEL = 'l’onglet Vinted responsable du rafraîchissement';
+
+/**
+ * Écrit la ligne d'état, avec un lien vers l'onglet porteur si la phrase le
+ * prévoit (`{lien}`) et si l'on sait où pointer.
+ */
+function setNotice(text: string | null, host?: WatchState['host']): void {
+  el.notice.hidden = text === null;
+  el.notice.textContent = '';
+  if (text === null) return;
+
+  const [before, after] = text.split('{lien}');
+
+  // Sans onglet connu (cycle lancé par une version antérieure, ou storage
+  // incomplet), la phrase reste lisible : le lien redevient du texte.
+  if (after === undefined || !host) {
+    el.notice.textContent = text.replace('{lien}', HOST_LINK_LABEL);
+    return;
+  }
+
+  // `ownerDocument` plutôt que le `document` global : c'est l'élément qui sait
+  // dans quel document il vit, et ça rend la fonction testable sur un DOM monté
+  // à côté, sans installer de global.
+  const doc = el.notice.ownerDocument;
+  const link = doc.createElement('button');
+  link.type = 'button';
+  link.className = 'link';
+  link.textContent = HOST_LINK_LABEL;
+  link.addEventListener('click', () => {
+    void focusHostTab();
+  });
+
+  el.notice.append(doc.createTextNode(before ?? ''), link, doc.createTextNode(after));
+}
+
+/**
+ * Rappel affiché seulement pendant un cycle : changer d'onglet met le
+ * rafraîchissement en pause (§3.6, l'onglet doit rester visible), et ce n'est
+ * pas une évidence pour qui regarde juste le bouton tourner.
  */
 const RUNNING_NOTICE =
-  "Rafraîchissement en cours — ne change pas d'onglet Vinted, ça mettrait le cycle en pause.";
+  "Rafraîchissement en cours sur {lien} — si tu changes d'onglet, le cycle se met en pause et reprend à ton retour.";
 
-/** Repeint le bouton — quatre états, §6.1, jamais plus d'une ligne à la fois. */
+/** Une pause n'est pas une panne : le seul geste à faire est de revenir sur l'onglet. */
+const PAUSED_NOTICE =
+  'Rafraîchissement en pause — reviens sur {lien}, il reprend tout seul là où il en était.';
+
+const NO_TAB_NOTICE =
+  'Aucun onglet Vinted ouvert : le bouton en ouvrira un et lancera le rafraîchissement.';
+
+/**
+ * Ce que le clic fera, décidé par le dernier rendu.
+ *
+ * Le clic lisait auparavant la classe `is-running` du bouton pour trancher
+ * entre lancer et annuler. Ça ne tient plus : l'icône ne tourne pas pendant une
+ * pause, alors que le cycle est bien en cours — et un état visuel n'a jamais été
+ * une bonne source de vérité pour une décision.
+ */
+let mode: 'start' | 'cancel' = 'start';
+
+/** Repeint le bouton — §6.1, jamais plus d'une ligne d'état à la fois. */
 async function render(): Promise<void> {
   const watch = await readWatch();
   const now = Date.now();
+  const progress = watch?.progress;
 
-  if (watch?.progress) {
+  // Un `progress` que plus personne ne fait avancer n'est pas un cycle en cours
+  // (`isSweepStale()`) : le traiter comme tel figeait le bouton sur « 12/48 »
+  // jusqu'à la fin des temps, et transformait chaque clic en annulation.
+  if (progress && isSweepRunning(watch, now)) {
     // Le panneau a pu s'ouvrir en cours de cycle (démarré par le déclencheur
     // silencieux, ou par ce même panneau juste avant) : sans snapshot, on ne
     // peut pas mesurer ce que ce cycle-là aura trouvé, mais on peut au moins
     // commencer à le mesurer à partir de maintenant.
     if (!snapshot) takeSnapshot();
 
+    mode = 'cancel';
     setButton({
-      label: `${watch.progress.done}/${watch.progress.total}`,
-      title: 'Annuler le rafraîchissement',
-      disabled: false,
-      running: true,
+      label: `${progress.done}/${progress.total}`,
+      title: progress.paused
+        ? 'En pause — reviens sur l’onglet Vinted, ou clique pour annuler'
+        : 'Annuler le rafraîchissement',
+      running: !progress.paused,
     });
-    el.notice.hidden = false;
-    el.notice.textContent = RUNNING_NOTICE;
+    setNotice(progress.paused ? PAUSED_NOTICE : RUNNING_NOTICE, watch?.host);
     return;
   }
 
-  el.notice.hidden = true;
+  mode = 'start';
 
   // Le cycle qu'on suivait vient de se terminer.
   if (snapshot) reportSweepSummary();
 
+  // Freiné : le bouton le dit et **reste cliquable**. Un bouton `disabled` ne
+  // déclenche aucun événement, donc aucune explication — c'était le pire des
+  // deux mondes, et c'est ce que l'utilisateur décrivait comme « rien ne se
+  // passe ». Le clic, lui, répète la raison et l'échéance.
   if (watch && isThrottled(watch, now)) {
     const minutes = Math.max(1, Math.round(((watch.throttledUntil ?? now) - now) / 60000));
     setButton({
       label: `Réessai ${minutes} min`,
       title: `Vinted nous a freinés, reprise à ${formatEta(watch.throttledUntil ?? now)}`,
-      disabled: true,
       running: false,
     });
+    setNotice(
+      `Vinted a limité nos requêtes : le rafraîchissement reprend à ${formatEta(watch.throttledUntil ?? now)}.`
+    );
     return;
   }
 
-  const tab = await findVintedTab();
-
-  if (!tab) {
-    setButton({
-      label: 'Rafraîchir',
-      title: 'Ouvre un onglet Vinted pour rafraîchir',
-      disabled: true,
-      running: false,
-    });
-    return;
-  }
+  const vintedOpen = await hasVintedTab();
 
   setButton({
     label: 'Rafraîchir',
-    title: watch?.lastSweepAt
-      ? `Dernière vérification ${formatAgo(watch.lastSweepAt)}`
-      : 'Jamais vérifié',
-    disabled: false,
+    title: vintedOpen
+      ? watch?.lastSweepAt
+        ? `Dernière vérification ${formatAgo(watch.lastSweepAt)}`
+        : 'Jamais vérifié'
+      : 'Ouvre un onglet Vinted et lance le rafraîchissement',
     running: false,
   });
+  setNotice(vintedOpen ? null : NO_TAB_NOTICE);
 }
 
-async function sendStart(tabId: number, ids: string[]): Promise<void> {
+/**
+ * Envoie l'ordre. Toute issue — acceptée, refusée, onglet muet — repart en
+ * `onFlash` : c'est la règle du bouton, un clic ne peut pas ne rien produire.
+ *
+ * @param silent déclencheur automatique (§5.2) : personne n'a rien demandé, donc
+ *   rien à annoncer, ni succès ni refus.
+ */
+async function sendStart(host: Host, ids: string[], silent = false): Promise<void> {
+  const { tabId } = host;
   takeSnapshot();
   log(`envoi de VF_WATCH_START à l'onglet ${tabId} (${ids.length} article(s)) :`, ids);
+
+  // Avant l'envoi : le content script écrit `progress` dès qu'il accepte, et le
+  // panneau doit déjà savoir vers quel onglet pointer son lien à ce moment-là.
+  await update([WATCH_KEY], (stored) => {
+    // Premier cycle de la vie de l'extension : la clé n'existe pas encore. On la
+    // crée avec le même état neutre que `defaultWatch()` du content script — seau
+    // plein, aucun cycle passé — plutôt que de priver ce cycle-là de son lien.
+    const current = stored[WATCH_KEY] ?? {
+      lastSweepAt: 0,
+      bucket: { tokens: RATE.capacity, at: Date.now() },
+    };
+    return { [WATCH_KEY]: { ...current, host } };
+  });
+
   try {
     const response = await sendToTab<WatchStartResponse | undefined>(tabId, {
       type: 'VF_WATCH_START',
@@ -229,49 +456,113 @@ async function sendStart(tabId: number, ids: string[]): Promise<void> {
     if (response?.accepted) {
       log('cycle accepté par le content script');
     } else {
-      log(`cycle refusé par le content script : ${response?.reason ?? 'raison inconnue'}`);
+      const reason = response?.reason ?? 'raison inconnue';
+      log(`cycle refusé par le content script : ${reason}`);
+      snapshot = null;
+      // Le refus portait déjà sa phrase en français dans `reason` (« Un autre
+      // onglet Vinted rafraîchit déjà. ») ; elle ne sortait nulle part.
+      if (!silent) hooks.onFlash(reason);
     }
   } catch (err) {
-    // Content script pas encore injecté (onglet tout juste ouvert, ou pas
-    // rechargé depuis la dernière modification — voir CLAUDE.md) : rien
-    // d'actionnable de plus que ce que dit déjà l'absence de progression.
+    // Content script injoignable : onglet Vinted ouvert avant le chargement de
+    // l'extension, ou pas rechargé depuis sa dernière mise à jour (voir
+    // CLAUDE.md). C'est le seul cas où l'utilisateur a un geste précis à faire.
     log('échec de l’envoi du message, content script injoignable :', err);
     snapshot = null;
+    if (!silent) hooks.onFlash('Recharge l’onglet Vinted (Cmd+R) pour lancer le rafraîchissement.');
   }
   void render();
+}
+
+/**
+ * Obtient un onglet capable de porter le cycle, quoi qu'il en coûte : à défaut
+ * d'onglet Vinted, on en ouvre un. « L'action ne doit jamais être bloquée » —
+ * l'ancien bouton `disabled` laissait l'utilisateur deviner.
+ */
+async function claimTab(): Promise<Host | null> {
+  const choice = await electVintedTab();
+
+  if (choice.kind === 'foreground') return { tabId: choice.tabId, windowId: choice.windowId };
+
+  if (choice.kind === 'otherWindow') {
+    hooks.onFlash('Le rafraîchissement tourne dans l’onglet Vinted de l’autre fenêtre.');
+    return { tabId: choice.tabId, windowId: choice.windowId };
+  }
+
+  if (choice.kind === 'background') {
+    // Le cycle va démarrer en pause : `PAUSED_NOTICE` prend le relais dès le
+    // premier `progress` écrit, avec son lien vers l'onglet en question.
+    hooks.onFlash('Le rafraîchissement attend son onglet Vinted, resté en arrière-plan.');
+    return { tabId: choice.tabId, windowId: choice.windowId };
+  }
+
+  log('aucun onglet Vinted : ouverture de vinted.fr');
+  hooks.onFlash('Ouverture d’un onglet Vinted, le rafraîchissement suit…');
+  const created = await chrome.tabs.create({ url: VINTED_HOME, active: true });
+  if (created.id === undefined) return null;
+
+  if (!(await waitForContentScript(created.id))) {
+    log('onglet créé mais content script muet');
+    hooks.onFlash('L’onglet Vinted a mis trop de temps à répondre. Réessaie.');
+    return null;
+  }
+  return { tabId: created.id, windowId: created.windowId };
 }
 
 async function startFromButton(): Promise<void> {
   log('clic sur Rafraîchir');
 
-  const tab = await findVintedTab();
-  if (!tab?.id) {
-    log('abandon : aucun onglet Vinted ouvert');
-    return;
-  }
-
   const ids = hooks.visibleIds();
   if (!ids.length) {
     log('abandon : aucun article affiché dans la collection courante');
+    hooks.onFlash('Aucun article à rafraîchir dans cette collection.');
     return;
   }
 
-  log(`onglet ${tab.id} élu, ${ids.length} article(s) affiché(s) à vérifier`);
-  await sendStart(tab.id, ids);
+  const watch = await readWatch();
+  const now = Date.now();
+  if (watch && isThrottled(watch, now)) {
+    // Le bouton n'est plus `disabled` : c'est ce clic-ci qui doit expliquer.
+    log(`abandon : freiné jusqu'à ${formatEta(watch.throttledUntil ?? now)}`);
+    hooks.onFlash(
+      `Vinted a limité nos requêtes ; le rafraîchissement reprend à ${formatEta(watch.throttledUntil ?? now)}.`
+    );
+    return;
+  }
+
+  const host = await claimTab();
+  if (!host) return; // `claimTab()` a déjà dit ce qui manquait
+
+  log(`onglet ${host.tabId} élu, ${ids.length} article(s) affiché(s) à vérifier`);
+  await sendStart(host, ids);
 }
 
-/** Diffusé à tous les onglets Vinted : peu importe lequel tient le bail. */
+/**
+ * Diffusé à tous les onglets Vinted : peu importe lequel tient le bail.
+ *
+ * Le `progress` est effacé ici même, sans attendre que le porteur le fasse : il
+ * peut être en pause dans un onglet caché, et son prochain battement peut être à
+ * vingt secondes. Le bouton doit répondre au clic, pas dans vingt secondes.
+ */
 async function cancelFromButton(): Promise<void> {
   log('clic sur Annuler, diffusion de VF_WATCH_CANCEL');
-  const tabs = await chrome.tabs.query({ url: 'https://www.vinted.fr/*' });
+  const tabs = await queryVinted();
   log(`${tabs.length} onglet(s) Vinted trouvé(s)`);
   await Promise.all(
-    tabs
-      .filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.id !== undefined)
-      .map((tab) =>
-        chrome.tabs.sendMessage(tab.id, { type: 'VF_WATCH_CANCEL' }).catch(() => undefined)
-      )
+    tabs.map((tab) =>
+      chrome.tabs.sendMessage(tab.id, { type: 'VF_WATCH_CANCEL' }).catch(() => undefined)
+    )
   );
+
+  await update([WATCH_KEY], (stored) => {
+    const current = stored[WATCH_KEY];
+    if (!current?.progress) return null; // rien à effacer, pas d'écriture
+    const next = { ...current };
+    delete next.progress;
+    return { [WATCH_KEY]: next };
+  });
+
+  void render();
 }
 
 /** Câble le bouton. À appeler une fois, au démarrage du panneau. */
@@ -280,16 +571,29 @@ export function initWatch(elements: WatchElements, watchHooks: WatchHooks): void
   hooks = watchHooks;
 
   el.button.addEventListener('click', () => {
-    log('clic détecté sur le bouton', {
-      running: el.button.classList.contains('is-running'),
-      disabled: el.button.disabled,
-    });
-    if (el.button.classList.contains('is-running')) void cancelFromButton();
+    log('clic détecté sur le bouton', { mode });
+    if (mode === 'cancel') void cancelFromButton();
     else void startFromButton();
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[WATCH_KEY]) void render();
+  });
+
+  // Le libellé du bouton dépend des onglets ouverts, qui changent sans que le
+  // storage bouge : sans ces écoutes, un panneau ouvert avant Vinted gardait à
+  // vie son « Ouvre un onglet Vinted » — et, du temps où ce libellé venait avec
+  // un bouton `disabled`, un bouton mort alors que Vinted était sous les yeux.
+  const repaintOnTabs = (): void => {
+    void render();
+  };
+  chrome.tabs.onActivated.addListener(repaintOnTabs);
+  chrome.tabs.onRemoved.addListener(repaintOnTabs);
+  chrome.tabs.onUpdated.addListener((_tabId, change) => {
+    // Seule l'URL nous intéresse : un onglet qui devient (ou cesse d'être) un
+    // onglet Vinted. Repeindre à chaque `status` ferait une dizaine de rendus par
+    // chargement de page.
+    if (change.url) repaintOnTabs();
   });
 
   void render();
@@ -369,7 +673,7 @@ export async function maybeStartSilentSweep(): Promise<void> {
   const watch = await readWatch();
   const now = Date.now();
 
-  if (watch?.progress) {
+  if (isSweepRunning(watch, now)) {
     log('abandon : un cycle est déjà en cours');
     return;
   }
@@ -382,9 +686,12 @@ export async function maybeStartSilentSweep(): Promise<void> {
     return;
   }
 
-  const tab = await findVintedTab();
-  if (!tab?.id) {
-    log('abandon : aucun onglet Vinted ouvert');
+  // Un onglet **visible** seulement : sans lui, le cycle démarrerait en pause
+  // (§3.6) et laisserait un compteur figé dans un bouton que personne n'a
+  // touché. Rien à faire, et rien à dire — comme avant.
+  const tab = await findVisibleVintedTab();
+  if (!tab) {
+    log('abandon : aucun onglet Vinted visible');
     return;
   }
 
@@ -395,5 +702,5 @@ export async function maybeStartSilentSweep(): Promise<void> {
   }
 
   log(`démarrage du cycle silencieux : ${ids.length} article(s)`);
-  await sendStart(tab.id, ids);
+  await sendStart({ tabId: tab.id, windowId: tab.windowId }, ids, true);
 }

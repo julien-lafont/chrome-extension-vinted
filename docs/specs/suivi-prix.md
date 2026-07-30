@@ -30,12 +30,21 @@ anti-détection est le plus fort des trois :
 Le service worker ne fait **aucune** requête vers Vinted. Il garde son rôle actuel :
 ouvrir le panneau, et la pulsation du badge.
 
-Corollaire assumé : **pas de rafraîchissement sans onglet Vinted ouvert.** Le panneau
-élit un onglet via `findVintedTab()`
-(`chrome.tabs.query({ url: 'https://www.vinted.fr/*' })` dans `watch.ts`), lui envoie
-l'ordre, et affiche « Ouvre un onglet Vinted pour rafraîchir » à défaut. C'est une
-contrainte, et c'est aussi le comportement le plus humain qui soit : le trafic n'existe
-que quand l'utilisateur est réellement sur le site.
+Corollaire assumé : **pas de rafraîchissement sans onglet Vinted ouvert et au premier
+plan.** Le panneau élit un onglet via `electVintedTab()`
+(`chrome.tabs.query({ url: 'https://www.vinted.fr/*' })` dans `watch.ts`) et lui envoie
+l'ordre ; à défaut d'onglet Vinted, le clic en ouvre un (§5.1). C'est une contrainte, et
+c'est aussi le comportement le plus humain qui soit : le trafic n'existe que quand
+l'utilisateur est réellement sur le site.
+
+**La contrainte a été rediscutée le 30 juillet 2026 et maintenue.** La lever voudrait
+dire émettre depuis un onglet caché ou depuis le service worker ; le tableau ci-dessus
+dit ce que coûte la seconde option, et la première butte sur le bridage des timers d'un
+onglet caché (Chrome les plafonne à un par minute après cinq minutes — un cycle de 48
+articles prendrait la soirée, avec des délais qui ne ressemblent plus à rien d'humain).
+Ce qui a changé n'est donc pas la contrainte mais son coût : le cycle **attend**
+l'onglet au lieu de se perdre (§3.6), et le panneau dit à chaque instant quel geste le
+débloque (§5.1).
 
 ## 2. Modèle de données
 
@@ -76,7 +85,24 @@ type WatchState = {
   lastSweepAt: number;
   /** Verrou d'onglet, avec bail : un onglet fermé en plein cycle ne bloque pas à vie. */
   lease?: { tabId: number; until: number };
-  progress?: { done: number; total: number; startedAt: number };
+  /**
+   * `at` et `paused` ajoutés le 30 juillet 2026. `at` avance à chaque article
+   * **et** pendant une pause (§3.6) : c'est le seul signe de vie du cycle, et donc
+   * le seul moyen de distinguer un cycle en cours d'un `progress` laissé par un
+   * onglet fermé en plein travail — voir `isSweepStale()`.
+   */
+  progress?: {
+    done: number;
+    total: number;
+    startedAt: number;
+    at?: number;
+    paused?: boolean;
+  };
+  /**
+   * L'onglet Chrome porteur, écrit par le panneau — seul à connaître ces
+   * identifiants — pour le lien de §6.10. Ajouté le 30 juillet 2026.
+   */
+  host?: { tabId: number; windowId?: number };
   /** Fenêtre de silence après un 429 ou un challenge. Aucune requête avant. */
   throttledUntil?: number;
   /** Seau à jetons, partagé entre tous les onglets — voir §3.2. */
@@ -163,6 +189,26 @@ Ne lancer un cycle que lorsqu'un onglet Vinted est visible
 Effet secondaire utile : Chrome bride les timers des onglets cachés, ce qui étirerait
 les délais de §3.3 de façon incontrôlée.
 
+**Corrigé le 30 juillet 2026 : « suspendre » se lisait « abandonner ».** La boucle
+sortait sur un `break` dès que l'onglet passait en arrière-plan, et le cycle était perdu
+— un onglet effleuré une seconde suffisait. L'utilisateur ne voyait que le compteur
+disparaître, sans un mot.
+
+Désormais le cycle **attend** (`awaitForeground()`) : il bat `progress.at` toutes les 20
+s en marquant `paused: true`, se réveille sur `visibilitychange`, et reprend où il en
+était. Trois conséquences qui tiennent ensemble :
+
+- le bail **n'est pas** renouvelé pendant la pause. Il expire en une minute, et un autre
+  onglet Vinted — lui visible — peut reprendre le travail. Un cycle qui dort ne garde
+  pas le verrou contre un cycle qui peut tourner ;
+- au bout de 15 minutes en arrière-plan, on rend la main pour de bon : reprendre ne
+  rendrait plus service, et le prochain déclencheur repartira d'une file recomposée ;
+- le battement est ce qui rend la mort du porteur détectable. Sans lui, un onglet fermé
+  en plein cycle laissait un `progress` éternel en storage — voir §6.1.
+
+Reste que la pause est réelle et qu'elle se paie : un cycle sur un onglet caché n'avance
+pas. C'est le prix de §1, assumé.
+
 ## 4. Détection de « vendu », conservatrice
 
 La règle, en cas de doute : **ne rien écrire.**
@@ -193,11 +239,39 @@ visible, affiche `12/48` en place de son libellé, et se re-clique pour annuler.
 `throttledUntil`, avec un message explicite : « Vinted nous a freinés, réessai dans 22
 min ». Mieux vaut le dire que faire semblant.
 
+**Révisé le 30 juillet 2026, sur signalement : « cliquer ne fait rien ».** Ce n'était
+jamais une panne, toujours une décision prise en silence. Quatre causes, un seul
+principe de correction — **un clic produit toujours quelque chose à l'écran, et jamais
+un blocage** :
+
+| Ce qui se passait                                                                                                                        | Ce qui se passe                                                                                             |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `findVintedTab()` prenait le **premier** onglet Vinted rendu par `chrome.tabs.query`, souvent un onglet caché que §3.6 stoppait aussitôt | élection par capacité réelle à émettre : onglet actif de la fenêtre, sinon on l'active, sinon on prévient   |
+| sans onglet Vinted, bouton `disabled` : aucun événement, donc aucune explication                                                         | le clic **ouvre** un onglet Vinted, attend l'injection du content script (`VF_PING`) et lance le cycle      |
+| refus du content script (bail tenu ailleurs, onglet muet) journalisé en console                                                          | le refus s'affiche, avec le geste à faire quand il y en a un (« Recharge l'onglet Vinted (Cmd+R) »)         |
+| `progress` laissé par un onglet fermé figeait le bouton sur `12/48` à vie, chaque clic étant compris comme une annulation                | un cycle sans battement depuis 2 min n'est plus un cycle en cours (`isSweepStale()`), le clic en relance un |
+
+Le libellé du bouton dépend des onglets ouverts, qui changent sans que le storage bouge
+: le panneau se repeint donc aussi sur `chrome.tabs.onActivated`, `onRemoved` et un
+changement d'URL. Sans ces écoutes, un panneau ouvert avant Vinted gardait à vie son «
+Ouvre un onglet Vinted » — et, du temps où ce libellé venait avec un bouton `disabled`,
+un bouton mort alors que Vinted était sous les yeux.
+
+L'annulation efface `progress` **depuis le panneau**, sans attendre que le porteur le
+fasse : il peut être en pause, à vingt secondes de son prochain battement, et un bouton
+doit répondre au clic. Corollaire côté content script : la boucle ne recrée jamais un
+`progress` effacé, sous peine de faire clignoter le bouton en « en cours » juste après
+un clic sur Annuler.
+
 ### 5.2 À l'ouverture du panneau, si `lastSweepAt` remonte à plus d'une heure
 
 Cycle silencieux en tâche de fond, non bloquant, sans indicateur intrusif — seulement le
-compteur discret dans le bouton. Si aucun onglet Vinted n'est ouvert : on ne fait rien,
-et on ne le signale pas (rien ne serait actionnable).
+compteur discret dans le bouton. Si aucun onglet Vinted **visible** n'est ouvert : on ne
+fait rien, et on ne le signale pas (rien ne serait actionnable). La visibilité compte
+ici depuis le 30 juillet 2026 : élire un onglet caché ferait démarrer un cycle qui se
+mettrait aussitôt en pause (§3.6), laissant un compteur figé dans un bouton que personne
+n'a touché. Contrairement au bouton, ce déclencheur reste muet de bout en bout — aucun
+refus ne s'affiche, personne n'a rien demandé.
 
 Le plafond de ~25 articles d'origine a été supprimé sur demande explicite (même
 changement que §3.2) : le déclencheur silencieux couvre désormais tous les articles
@@ -248,14 +322,28 @@ Un troisième bouton dans `.sortbar`, à côté de « Tout ouvrir », au même s
 └─────────────────────────────────────────────┘
 ```
 
-Quatre états, tous portés par le même bouton — le libellé change, jamais la position :
+Cinq états, tous portés par le même bouton — le libellé change, jamais la position.
+**Aucun n'est `disabled`** (révision du 30 juillet 2026, voir §5.1) :
 
-| État                | Libellé          | `title`                                             | Clic                |
-| ------------------- | ---------------- | --------------------------------------------------- | ------------------- |
-| Repos               | `Rafraîchir`     | « Dernière vérification il y a 3 h »                | lance un cycle      |
-| En cours            | `12/48`          | « Annuler le rafraîchissement »                     | annule              |
-| Freiné (§3.5)       | `Réessai 22 min` | « Vinted a limité nos requêtes, reprise à 15 h 40 » | inerte (`disabled`) |
-| Aucun onglet Vinted | `Rafraîchir`     | « Ouvre un onglet Vinted pour rafraîchir »          | inerte (`disabled`) |
+| État                | Libellé          | `title`                                                 | Clic                             |
+| ------------------- | ---------------- | ------------------------------------------------------- | -------------------------------- |
+| Repos               | `Rafraîchir`     | « Dernière vérification il y a 3 h »                    | lance un cycle                   |
+| En cours            | `12/48`          | « Annuler le rafraîchissement »                         | annule                           |
+| En pause (§3.6)     | `12/48`          | « En pause — reviens sur l'onglet Vinted, ou annule »   | annule ; l'icône ne tourne plus  |
+| Freiné (§3.5)       | `Réessai 22 min` | « Vinted nous a freinés, reprise à 15 h 40 »            | répète la raison et l'échéance   |
+| Aucun onglet Vinted | `Rafraîchir`     | « Ouvre un onglet Vinted et lance le rafraîchissement » | en ouvre un, puis lance le cycle |
+
+Ce qui décide entre lancer et annuler est l'état lu au dernier rendu, **pas la classe
+`is-running` du bouton** : l'icône ne tourne pas pendant une pause alors que le cycle
+est bien en cours, et un état visuel n'est de toute façon pas une source de vérité.
+
+Deux registres de message, à ne pas confondre :
+
+- `#watch-notice` porte un **état durable** — cycle en cours, en pause, freinage,
+  absence d'onglet Vinted — et reste tant qu'il dure. Pendant un cycle, la phrase
+  contient un **lien** vers l'onglet qui le porte (§6.10) ;
+- `flash()` (dans `#hint`, 5 s) porte l'**événement** : retour immédiat du clic, refus
+  du content script, onglet ouvert ou activé, résumé de fin de cycle (§6.7).
 
 L'icône est une flèche circulaire, animée en rotation continue **pendant le cycle
 seulement**. Le libellé `12/48` était à l'origine mis à jour par paliers de 5 pour
@@ -268,10 +356,13 @@ répond pas sans expliquer pourquoi est le pire des deux mondes.
 
 **Ajouté le 28 juillet 2026, sur demande explicite.** Pendant l'état « En cours »
 seulement, une ligne apparaît sous la barre de tri (`#watch-notice`, juste sous
-`#watchbar`) : « Rafraîchissement en cours — ne change pas d'onglet Vinted, ça mettrait
-le cycle en pause. » Ce n'est pas décoratif : §3.6 suspend réellement le cycle dès que
-`document.visibilityState` de l'onglet Vinted n'est plus `'visible'`, et rien d'autre
-dans l'interface ne le disait explicitement.
+`#watchbar`) : « Rafraîchissement en cours — si tu changes d'onglet, le cycle se met en
+pause et reprend à ton retour. » Ce n'est pas décoratif : §3.6 suspend réellement le
+cycle dès que `document.visibilityState` de l'onglet Vinted n'est plus `'visible'`, et
+rien d'autre dans l'interface ne le disait explicitement. La formulation a suivi la
+correction du 30 juillet : le cycle n'est plus perdu, il attend — l'ancienne phrase («
+ça mettrait le cycle en pause ») décrivait une menace, la nouvelle décrit ce qui arrive
+vraiment.
 
 ### 6.2 La ligne d'article — anatomie des trois cas
 
@@ -453,30 +544,91 @@ rafraîchissement de fond qui annonce son propre néant est une notification de 
 
 ### 6.9 Récapitulatif des ajouts au DOM du panneau
 
-| Élément                                                                        | Emplacement                                                                                                      |
-| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `<button id="refresh" class="dir">` + libellé `#refresh-label`                 | `.sortbar` de `sidepanel.html`                                                                                   |
-| `<p class="hint watchbar" id="watchbar" hidden>`                               | sous `#hint`                                                                                                     |
-| `<p class="hint" id="watch-notice" hidden>`                                    | sous `#watchbar`, ajouté le 28 juillet 2026 : rappelle de ne pas changer d'onglet Vinted pendant un cycle (§3.6) |
-| `<span class="item-price-was">` (`<s>`) et `<button class="item-price-delta">` | dans `.item-price` du template                                                                                   |
-| `<span class="item-status-badge">`                                             | dans `.item-price`, après le prix                                                                                |
-| `<div id="price-history" class="menu" hidden>`                                 | à côté de `#move-menu`                                                                                           |
-| `.item--sold`, `.item--gone`                                                   | classes posées sur `.item`                                                                                       |
+| Élément                                                                        | Emplacement                                                                                                                          |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `<button id="refresh" class="dir">` + libellé `#refresh-label`                 | `.sortbar` de `sidepanel.html`                                                                                                       |
+| `<p class="hint watchbar" id="watchbar" hidden>`                               | sous `#hint`                                                                                                                         |
+| `<p class="hint" id="watch-notice" hidden>`                                    | sous `#watchbar`, ajouté le 28 juillet 2026 : l'état durable du cycle — en cours, en pause (§3.6), freiné, sans onglet Vinted (§6.1) |
+| `<span class="item-price-was">` (`<s>`) et `<button class="item-price-delta">` | dans `.item-price` du template                                                                                                       |
+| `<span class="item-status-badge">`                                             | dans `.item-price`, après le prix                                                                                                    |
+| `<button class="link">` dans `#watch-notice`                                   | ajouté le 30 juillet 2026 : le lien de §6.10, au milieu de la phrase d'état                                                          |
+| `<div id="price-history" class="menu" hidden>`                                 | à côté de `#move-menu`                                                                                                               |
+| `.item--sold`, `.item--gone`                                                   | classes posées sur `.item`                                                                                                           |
+
+### 6.10 Quel onglet porte le cycle — marquage et retour
+
+**Ajouté le 30 juillet 2026, sur demande.** Le cycle tourne dans **un** onglet Vinted
+(§1, §3.2) et rien ne disait lequel. Avec trois onglets ouverts, « reviens sur ton
+onglet Vinted » ne désignait rien : l'utilisateur ne pouvait ni savoir sur lequel
+revenir, ni voir qu'il était déjà au bon endroit. Trois marques, chacune répondant à une
+question différente :
+
+| Marque                                           | Où          | Répond à                                      |
+| ------------------------------------------------ | ----------- | --------------------------------------------- |
+| `🔄` en tête du titre de l'onglet (`⏸` en pause) | page Vinted | « lequel de mes onglets ? » — sans le quitter |
+| Bandeau `Rafraîchissement des favoris — 12/48`   | page Vinted | « où en est-il ? » — une fois sur l'onglet    |
+| Lien dans `#watch-notice`                        | panneau     | « comment y retourner ? » — d'un clic         |
+
+Le titre est la seule des trois qui se lise **sans quitter l'onglet où l'on est**, donc
+la seule qui serve à _trouver_ le porteur dans la barre d'onglets. C'est elle qui compte
+le plus, et le bandeau ne fait que confirmer une fois qu'on y est.
+
+Le bandeau a d'abord été une pastille en bas à gauche, dans la pile des autres
+(`ui.ts`). **Remplacé le 30 juillet 2026 sur retour d'usage : trop discret.** Une
+information qu'on cherche activement — « est-ce cet onglet-là ? » — doit se voir en
+arrivant, pas se chercher. Le bandeau tient toute la largeur en haut de la fenêtre,
+porte une jauge de 3 px collée à son bas (l'avancement se lit alors sans être lu, ce que
+« 12/48 » ne permet pas), et passe en gris en pause plutôt que de répéter la même chose
+dans la même couleur.
+
+Il **recouvre** l'en-tête de Vinted plutôt que de décaler la page : décaler demanderait
+de toucher au `padding` du `body`, et la mise en page collante de Vinted s'en accommode
+mal.
+
+Trois détails qui ne sont pas cosmétiques :
+
+- **le préfixe se retire du titre courant, jamais restauré depuis une valeur
+  mémorisée.** Vinted est une application monopage : le titre change légitimement
+  pendant un cycle qui dure, et restaurer une capture d'il y a dix minutes réafficherait
+  le nom d'un article qu'on a quitté depuis. Écrire dans `document.title` ne réveille
+  pas le `MutationObserver` de `content.ts` (il surveille `document.body`, et `<title>`
+  vit dans `<head>`), mais l'écriture reste conditionnelle par principe — règle 3 ;
+- **le bandeau est inerte aux clics** (`pointer-events: none`). Il masque la barre de
+  recherche le temps du cycle et ne porte aucune action : avaler en plus les clics qui
+  la visaient serait un effet de bord gratuit. Les règles 1 et 2 n'ont alors plus prise
+  sur lui, faute de zone de survol ;
+- **la largeur de la jauge est un style en ligne**, donc un attribut : le
+  `MutationObserver` n'observe que `childList` et `subtree`, elle ne coûte aucun scan.
+  Le bandeau lui-même figure dans les deux listes d'exclusion (`SWEEP_BAR_SELECTOR`),
+  sans quoi chaque article vérifié aurait relancé un scan complet de la page — règle 3.
+
+Le lien du panneau a besoin de l'`id` d'onglet Chrome, que le content script **ne peut
+pas connaître** — c'est pourquoi `lease.tabId` est un identifiant d'instance, bon à
+comparer mais à rien d'autre. Le panneau, lui, le connaît : il l'écrit dans `watch.host`
+au moment d'envoyer l'ordre, avant que le content script n'écrive son premier
+`progress`. Le clic active l'onglet **et** remet sa fenêtre au premier plan — sans quoi
+l'onglet deviendrait actif dans une fenêtre restée derrière, donc toujours invisible,
+donc toujours en pause. Si l'onglet a été fermé entretemps, `chrome.tabs.update` lève et
+le panneau le dit.
+
+Le libellé du lien est « l'onglet Vinted responsable du rafraîchissement » : il désigne
+un onglet précis, là où « ton onglet Vinted » supposait qu'il n'y en avait qu'un.
 
 ## 7. Découpage
 
-| Fichier                                      | Rôle                                                                                                                         |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `src/shared/types.ts`                        | les 4 champs, `PricePoint`, `WatchState`, `PRICE_HISTORY_MAX`                                                                |
-| `src/shared/watch.ts` _(nouveau, pur)_       | `pushPricePoint()`, `applyCheckResult()`, `dueForCheck()`, `priceDropRatio()`, `takeToken()` — **aucun accès Chrome**        |
-| `src/shared/messages.ts`                     | `VF_WATCH_START { ids }`, `VF_WATCH_CANCEL`, réponse `{ accepted, reason }`                                                  |
-| `src/content/content.ts`                     | handler des messages + `runWatchQueue()` : réutilise `enrichFromDetail()` et sa sérialisation, avec le jitter et le bail     |
-| `src/sidepanel/watch.ts` _(nouveau)_         | élection de l'onglet, envoi de l'ordre, lecture de `watch`, rendu du bouton (§6.1)                                           |
-| `src/sidepanel/price-history.ts` _(nouveau)_ | popover d'historique : tracé SVG en escalier, lignes datées (§6.4)                                                           |
-| `src/sidepanel/sorting.ts`                   | mode `priceDrop` : clé, sens par défaut, libellés (§6.6)                                                                     |
-| `src/sidepanel/sidepanel.{ts,html,css}`      | badges, ligne grisée-barrée, ligne d'état des vendus, archivage groupé (§6.2 à §6.9)                                         |
-| `src/sidepanel/store.ts`                     | `hideSold` dans `Settings`, `archiveSold()` et son annulation                                                                |
-| `src/manifest.ts`                            | **rien à ajouter** — `storage` et les `host_permissions` Vinted suffisent, `alarms` est inutile puisqu'il n'y a pas de timer |
+| Fichier                                      | Rôle                                                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/shared/types.ts`                        | les 4 champs, `PricePoint`, `WatchState`, `PRICE_HISTORY_MAX`                                                                              |
+| `src/shared/watch.ts` _(nouveau, pur)_       | `pushPricePoint()`, `applyCheckResult()`, `dueForCheck()`, `priceDropRatio()`, `takeToken()` — **aucun accès Chrome**                      |
+| `src/shared/messages.ts`                     | `VF_WATCH_START { ids }`, `VF_WATCH_CANCEL`, `VF_PING`, réponse `{ accepted, reason }`                                                     |
+| `src/content/content.ts`                     | handler des messages + `runWatchQueue()` : réutilise `enrichFromDetail()` et sa sérialisation, avec le jitter, le bail et la pause de §3.6 |
+| `src/content/watch-ui.ts` _(nouveau)_        | marque du titre de l'onglet et bandeau d'avancement, dans la page Vinted (§6.10)                                                           |
+| `src/sidepanel/watch.ts` _(nouveau)_         | élection de l'onglet (§5.1), envoi de l'ordre, lecture de `watch`, rendu du bouton (§6.1), retour vers l'onglet porteur (§6.10)            |
+| `src/sidepanel/price-history.ts` _(nouveau)_ | popover d'historique : tracé SVG en escalier, lignes datées (§6.4)                                                                         |
+| `src/sidepanel/sorting.ts`                   | mode `priceDrop` : clé, sens par défaut, libellés (§6.6)                                                                                   |
+| `src/sidepanel/sidepanel.{ts,html,css}`      | badges, ligne grisée-barrée, ligne d'état des vendus, archivage groupé (§6.2 à §6.9)                                                       |
+| `src/sidepanel/store.ts`                     | `hideSold` dans `Settings`, `archiveSold()` et son annulation                                                                              |
+| `src/manifest.ts`                            | **rien à ajouter** — `storage` et les `host_permissions` Vinted suffisent, `alarms` est inutile puisqu'il n'y a pas de timer               |
 
 Le passage de `SortMode` à un membre de plus fait réclamer par le compilateur les
 entrées manquantes de `DEFAULT_DIR` et `DIR_LABELS` : c'est voulu.

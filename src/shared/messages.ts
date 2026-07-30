@@ -23,6 +23,21 @@ export type DiagnoseRequest = { type: 'VF_DIAGNOSE' };
 export type WatchStartRequest = { type: 'VF_WATCH_START'; ids: string[] };
 export type WatchCancelRequest = { type: 'VF_WATCH_CANCEL' };
 
+/**
+ * « Y a-t-il un content script à jour dans cet onglet ? »
+ *
+ * Sert au panneau à distinguer deux situations que `chrome.tabs.sendMessage`
+ * rend identiques (une erreur laconique) : un onglet Vinted ouvert avant le
+ * chargement de l'extension, où il faut demander un Cmd+R, et un onglet
+ * fraîchement créé où il suffit d'attendre l'injection.
+ *
+ * Message à part, et non un repli sur `VF_DIAGNOSE` : sonder ne doit rien
+ * coûter, là où le diagnostic parcourt le DOM entier.
+ */
+export type PingRequest = { type: 'VF_PING' };
+
+export type PingResponse = { ok: true };
+
 export type WatchStartResponse = {
   accepted: boolean;
   /** Raison du refus, en français : sert directement à l'affichage du bouton. */
@@ -50,4 +65,4 @@ export type OffersScanResponse = {
 
 /** Union de tout ce qu'un content script peut recevoir. */
 export type ExtensionMessage =
-  DiagnoseRequest | WatchStartRequest | WatchCancelRequest | OffersScanRequest;
+  DiagnoseRequest | PingRequest | WatchStartRequest | WatchCancelRequest | OffersScanRequest;
