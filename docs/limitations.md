@@ -13,7 +13,7 @@ elle, est reconnue par vocabulaire français dans `sorting.ts`.
 un transfert manuel.
 
 **Articles vendus.** Vérifiés par le bouton « Rafraîchir » du panneau et par le
-déclencheur silencieux à l'ouverture (au-delà d'une heure) — voir
+déclencheur silencieux à l'ouverture (au-delà de deux heures) — voir
 [docs/specs/suivi-prix.md](specs/suivi-prix.md). Aucun rafraîchissement n'a lieu sans
 onglet Vinted ouvert : un article resté longtemps sans onglet Vinted actif garde l'état
 de sa dernière vérification, éventuellement périmé.
@@ -134,9 +134,9 @@ Voir [docs/specs/offres.md](specs/offres.md) pour le mécanisme ; ce qui suit es
 qu'il ne fait pas.
 
 **Une offre n'apparaît qu'après un balayage**, déclenché à l'ouverture du panneau et au
-plus une fois par quart d'heure — et jamais sans onglet Vinted ouvert, l'API refusant
-les requêtes sans cookies de session. Une offre faite à l'instant peut donc mettre
-quelques minutes à s'afficher.
+plus une fois par demi-heure — et jamais sans onglet Vinted ouvert, l'API refusant les
+requêtes sans cookies de session. Une offre faite à l'instant peut donc mettre quelques
+minutes à s'afficher.
 
 **Le premier balayage est étalé.** L'historique se lit par tranches de 40 conversations,
 une par ouverture du panneau : sur une messagerie de plusieurs centaines d'échanges, les

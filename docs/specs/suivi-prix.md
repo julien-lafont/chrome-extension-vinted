@@ -81,7 +81,7 @@ fermeture du panneau comme à l'arrêt du service worker.
 
 ```ts
 type WatchState = {
-  /** Fin du dernier cycle complet. Base du déclencheur « > 1 h ». */
+  /** Fin du dernier cycle complet. Base du déclencheur « > 2 h ». */
   lastSweepAt: number;
   /** Verrou d'onglet, avec bail : un onglet fermé en plein cycle ne bloque pas à vie. */
   lease?: { tabId: number; until: number };
@@ -131,15 +131,19 @@ triplé sans que personne ne l'ait demandé. D'où deux mécanismes :
   `CLAUDE.md`), qui plafonne le débit indépendamment du nombre de déclencheurs :
 
 ```ts
-const RATE = { capacity: 48, refillPerMinute: 48 }; // pointe de 48, régime de 48/min
+const RATE = { capacity: 24, refillPerMinute: 24 }; // pointe de 24, régime de 24/min
 ```
 
-Un plafond quotidien s'y ajoute (`DAILY_CAP = 10000`, en pratique non contraignant). La
+Un plafond quotidien s'y ajoute (`DAILY_CAP = 5000`, en pratique non contraignant). La
 valeur d'origine de cette spec (~80 fiches/jour, capacité 12, régime 6/min) était
 calibrée pour rester indiscernable d'une navigation soutenue ; ces valeurs ont été
 relevées en deux temps sur demande explicite le 28 juillet 2026 (24/12 puis 48/48), en
-connaissance de cause du compromis anti-détection que §3 décrit — au régime actuel, le
-débit ne ressemble plus à une navigation humaine.
+connaissance de cause du compromis anti-détection que §3 décrit.
+
+**Redescendues de moitié le 30 juillet 2026** (48/48 → 24/24, plafond 10000 → 5000) :
+Vinted renvoyait des 429 au régime précédent. Le même jour, et pour la même raison, les
+délais de §3.3 ont doublé, et le déclencheur silencieux de §5.2 est passé d'une heure à
+deux.
 
 ### 3.3 Une cadence irrégulière
 
@@ -149,13 +153,13 @@ une distribution log-normale, et on y ajoute des pauses longues :
 ```ts
 /**
  * Un humain qui parcourt des fiches n'a pas de période. On tire un délai log-normal
- * (médiane ~0,5 s) et, une fois sur 100, on ajoute une pause de 10 à 30 s : la
+ * (médiane ~1 s) et, une fois sur 50, on ajoute une pause de 20 à 60 s : la
  * « lecture » d'une fiche. Le coût en durée totale est réel mais le cycle tourne en
  * fond — personne ne l'attend.
  */
 function nextDelay(): number {
-  const base = Math.exp(Math.log(500) + gauss() * 0.55);
-  return Math.random() < 0.01 ? base + 10000 + Math.random() * 20000 : base;
+  const base = Math.exp(Math.log(1000) + gauss() * 0.55);
+  return Math.random() < 0.02 ? base + 20000 + Math.random() * 40000 : base;
 }
 ```
 
@@ -168,15 +172,20 @@ tranches** d'une dizaine d'articles pour casser la régularité sans perdre la p
 
 ### 3.5 Un backoff sur signal
 
-`429` ou `403` : arrêt immédiat du cycle, `throttledUntil = now + 30 min × 2^n` avec
+`429` ou `403` : arrêt immédiat du cycle, `throttledUntil = now + 10 min × 2^n` avec
 jitter, et on n'y retouche pas. **Un article en échec n'est jamais rejoué dans le même
 cycle.**
+
+La base était de 30 min ; ramenée à 10 le 30 juillet 2026. Ce qui protège du 429, c'est
+le débit du §3.2, pas la longueur du silence : un premier réessai renvoyé à plus d'une
+heure privait l'utilisateur de tout rafraîchissement pour un coup de frein passager.
+L'escalade en 2^n reste, elle, pour le cas où Vinted freine vraiment.
 
 Une réponse dont le HTML ne contient aucune ancre connue est plus ambiguë : c'est le
 visage d'un challenge Cloudflare, mais aussi celui d'un article dont Vinted ne sert plus
 les informations — sa page affiche brièvement la fiche puis renvoie vers le dressing du
 vendeur, redirection décidée côté client. Rien dans la réponse ne les distingue, et
-freiner dès la première mettait tout le cycle en sommeil 30 min pour un seul article
+freiner dès la première mettait tout le cycle en sommeil pour un seul article
 momentanément illisible. Ce qui les sépare, c'est la portée : **un challenge frappe
 toutes les requêtes, jamais une seule.** On passe donc à l'article suivant, et l'on ne
 freine qu'à la **deuxième réponse illisible d'affilée** — une requête de plus, contre un
@@ -249,7 +258,7 @@ un blocage** :
 | `findVintedTab()` prenait le **premier** onglet Vinted rendu par `chrome.tabs.query`, souvent un onglet caché que §3.6 stoppait aussitôt | élection par capacité réelle à émettre : onglet actif de la fenêtre, sinon on l'active, sinon on prévient   |
 | sans onglet Vinted, bouton `disabled` : aucun événement, donc aucune explication                                                         | le clic **ouvre** un onglet Vinted, attend l'injection du content script (`VF_PING`) et lance le cycle      |
 | refus du content script (bail tenu ailleurs, onglet muet) journalisé en console                                                          | le refus s'affiche, avec le geste à faire quand il y en a un (« Recharge l'onglet Vinted (Cmd+R) »)         |
-| `progress` laissé par un onglet fermé figeait le bouton sur `12/48` à vie, chaque clic étant compris comme une annulation                | un cycle sans battement depuis 2 min n'est plus un cycle en cours (`isSweepStale()`), le clic en relance un |
+| `progress` laissé par un onglet fermé figeait le bouton sur `12/48` à vie, chaque clic étant compris comme une annulation                | un cycle sans battement depuis 4 min n'est plus un cycle en cours (`isSweepStale()`), le clic en relance un |
 
 Le libellé du bouton dépend des onglets ouverts, qui changent sans que le storage bouge
 : le panneau se repeint donc aussi sur `chrome.tabs.onActivated`, `onRemoved` et un
@@ -316,7 +325,7 @@ Alt+clic et Alt+Entrée mènent au même endroit sans l'attente — mêmes racco
 choix de collection du content script, et le seul accès clavier : un appui long n'existe
 pas au clavier, la répétition de touche n'en est pas un.
 
-### 5.2 À l'ouverture du panneau, si `lastSweepAt` remonte à plus d'une heure
+### 5.2 À l'ouverture du panneau, si `lastSweepAt` remonte à plus de deux heures
 
 Cycle silencieux en tâche de fond, non bloquant, sans indicateur intrusif — seulement le
 compteur discret dans le bouton. Si aucun onglet Vinted **visible** n'est ouvert : on ne
@@ -733,5 +742,5 @@ chaque résultat dans `savedItems`, voir §6.8.
    (§6.2, §6.3), état vendu (§6.2), tri « Baisse de prix » (§6.6), ligne d'état et
    archivage (§6.5), popover d'historique (§6.4) — ce dernier est le plus coûteux et le
    moins consulté, il vient en dernier.
-4. Déclencheur « plus d'une heure » à l'ouverture du panneau.
+4. Déclencheur « plus de deux heures » à l'ouverture du panneau.
 5. _(phase 2)_ Déclencheur opportuniste à 6 h sur page Vinted.

@@ -16,11 +16,13 @@ import type { PricePoint, SavedItem, WatchProgress, WatchState } from './types.t
 /**
  * Au-delà de ce silence, le cycle annoncé par `progress` est réputé mort.
  *
- * Deux minutes tiennent large : entre deux articles il y a au pire le délai de
- * §3.3 (jusqu'à ~30 s de « lecture ») plus le délai d'expiration d'une fiche
- * (15 s), et pendant une pause le porteur bat toutes les 20 s.
+ * Quatre minutes tiennent large : entre deux articles il y a au pire le délai
+ * de §3.3 (jusqu'à ~60 s de « lecture » depuis que les délais ont doublé) plus
+ * le délai d'expiration d'une fiche (15 s), et pendant une pause le porteur bat
+ * toutes les 20 s. Deux minutes ne laissaient plus qu'une marge d'une minute :
+ * un cycle bien vivant, arrêté sur une longue « lecture », y passait pour mort.
  */
-export const SWEEP_STALE_MS = 2 * 60 * 1000;
+export const SWEEP_STALE_MS = 4 * 60 * 1000;
 
 /**
  * Un `progress` sans porteur vivant — onglet fermé, page rechargée ou content
@@ -237,8 +239,13 @@ export function orderForCheck(items: SavedItem[], random: () => number = Math.ra
 // Débit — §3.2
 // ---------------------------------------------------------------------------
 
-/** Pointe de 48 requêtes, régime de croisière de 48 par minute. */
-export const RATE = { capacity: 48, refillPerMinute: 48 } as const;
+/**
+ * Pointe de 24 requêtes, régime de croisière de 24 par minute.
+ *
+ * Divisé par deux le 30 juillet 2026 : au régime précédent (48/48), Vinted
+ * renvoyait des 429. Voir §3.2 de `docs/specs/suivi-prix.md`.
+ */
+export const RATE = { capacity: 24, refillPerMinute: 24 } as const;
 
 export type TokenBucket = { tokens: number; at: number };
 
@@ -260,7 +267,7 @@ export function takeToken(bucket: TokenBucket, now: number): { ok: boolean; buck
 }
 
 /** Plafond quotidien, en complément du seau — voir `WatchState.dailyBudget`. */
-export const DAILY_CAP = 10000;
+export const DAILY_CAP = 5000;
 
 function dayKey(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
@@ -290,12 +297,18 @@ export function isThrottled(state: Pick<WatchState, 'throttledUntil'>, now: numb
 }
 
 /**
- * 30 min × 2^n avec jitter. `strikes` est le nombre de coups de frein déjà
+ * 10 min × 2^n avec jitter. `strikes` est le nombre de coups de frein déjà
  * subis d'affilée ; l'appelant l'incrémente à chaque signal et le remet à 0 au
  * premier cycle qui aboutit sans en subir.
+ *
+ * La base est courte **volontairement** : c'est le débit du §3.2 qui protège
+ * du 429, pas la longueur du silence. Un premier réessai à une heure laissait
+ * l'utilisateur sans rafraîchissement toute une soirée pour un seul coup de
+ * frein passager ; l'escalade en 2^n reste là pour le cas où Vinted freine
+ * vraiment (10, 20, 40, 80 min…).
  */
 export function nextThrottle(now: number, strikes: number): number {
-  const base = 30 * 60 * 1000 * 2 ** Math.max(0, strikes);
+  const base = 10 * 60 * 1000 * 2 ** Math.max(0, strikes);
   return now + base + Math.random() * base * 0.2;
 }
 
@@ -312,12 +325,15 @@ function gauss(): number {
 
 /**
  * Délai avant la prochaine requête du cycle. Un humain qui parcourt des fiches
- * n'a pas de période : on tire un délai log-normal (médiane ~0,5 s) et, une
- * fois sur 100, on ajoute une pause de 10 à 30 s — la « lecture » d'une fiche.
- * Le coût en durée totale est réel mais le cycle tourne en fond, personne ne
+ * n'a pas de période : on tire un délai log-normal (médiane ~1 s) et, une fois
+ * sur 50, on ajoute une pause de 20 à 60 s — la « lecture » d'une fiche. Le
+ * coût en durée totale est réel mais le cycle tourne en fond, personne ne
  * l'attend.
+ *
+ * Toutes ces valeurs ont été doublées le 30 juillet 2026, en même temps que
+ * `RATE` était divisé par deux, en réponse à des 429.
  */
 export function nextDelay(): number {
-  const base = Math.exp(Math.log(500) + gauss() * 0.55);
-  return Math.random() < 0.01 ? base + 10000 + Math.random() * 20000 : base;
+  const base = Math.exp(Math.log(1000) + gauss() * 0.55);
+  return Math.random() < 0.02 ? base + 20000 + Math.random() * 40000 : base;
 }

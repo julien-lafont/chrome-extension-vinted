@@ -28,19 +28,23 @@ import type { ItemMap, ItemOffer, OffersScanState } from '../shared/types.ts';
  * de tenir la page pendant une minute. L'incrémental, lui, n'en atteint jamais
  * le plafond — il ne lit que ce qui a bougé.
  */
-const MAX_DETAILS_PER_SCAN = 40;
+const MAX_DETAILS_PER_SCAN = 20;
 
 /** Pages d'inbox parcourues au plus, garde-fou contre une pagination folle. */
 const MAX_PAGES = 25;
 
 /** Espacement des requêtes. Le rythme d'un humain qui parcourt sa messagerie. */
-const SCAN_DELAY_MS = 400;
+const SCAN_DELAY_MS = 800;
 
 /** Au-delà, la requête est abandonnée : une offre n'est jamais urgente. */
 const TIMEOUT_MS = 8000;
 
-/** Silence après un 429 ou un 403, comme le cycle de suivi (§3.5 de suivi-prix.md). */
-const THROTTLE_MS = 30 * 60 * 1000;
+/**
+ * Silence après un 429 ou un 403, aligné sur la base du cycle de suivi (§3.5 de
+ * suivi-prix.md). Pas d'escalade ici : un scan ne coûte qu'une requête en régime
+ * courant, il n'y a rien à faire décroître.
+ */
+const THROTTLE_MS = 10 * 60 * 1000;
 
 const PER_PAGE = 20;
 

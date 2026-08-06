@@ -185,7 +185,7 @@ grandeur (quelques kilo-octets de JSON contre plusieurs mégaoctets de HTML).
 **Déclenchement** : le panneau envoie `VF_OFFERS_SCAN` à un onglet Vinted à son
 ouverture, si le dernier scan remonte à plus de {@link SCAN_EVERY_MS}. Indépendant du
 cycle de suivi, et non greffé dessus : le suivi est freiné par un budget quotidien et
-une fenêtre d'une heure, dont les offres n'ont pas à hériter.
+une fenêtre de deux heures, dont les offres n'ont pas à hériter.
 
 **Écriture** : une offre n'est écrite que sur un article **présent dans `savedItems`**,
 et jamais par-dessus une offre plus récente — les conversations sont parcourues du plus

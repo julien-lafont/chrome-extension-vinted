@@ -271,7 +271,7 @@ fichier.
 | `vendeur.noteFlux` et `noteDom` tous deux à `null`               | Les deux ancres de la note ont sauté → [vinted-dom.md](vinted-dom.md)                  |
 | `debug.sellerProfilesEmpty` monte seul                           | Les profils sont lus mais n'ont plus de pays → l'ancre `country_code` a changé         |
 | `debug.offersRead: 0` alors qu'une offre existe                  | Le balayage ne part pas : session expirée, ou freinage → voir `offersStopped`          |
-| `debug.offersStopped: "freiné"`                                  | 429/403 sur l'API : silence de 30 min, les offres connues restent affichées            |
+| `debug.offersStopped: "freiné"`                                  | 429/403 sur l'API : silence de 10 min, les offres connues restent affichées            |
 | `debug.offersRead` monte, `offersWritten` reste à 0              | Les conversations sont lues mais ne concernent aucun favori — normal si l'on vend      |
 
 ## Étendre le rapport

@@ -332,11 +332,11 @@ export function sameOffer(a: ItemOffer, b: ItemOffer): boolean {
 
 /**
  * Fraîcheur en deçà de laquelle le panneau ne relance pas de balayage à son
- * ouverture. Un quart d'heure : une offre acceptée ou refusée pendant qu'on
+ * ouverture. Une demi-heure : une offre acceptée ou refusée pendant qu'on
  * chine n'a pas besoin d'être connue à la minute, et l'incrémental ne coûte
  * qu'une requête — c'est la fréquence, pas le volume, qu'il faut tenir.
  */
-export const SCAN_EVERY_MS = 15 * 60 * 1000;
+export const SCAN_EVERY_MS = 30 * 60 * 1000;
 
 /** Une offre en attente, sur un article ni vendu ni retiré : ce que compte la vue. */
 export function isLiveOffer(item: { offer?: ItemOffer; status?: 'sold' | 'gone' }): boolean {

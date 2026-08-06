@@ -291,7 +291,7 @@ export type WatchProgress = {
  * la fermeture du panneau comme à l'arrêt du service worker.
  */
 export type WatchState = {
-  /** Fin du dernier cycle complet. Base du déclencheur « > 1 h » (§5.2). */
+  /** Fin du dernier cycle complet. Base du déclencheur « > 2 h » (§5.2). */
   lastSweepAt: number;
   /**
    * Verrou d'onglet, avec bail : un onglet fermé en plein cycle ne bloque pas à

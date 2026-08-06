@@ -38,8 +38,13 @@ function log(...args: unknown[]): void {
   console.log('[Vinted Favoris][panneau]', ...args);
 }
 
-/** §5.2 : silencieux, et seulement si le dernier cycle date d'assez loin — plus de plafond d'articles. */
-const SILENT_SWEEP_AFTER_MS = 60 * 60 * 1000;
+/**
+ * §5.2 : silencieux, et seulement si le dernier cycle date d'assez loin — plus
+ * de plafond d'articles. Deux heures depuis le 30 juillet 2026 : c'est le
+ * déclencheur qui fixe le nombre de cycles par jour, donc le premier levier
+ * contre les 429.
+ */
+const SILENT_SWEEP_AFTER_MS = 2 * 60 * 60 * 1000;
 
 export type WatchElements = {
   button: HTMLButtonElement;
@@ -841,7 +846,7 @@ export async function resetRateLimits(): Promise<RateLimitCounters> {
 
 /**
  * Déclencheur silencieux (§5.2) : à l'ouverture du panneau, si `lastSweepAt`
- * remonte à plus d'une heure et qu'un onglet Vinted est ouvert, un cycle
+ * remonte à plus de deux heures et qu'un onglet Vinted est ouvert, un cycle
  * démarre sans rien signaler — seul le compteur discret du bouton en
  * témoigne. Sans onglet Vinted, on ne fait rien, et on ne le dit pas non
  * plus : rien n'y serait actionnable.
@@ -861,7 +866,7 @@ export async function maybeStartSilentSweep(): Promise<void> {
     return;
   }
   if (watch && now - watch.lastSweepAt < SILENT_SWEEP_AFTER_MS) {
-    log(`abandon : dernier cycle ${formatAgo(watch.lastSweepAt)} (< 1 h)`);
+    log(`abandon : dernier cycle ${formatAgo(watch.lastSweepAt)} (< 2 h)`);
     return;
   }
 
