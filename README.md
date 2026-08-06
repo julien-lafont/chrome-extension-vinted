@@ -8,6 +8,13 @@ est volontaire — un bouton « Chercher ailleurs » ouvre, sur simple clic, une
 par image (Google Lens) ou une recherche texte à partir de l'article. Voir
 `docs/specs/recherche-inversee.md`. Fonctionne sur `vinted.fr`.
 
+![Panneau latéral avec collections, tri par état et historique de prix](docs/screenshots/1.png)
+
+Autres captures : [historique du prix](docs/screenshots/2.png) ·
+[filtres du catalogue](docs/screenshots/3.png) ·
+[ranger dans une collection depuis la page](docs/screenshots/4.png) ·
+[galerie photo](docs/screenshots/5.png).
+
 ## Installation
 
 ### Depuis une version publiée
