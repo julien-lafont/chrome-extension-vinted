@@ -1,240 +1,240 @@
 # Vinted Favoris
 
-Extension Chrome (Manifest V3) pour enregistrer des articles Vinted en local et les
-retrouver dans un panneau latéral : collections, tri, suivi de prix.
+A Chrome extension (Manifest V3) that saves Vinted listings locally and brings them back
+in a side panel: collections, sorting, price tracking.
 
-Aucun serveur, aucun compte : le stockage est local. La seule action qui sorte du site
-est volontaire — un bouton « Chercher ailleurs » ouvre, sur simple clic, une recherche
-par image (Google Lens) ou une recherche texte à partir de l'article. Voir
-`docs/specs/recherche-inversee.md`. Fonctionne sur `vinted.fr`.
+No server, no account — everything is stored on your machine. The only thing that ever
+leaves the site is something you ask for: a "Chercher ailleurs" (search elsewhere)
+button that runs a reverse image search (Google Lens) or a text search built from the
+listing. The interface itself is in French, like the site it plugs into. See
+`docs/specs/recherche-inversee.md`. Works on `vinted.fr`.
 
-![Panneau latéral avec collections, tri par état et historique de prix](docs/screenshots/1.png)
+![Side panel showing collections, sorting by condition and price history](docs/screenshots/1.png)
 
-Autres captures : [historique du prix](docs/screenshots/2.png) ·
-[filtres du catalogue](docs/screenshots/3.png) ·
-[ranger dans une collection depuis la page](docs/screenshots/4.png) ·
-[galerie photo](docs/screenshots/5.png).
+More screenshots: [price history](docs/screenshots/2.png) ·
+[catalogue filters](docs/screenshots/3.png) ·
+[filing into a collection from the page](docs/screenshots/4.png) ·
+[photo gallery](docs/screenshots/5.png).
 
 ## Installation
 
-### Depuis une version publiée
+### From a published release
 
-1. Télécharger le `.zip` de la [dernière release][releases] et le décompresser
-2. Ouvrir `chrome://extensions`
-3. Activer le **Mode développeur** (en haut à droite)
-4. **Charger l'extension non empaquetée** → sélectionner le dossier décompressé
-5. Épingler l'extension dans la barre d'outils
+1. Download the `.zip` from the [latest release][releases] and unpack it
+2. Open `chrome://extensions`
+3. Turn on **Developer mode** (top right)
+4. Click **Load unpacked** → pick the unpacked folder
+5. Pin the extension to the toolbar
 
-L'extension n'est pas publiée sur le Chrome Web Store : l'installation manuelle est le
-mode de distribution prévu.
+The extension is not on the Chrome Web Store — manual installation is how it is meant to
+be distributed.
 
 [releases]: ../../releases/latest
 
-### Depuis les sources
+### From source
 
 ```bash
 pnpm install
 pnpm build
 ```
 
-Puis charger le dossier **`dist/`** (et non la racine) en suivant les étapes 2 à 5
-ci-dessus.
+Then load the **`dist/`** folder (not the repository root), following steps 2 to 5
+above.
 
-Après toute modification du code : `pnpm build`, bouton ↻ sur la carte de l'extension
-dans `chrome://extensions`, **puis recharger l'onglet Vinted**. Sans ce dernier
-rechargement, `chrome.storage` lève « Extension context invalidated » et les clics
-échouent en silence.
+After every code change: `pnpm build`, hit ↻ on the extension card in
+`chrome://extensions`, **then reload the Vinted tab**. Skip that last reload and
+`chrome.storage` throws "Extension context invalidated" — clicks then fail silently.
 
-## Utilisation
+## Usage
 
-- **Page de recherche** — un bouton marque-page apparaît en haut à droite de chaque
-  article (le favori natif de Vinted reste en bas à droite, aucune collision).
-- **Fiche article** — un bouton « Enregistrer » flotte en bas à droite de l'écran, et le
-  même marque-page apparaît sur les cartes des blocs du bas de page (« Dressing du
-  membre », « Articles similaires »).
-- **Panneau latéral** — clic sur l'icône de l'extension.
-- **Appui long** (≈ ½ seconde) sur l'un ou l'autre de ces boutons — ou `Alt`+clic —
-  ouvre le choix de collection : l'article est enregistré comme d'habitude, puis rangé
-  directement dans la collection choisie, sans passer par le panneau. Une collection
-  peut être créée à la volée depuis ce menu. `Échap` referme sans rien ranger.
+- **Search results** — a bookmark button appears in the top-right corner of each listing
+  card (Vinted's own favourite button stays in the bottom-right, so the two never
+  collide).
+- **Listing page** — an "Enregistrer" (save) button floats in the bottom-right of the
+  screen, and the same bookmark button shows up on the cards further down the page
+  ("Member's wardrobe", "Similar items").
+- **Side panel** — click the extension icon.
+- **Long-press** (about half a second) on either button — or `Alt`+click — opens the
+  collection picker: the listing is saved as usual, then filed straight into the
+  collection you pick, without a detour through the panel. You can create a collection
+  on the spot from that menu. `Esc` closes it without filing anything.
 
-Les boutons se synchronisent entre tous les onglets Vinted ouverts.
+Buttons stay in sync across every open Vinted tab.
 
 ### Collections
 
-Les onglets en haut du panneau regroupent les articles. Sauf capture par appui long
-(ci-dessus), tout nouvel article arrive dans **Mes favoris**, la collection par défaut,
-qui ne peut pas être supprimée.
+The tabs at the top of the panel group your listings. Unless you file it with a
+long-press (above), every new listing lands in **Mes favoris**, the default collection,
+which cannot be deleted.
 
-- `+` crée une collection (« Jeans », « Chemises », « Cadeau Julien »…)
-- clic droit sur un onglet : le renommer
-- pour classer un article : glisser sa poignée sur l'onglet visé, ou passer par l'icône
-  dossier de la ligne
-- une **croix** apparaît sur un onglet dès que sa collection est vide : elle la
-  supprime. Une collection qui contient encore des articles n'affiche pas de croix — il
-  faut la vider d'abord, ce qui évite de déplacer des articles sans le vouloir. **Mes
-  favoris** n'en affiche jamais.
+- `+` creates a collection ("Jeans", "Shirts", "Gift for Julien"…)
+- right-click a tab to rename it
+- to file a listing: drag its handle onto the target tab, or use the folder icon on its
+  row
+- a **cross** appears on a tab as soon as its collection is empty, and deletes it. A
+  collection that still holds listings shows no cross — you have to empty it first,
+  which keeps you from moving listings around by accident. **Mes favoris** never shows
+  one.
 
 ### Photos
 
-Un clic sur la miniature d'un article ouvre **toutes les photos de sa fiche**, sans
-quitter le panneau. Le badge dans le coin de la miniature en donne le nombre.
+Clicking a listing's thumbnail opens **every photo from its page** without leaving the
+panel. The badge in the corner of the thumbnail tells you how many there are.
 
-Navigation : les flèches de part et d'autre de l'image, les touches ←/→, un balayage au
-doigt, ou la bande de miniatures. `Échap` ou un clic à côté referme.
+Navigate with the arrows on either side of the image, the ←/→ keys, a swipe, or the
+thumbnail strip. `Esc` or a click outside closes it.
 
-Chaque photo s'affiche d'abord en 600×800, puis passe en 1200×1600 dès que la pleine
-résolution est chargée. Les articles enregistrés avant la 0.3 n'ont pas de galerie :
-leur miniature ouvre l'onglet Vinted, comme avant. Les réenregistrer la leur donne.
+Each photo loads at 600×800 first, then switches to 1200×1600 once the full-resolution
+version arrives. Listings saved before 0.3 have no gallery: their thumbnail opens the
+Vinted tab, as it used to. Saving them again gives them one.
 
-En bas de la visionneuse : **« Chercher cette photo »** ouvre une recherche Google Lens
-sur l'image affichée à l'écran (marque incluse quand elle est connue) — voir
-[docs/specs/recherche-inversee.md](docs/specs/recherche-inversee.md). En surimpression,
-en bas à gauche de l'image, une icône d'agrandissement **ouvre la photo en 1200×1600
-dans un nouvel onglet du navigateur**, hors du panneau.
+At the bottom of the viewer, **"Chercher cette photo"** runs a Google Lens search on the
+image currently on screen (including the brand when it is known) — see
+[docs/specs/recherche-inversee.md](docs/specs/recherche-inversee.md). Overlaid in the
+bottom-left of the image, an expand icon **opens the photo at 1200×1600 in a new browser
+tab**, outside the panel.
 
-### Le vendeur
+### The seller
 
-Le pseudo du vendeur s'affiche à côté du prix, et mène à son dressing : c'est avec lui
-qu'on négocie, et c'est le premier endroit où chercher une seconde pièce — les frais de
-port se partagent entre plusieurs articles du même vendeur.
+The seller's username sits next to the price and links to their wardrobe. That is who
+you negotiate with, and the first place to look for a second piece — shipping costs are
+shared across several items from the same seller.
 
-Il n'apparaît que sur les articles dont la fiche a été lue depuis la 0.3. Les autres
-gardent leur ligne de prix telle quelle, jusqu'à ce qu'on les réenregistre.
+It only shows up on listings whose page has been read since 0.3. The others keep their
+price line as it is until you save them again.
 
-### Tri et ordre manuel
+### Sorting and manual order
 
-Six modes : **Personnalisé**, **Date d'ajout**, **Prix**, **État**, **Likes**,
-**Taille**. Le bouton à droite du sélecteur inverse le sens, avec un libellé adapté au
-mode (« Moins cher » plutôt que « Croissant »).
+Six modes: **Personnalisé** (custom), **Date d'ajout** (date added), **Prix** (price),
+**État** (condition), **Likes**, **Taille** (size). The button to the right of the
+selector flips the direction, with a label that matches the mode ("Moins cher" —
+cheapest — rather than a bare "ascending").
 
-L'ordre personnalisé se règle en glissant la poignée `⠿` à gauche d'un article. Le
-glisser fonctionne quel que soit le mode actif : partir d'un tri automatique bascule
-simplement en ordre personnalisé, en figeant l'ordre affiché. L'ordre est propre à
-chaque collection.
+Custom order is set by dragging the `⠿` handle on the left of a listing. Dragging works
+whatever mode is active: starting from an automatic sort simply switches to custom order
+and freezes the order currently on screen. Each collection has its own order.
 
-Réordonner **avec une recherche active** ne déplace que les articles visibles : les
-articles masqués par le filtre gardent leur position dans l'ordre complet.
+Reordering **while a search is active** only moves the listings you can see — the ones
+hidden by the filter keep their position in the full order.
 
-Échelles utilisées :
+Scales used:
 
-| Tri    | Ordre                                                                     |
-| ------ | ------------------------------------------------------------------------- |
-| État   | Satisfaisant → Bon → Très bon → Neuf sans étiquette → Neuf avec étiquette |
-| Taille | Alphabétiques (XXXS → XXXL) d'abord, puis numériques (34, 36, 38…)        |
-
-Un article dépourvu de la donnée triée finit **toujours** en bas de liste, dans les deux
-sens, et l'en-tête indique combien d'articles sont dans ce cas. Certains tris sont
-aujourd'hui incomplets — voir [limites connues](docs/limitations.md).
-
-### Explorer une marque
-
-La **marque** d'un article, soulignée en pointillé dans la ligne de métadonnées, ouvre
-le catalogue Vinted filtré sur cette marque **dans la catégorie de l'article**. Rien
-d'autre n'est filtré : ni prix, ni taille, ni état — c'est une exploration de la marque,
-pas la recherche d'un équivalent.
-
-Si la catégorie de l'article n'est pas connue avec certitude, le filtre porte sur la
-marque seule plutôt que de risquer une catégorie erronée.
-
-### Rechercher un article similaire
-
-L'icône loupe d'un article ouvre le catalogue Vinted pré-filtré :
-
-| Critère   | Valeur                                                             |
+| Sort      | Order                                                              |
 | --------- | ------------------------------------------------------------------ |
-| Marque    | celle de l'article, filtrée par identifiant                        |
-| Taille    | celle de l'article, filtrée par identifiant                        |
-| Catégorie | celle de l'article, si elle est connue avec certitude              |
-| Prix      | de la **moitié** au **double** du prix enregistré (−50 % / +100 %) |
-| État      | Neuf avec étiquette, Neuf sans étiquette, Très bon état            |
+| Condition | Satisfactory → Good → Very good → New without tags → New with tags |
+| Size      | Letter sizes first (XXXS → XXXL), then numeric ones (34, 36, 38…)  |
 
-Les trois états sont **fixes**, quel que soit celui de l'article d'origine : on cherche
-une bonne affaire, pas son équivalent abîmé.
+A listing missing the data being sorted on **always** ends up at the bottom, in both
+directions, and the header says how many listings are in that situation. Some sorts are
+still incomplete today — see [known limitations](docs/limitations.md).
 
-Les deux bornes s'ajustent séparément dans `src/sidepanel/search.ts` : `PRICE_DOWN` (0,5
-= −50 %) et `PRICE_UP` (1 = +100 %). Elles sont arrondies vers l'extérieur, pour ne pas
-exclure un article situé pile sur la limite.
+### Exploring a brand
 
-Vinted ne filtre que par identifiant numérique. Marque et catégorie sont lues sur la
-fiche ; la taille, que Vinted n'écrit nulle part, est résolue depuis son libellé juste
-après l'enregistrement. Les trois critères sont donc exacts — « 42 » ne remonte plus une
-pointure quand on cherchait un tour de taille.
+A listing's **brand**, dotted-underlined in the metadata line, opens the Vinted
+catalogue filtered on that brand **within the listing's category**. Nothing else is
+filtered: not price, not size, not condition — this is browsing a brand, not hunting for
+an equivalent.
 
-La recherche textuelle subsiste en repli : articles enregistrés avant la 0.3, marque non
-référencée par Vinted, ou taille non résolue. Les réenregistrer suffit à les remettre à
-niveau. Voir [limites connues](docs/limitations.md).
+When the listing's category is not known for certain, the filter falls back to the brand
+alone rather than risk the wrong category.
 
-### Export et diagnostic
+### Finding a similar listing
 
-Le pied du panneau propose un **export JSON** de tous les favoris, et un **Diagnostic**
-à lancer quand quelque chose ne fonctionne plus — il dit en une lecture si Vinted a
-changé son DOM ou si le clic n'atteint pas le bouton.
+The magnifier icon on a listing opens the Vinted catalogue, pre-filtered:
+
+| Criterion | Value                                                        |
+| --------- | ------------------------------------------------------------ |
+| Brand     | the listing's, filtered by id                                |
+| Size      | the listing's, filtered by id                                |
+| Category  | the listing's, when it is known for certain                  |
+| Price     | from **half** to **double** the saved price (−50 % / +100 %) |
+| Condition | New with tags, New without tags, Very good condition         |
+
+The three conditions are **fixed**, whatever the original listing's condition is: the
+point is to find a good deal, not a battered twin.
+
+Both bounds can be tuned separately in `src/sidepanel/search.ts`: `PRICE_DOWN` (0.5 =
+−50 %) and `PRICE_UP` (1 = +100 %). They round outwards, so a listing sitting exactly on
+the boundary is not excluded.
+
+Vinted only filters on numeric ids. Brand and category are read from the listing page;
+size, which Vinted writes nowhere, is resolved from its label right after saving. All
+three criteria are therefore exact — "42" no longer brings back shoe sizes when you were
+after a waist.
+
+Text search remains as a fallback: listings saved before 0.3, a brand Vinted does not
+list, or a size that could not be resolved. Saving them again is enough to bring them up
+to date. See [known limitations](docs/limitations.md).
+
+### Export and diagnostics
+
+The bottom of the panel offers a **JSON export** of every favourite, plus a
+**Diagnostic** to run when something stops working — it tells you at a glance whether
+Vinted changed its DOM or whether the click simply never reaches the button.
 
 ## Documentation
 
-| Document                                | Contenu                                            |
-| --------------------------------------- | -------------------------------------------------- |
-| [architecture.md](docs/architecture.md) | Fichiers, modèle de données, stockage, concurrence |
-| [vinted-dom.md](docs/vinted-dom.md)     | Ancres DOM Vinted et procédure quand elles cassent |
-| [pitfalls.md](docs/pitfalls.md)         | Clics fantômes, boucle de repeint, glisser-déposer |
-| [diagnostic.md](docs/diagnostic.md)     | Lecture du rapport de diagnostic                   |
-| [testing.md](docs/testing.md)           | Lancer les tests, harness, fixtures                |
-| [limitations.md](docs/limitations.md)   | Limites connues                                    |
+| Document                                | Contents                                          |
+| --------------------------------------- | ------------------------------------------------- |
+| [architecture.md](docs/architecture.md) | Files, data model, storage, concurrency           |
+| [vinted-dom.md](docs/vinted-dom.md)     | Vinted DOM anchors and what to do when they break |
+| [pitfalls.md](docs/pitfalls.md)         | Phantom clicks, repaint loops, drag and drop      |
+| [diagnostic.md](docs/diagnostic.md)     | Reading the diagnostic report                     |
+| [testing.md](docs/testing.md)           | Running the tests, harness, fixtures              |
+| [limitations.md](docs/limitations.md)   | Known limitations                                 |
 
-Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md). Pour travailler avec un agent sur
-ce dépôt : [CLAUDE.md](CLAUDE.md).
+To contribute: [CONTRIBUTING.md](CONTRIBUTING.md). To work on this repository with an
+agent: [CLAUDE.md](CLAUDE.md).
 
-## Développement
+## Development
 
-Node 22+ et pnpm 10+ (`corepack enable` suffit à obtenir le bon pnpm).
+Node 22+ and pnpm 10+ (`corepack enable` is enough to get the right pnpm).
 
 ```bash
 pnpm install
-pnpm dev        # reconstruit dist/ à chaque sauvegarde
+pnpm dev        # rebuilds dist/ on every save
 ```
 
-| Commande         | Effet                                                      |
-| ---------------- | ---------------------------------------------------------- |
-| `pnpm dev`       | build de développement en veille (sourcemaps, non minifié) |
-| `pnpm build`     | `dist/` de production, minifié                             |
-| `pnpm test`      | 88 tests jsdom sur fixtures Vinted réelles (~25 s)         |
-| `pnpm typecheck` | `tsc --noEmit`                                             |
-| `pnpm lint`      | ESLint + stylelint                                         |
-| `pnpm format`    | Prettier en écriture                                       |
-| `pnpm check`     | tout ce qui précède — ce que le CI rejoue                  |
-| `pnpm package`   | `artifacts/vinted-favoris-<version>.zip`                   |
+| Command          | Effect                                                   |
+| ---------------- | -------------------------------------------------------- |
+| `pnpm dev`       | development build in watch mode (sourcemaps, unminified) |
+| `pnpm build`     | production `dist/`, minified                             |
+| `pnpm test`      | 88 jsdom tests against real Vinted fixtures (~25 s)      |
+| `pnpm typecheck` | `tsc --noEmit`                                           |
+| `pnpm lint`      | ESLint + stylelint                                       |
+| `pnpm format`    | Prettier, writing in place                               |
+| `pnpm check`     | all of the above — what CI replays                       |
+| `pnpm package`   | `artifacts/vinted-favoris-<version>.zip`                 |
 
-### Ce que le projet garantit mécaniquement
+### What the project enforces mechanically
 
-Les pièges de cette extension sont silencieux : rien n'apparaît en console. Trois
-garde-fous sont donc outillés plutôt que confiés à la relecture.
+The traps in this extension are silent — nothing shows up in the console. So three
+guardrails are tooled rather than left to code review.
 
-- **Les content scripts restent en IIFE.** Chrome n'y accepte aucun `import` à
-  l'exécution ; un module ES y échouerait sans un mot. `tests/build-output.test.ts` le
-  vérifie.
-- **Pas de `transform` au `:hover`** sur les boutons injectés : le bouton sort de sa
-  propre zone de survol et oscille, ce qui avale le clic. Un plugin stylelint maison
-  (`tools/stylelint-no-hover-transform.js`) le refuse.
-- **Pas de classe CSS Vinted dans les sélecteurs** : elles sont obfusquées et changent à
-  chaque déploiement. Une règle ESLint les interdit.
+- **Content scripts stay IIFE.** Chrome accepts no runtime `import` there; an ES module
+  would fail without a word. `tests/build-output.test.ts` checks it.
+- **No `transform` on `:hover`** for injected buttons: the button moves out of its own
+  hover area and oscillates, which swallows the click. A homegrown stylelint plugin
+  (`tools/stylelint-no-hover-transform.js`) rejects it.
+- **No Vinted CSS class in selectors**: they are obfuscated and change with every
+  deploy. An ESLint rule forbids them.
 
-### Publier une version
+### Publishing a release
 
-La version vit dans `package.json` seul — `src/manifest.ts` la lit, le tag doit s'y
-accorder (le workflow échoue sinon).
+The version lives in `package.json` alone — `src/manifest.ts` reads it, and the tag has
+to match (the workflow fails otherwise).
 
 ```bash
-pnpm version minor          # met à jour package.json et crée le tag
+pnpm version minor          # updates package.json and creates the tag
 git push --follow-tags
 ```
 
-Le workflow `release.yml` rejoue `pnpm check`, construit le zip et crée la Release
-GitHub. Chaque commit sur `main` et chaque PR produisent déjà un artefact zip
-téléchargeable depuis l'onglet Actions, sans créer de release.
+The `release.yml` workflow replays `pnpm check`, builds the zip and creates the GitHub
+Release. Every commit on `main` and every PR already produce a downloadable zip artifact
+in the Actions tab, without creating a release.
 
-### Une note sur TypeScript
+### A note on TypeScript
 
-TypeScript est volontairement maintenu en **6.x** : `typescript-eslint` ne supporte pas
-encore TS 7 (sa borne est `<6.1.0`) et refuse de démarrer au-delà, ce qui casse
-`pnpm lint` entièrement. Dependabot a pour consigne d'ignorer ce majeur.
+TypeScript is deliberately held at **6.x**: `typescript-eslint` does not support TS 7
+yet (its bound is `<6.1.0`) and refuses to start beyond it, which breaks `pnpm lint`
+completely. Dependabot is told to ignore that major.
