@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — panneau latéral.
+ * Vinted Smart Bookmarks — panneau latéral.
  *
  * Lit chrome.storage.local et se resynchronise dès qu'un onglet Vinted écrit.
  * Les articles sont regroupés en collections, ordonnables à la main.
@@ -631,7 +631,7 @@ function exportJson(): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `vinted-favoris-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `vinted-smart-bookmarks-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -672,8 +672,7 @@ async function runDiagnostic(): Promise<void> {
   report.donneesDeTri = {
     total: items.length,
     sansPrix: items.filter((item) => parsePrice(item) === null).length,
-    sansLikes: items.filter((item) => typeof (item.favouriteCount ?? item.likes) !== 'number')
-      .length,
+    sansLikes: items.filter((item) => typeof item.favouriteCount !== 'number').length,
     sansTaille: items.filter((item) => !item.size).length,
     sansEtat: items.filter((item) => !item.condition).length,
     sansCategorie: items.filter((item) => !item.category?.url).length,

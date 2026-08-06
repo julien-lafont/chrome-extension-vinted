@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — l'interface du filtrage, dans la page Vinted.
+ * Vinted Smart Bookmarks — l'interface du filtrage, dans la page Vinted.
  *
  * Trois surcouches, et rien d'autre :
  *   — le panneau d'annulation qui remplace visuellement une carte écartée (§4.2) ;
@@ -294,7 +294,7 @@ export function openNoiseMenu(options: NoiseMenuOptions): void {
     try {
       run();
     } catch (err) {
-      console.error('[Vinted Favoris] filtrage échoué :', errorText(err));
+      console.error('[Vinted Smart Bookmarks] filtrage échoué :', errorText(err));
     }
   };
 

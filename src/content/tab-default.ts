@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — la collection par défaut de l'onglet.
+ * Vinted Smart Bookmarks — la collection par défaut de l'onglet.
  *
  * Une session de chine a un sujet : on parcourt les Barbour une soirée, les
  * bottes la suivante. L'appui long range article par article, ce qui est le bon

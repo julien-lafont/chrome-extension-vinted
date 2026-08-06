@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — content script
+ * Vinted Smart Bookmarks — content script
  *
  * Injecte un bouton d'enregistrement sur chaque carte produit du catalogue,
  * sur celles des blocs d'une fiche article (dressing du membre, articles
@@ -625,7 +625,7 @@ import {
    */
   function watchLog(...args: unknown[]): void {
     // eslint-disable-next-line no-console -- journal de diagnostic assumé, pas une erreur
-    console.log('[Vinted Favoris][watch]', ...args);
+    console.log('[Vinted Smart Bookmarks][watch]', ...args);
   }
 
   /**
@@ -1532,7 +1532,7 @@ import {
       });
     } catch (err) {
       debug.lastError = errorText(err);
-      console.error('[Vinted Favoris] choix de collection échoué :', err);
+      console.error('[Vinted Smart Bookmarks] choix de collection échoué :', err);
     }
   }
 
@@ -1588,7 +1588,7 @@ import {
         // Cas classique : extension rechargée sans recharger l'onglet
         // ("Extension context invalidated") — le clic échoue en silence.
         debug.lastError = errorText(err);
-        console.error('[Vinted Favoris] clic échoué :', err);
+        console.error('[Vinted Smart Bookmarks] clic échoué :', err);
         return null;
       }
     };

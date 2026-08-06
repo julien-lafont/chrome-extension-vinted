@@ -34,6 +34,7 @@ const ITEM = makeItem({
   size: '42',
   condition: 'Bon état',
   price: '40,00 €',
+  priceValue: 40,
 });
 
 /** Catégorie complète : `id` seul ne suffit pas au type, et Vinted la sert entière. */
@@ -80,13 +81,7 @@ describe('recherche d articles similaires', () => {
 
   test('les bornes sont arrondies vers l extérieur', () => {
     // 12,50 € → de 6 (6,25 arrondi au plancher) à 25.
-    const { params } = parse({ ...ITEM, price: '12,50 €' });
-    assert.equal(params.get('price_from'), '6');
-    assert.equal(params.get('price_to'), '25');
-  });
-
-  test('le prix numérique prime sur la chaîne affichée', () => {
-    const { params } = parse({ ...ITEM, price: '40,00 €', priceValue: 12.5 });
+    const { params } = parse({ ...ITEM, price: '12,50 €', priceValue: 12.5 });
     assert.equal(params.get('price_from'), '6');
     assert.equal(params.get('price_to'), '25');
   });
@@ -111,9 +106,9 @@ describe('recherche d articles similaires', () => {
   });
 
   test('la marque exacte sort la marque du texte, la taille y reste', () => {
-    // Le cas courant depuis la 0.3 : `brandId` est extrait de la fiche, `sizeId`
-    // n'existe nulle part chez Vinted. `search_text` ne porte donc plus que la
-    // taille — d'autant moins de bruit qu'avant. Voir docs/limitations.md.
+    // Le cas courant : `brandId` est extrait de la fiche, `sizeId` n'existe
+    // nulle part chez Vinted. `search_text` ne porte donc que la taille — le
+    // minimum de bruit. Voir docs/limitations.md.
     const { params, text } = parse({ ...ITEM, brandId: '53' });
 
     assert.equal(params.get('brand_ids[]'), '53');

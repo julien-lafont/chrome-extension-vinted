@@ -88,16 +88,17 @@ describe('sortie du build', () => {
   });
 
   test('le panneau embarque le code qu’il partage avec le content script', async () => {
-    // Le modèle de données et le parseur de prix sont communs aux deux mondes
-    // depuis le passage au bundler : chacun doit en embarquer sa copie.
+    // Le modèle de données et la normalisation des règles de filtrage sont
+    // communs aux deux mondes depuis le passage au bundler : chacun doit en
+    // embarquer sa copie.
     const sidepanel = ESM_ENTRIES.find((entry) => entry.source.endsWith('sidepanel.ts'));
     assert.ok(sidepanel, 'entrée du panneau introuvable');
 
     const code = await bundle(sidepanel, 'esm');
     assert.match(
       code,
-      /u202f/,
-      'le parseur de prix partagé (shared/price.ts) est absent du bundle du panneau'
+      /u0300-\\?u036f/,
+      'la normalisation partagée (shared/noise.ts) est absente du bundle du panneau'
     );
   });
 });

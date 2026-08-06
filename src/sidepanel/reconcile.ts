@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — mise à jour de la liste sans la reconstruire.
+ * Vinted Smart Bookmarks — mise à jour de la liste sans la reconstruire.
  *
  * Le panneau se re-rendait en vidant son conteneur (`listEl.textContent = ''`)
  * avant de recréer chaque ligne. Deux conséquences, toutes deux silencieuses :

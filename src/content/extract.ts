@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — lecture du DOM de Vinted.
+ * Vinted Smart Bookmarks — lecture du DOM de Vinted.
  *
  * Tout ce qui transforme une page Vinted en `SavedItem` vit ici, et rien
  * d'autre : ces fonctions n'écrivent nulle part, ne touchent ni au storage ni

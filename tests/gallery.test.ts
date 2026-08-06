@@ -168,8 +168,8 @@ describe('ouverture', () => {
   });
 
   test('un article sans galerie n’ouvre rien', () => {
-    // Les articles enregistrés avant la 0.3 n'ont pas de photos : la miniature
-    // retombe sur l'onglet Vinted, et la visionneuse ne doit pas s'ouvrir vide.
+    // Sans fiche lue, un article n'a pas de photos : la miniature retombe sur
+    // l'onglet Vinted, et la visionneuse ne doit pas s'ouvrir vide.
     openGallery(makeItem({ id: '7' }));
     assert.equal(overlayOpen(), false);
   });

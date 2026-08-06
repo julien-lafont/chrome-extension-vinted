@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — la liste d'articles du panneau.
+ * Vinted Smart Bookmarks — la liste d'articles du panneau.
  *
  * Une ligne par article, clonée de `#item-template`, et la mise à jour de la
  * liste d'un rendu au suivant. C'est le rendu le plus fourni du panneau : photo,
@@ -120,8 +120,8 @@ function renderItem(item: SavedItem): HTMLElement {
     img.alt = item.title || '';
   }
 
-  // La galerie n'existe que sur les articles dont la fiche a été lue depuis la
-  // 0.3 : les autres gardent le comportement d'avant, l'onglet Vinted.
+  // La galerie n'existe que sur les articles dont la fiche a été lue : les
+  // autres ouvrent l'onglet Vinted.
   const photos = item.images?.length ?? 0;
 
   if (photos) {
@@ -172,7 +172,7 @@ function renderItem(item: SavedItem): HTMLElement {
     if (value) meta.push(document.createTextNode(value));
   }
 
-  const likes = item.favouriteCount ?? item.likes;
+  const likes = item.favouriteCount;
   if (typeof likes === 'number') meta.push(document.createTextNode(`♥ ${likes}`));
 
   const metaEl = within(node, '.item-meta');

@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — les gestes du panneau sur le stockage.
+ * Vinted Smart Bookmarks — les gestes du panneau sur le stockage.
  *
  * Quatre des cinq clés passent par ici :
  *   savedItems  { [id]: item }                        écrit aussi par le content script

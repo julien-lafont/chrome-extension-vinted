@@ -436,8 +436,8 @@ catégorie seules). Les paramètres utiles, tous vérifiés sur `vinted.fr` :
 | Marque    | exact    | maillon de marque du fil, flux en repli            |
 | Taille    | exact    | résolue par `/api/v2/size_groups` — voir plus haut |
 
-`search_text` n'est donc plus qu'un repli : article enregistré avant la 0.3, marque non
-référencée par Vinted, ou taille non résolue (voir [limitations.md](limitations.md)).
+`search_text` n'est donc qu'un repli : fiche jamais lue, marque non référencée par
+Vinted, ou taille non résolue (voir [limitations.md](limitations.md)).
 
 ### Identifiants d'état
 

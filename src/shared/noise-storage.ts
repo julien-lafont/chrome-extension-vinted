@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — la clé `noise` dans `chrome.storage.local`.
+ * Vinted Smart Bookmarks — la clé `noise` dans `chrome.storage.local`.
  *
  * Séparé de `shared/noise.ts`, qui reste **pur** et testable sans `chrome`.
  * Séparé aussi des appelants : le content script et le panneau écrivent tous

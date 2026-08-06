@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — réorganisation par glisser-déposer.
+ * Vinted Smart Bookmarks — réorganisation par glisser-déposer.
  *
  * Pointer Events plutôt que l'API HTML5 drag-and-drop : celle-ci ne donne aucun
  * retour visuel exploitable dans un panneau étroit et gère mal le défilement.

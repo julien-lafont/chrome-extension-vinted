@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — le menu contextuel du panneau.
+ * Vinted Smart Bookmarks — le menu contextuel du panneau.
  *
  * Un seul nœud (`#move-menu`) sert tous les menus : « Déplacer vers » sur une
  * ligne d'article, « Renommer » sur un onglet de collection. Il est rempli à

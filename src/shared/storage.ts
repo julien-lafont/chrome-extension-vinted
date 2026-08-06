@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — la frontière avec `chrome.storage.local`.
+ * Vinted Smart Bookmarks — la frontière avec `chrome.storage.local`.
  *
  * Deux problèmes se règlent ici, une fois pour tous les appelants.
  *
@@ -54,9 +54,9 @@ export { NOISE_KEY };
 /**
  * Le contenu de `chrome.storage.local`, clé par clé.
  *
- * `settings` et `noise` sont partiels à dessein : ce qui est en storage a pu être
- * écrit par une version antérieure de l'extension, et c'est aux normaliseurs
- * (`DEFAULT_SETTINGS`, `normalizeNoise()`) de combler les manques.
+ * `settings` et `noise` sont partiels à dessein : sur une installation neuve la
+ * clé est absente, et c'est aux normaliseurs (`DEFAULT_SETTINGS`,
+ * `normalizeNoise()`) de rendre un objet complet.
  */
 export type StorageShape = {
   [ITEMS_KEY]: ItemMap;

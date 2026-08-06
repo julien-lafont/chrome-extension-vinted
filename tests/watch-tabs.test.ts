@@ -429,8 +429,8 @@ describe('retour vers l’onglet porteur (§6.10)', () => {
   });
 
   test('un cycle sans onglet connu garde une phrase lisible', async () => {
-    // Cycle lancé par une version antérieure, ou storage incomplet : le lien
-    // redevient du texte, la phrase ne perd pas son sens.
+    // Storage incomplet : le lien redevient du texte, la phrase ne perd pas son
+    // sens.
     const now = Date.now();
     const state = carried(now);
     delete state.host;

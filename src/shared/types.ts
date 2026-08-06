@@ -137,10 +137,9 @@ export type SavedItem = {
 
   /**
    * Toutes les photos de la fiche, dans l'ordre de Vinted. Absent tant que la
-   * fiche n'a pas été lue — une carte de catalogue n'expose que sa miniature —
-   * et absent aussi sur les articles enregistrés avant la 0.3 : la galerie ne
-   * s'affiche que là où le champ existe, rien ne le recalcule. **Jamais `[]`**,
-   * voir `extractPhotos()`.
+   * fiche n'a pas été lue — une carte de catalogue n'expose que sa miniature :
+   * la galerie ne s'affiche que là où le champ existe. **Jamais `[]`**, voir
+   * `extractPhotos()`.
    */
   images?: ItemPhoto[];
 
@@ -150,13 +149,6 @@ export type SavedItem = {
   collectionId?: string;
   /** `true` tant que la fiche est en cours de lecture (l'article n'a que sa carte). */
   pending?: boolean;
-
-  /**
-   * Champs des versions antérieures, encore présents dans le storage des
-   * utilisateurs installés avant fin juillet 2026. Rien ne les recalcule : le tri
-   * et la recherche les lisent en repli. Voir `docs/limitations.md`.
-   */
-  likes?: number;
 
   // --- Suivi de prix et de disponibilité, voir docs/specs/suivi-prix.md -------
 
@@ -275,11 +267,8 @@ export type WatchProgress = {
   done: number;
   total: number;
   startedAt: number;
-  /**
-   * Dernier signe de vie. Optionnel : un `progress` écrit par une version
-   * antérieure n'en a pas, et se juge alors sur `startedAt`.
-   */
-  at?: number;
+  /** Dernier signe de vie : c'est lui, et non `startedAt`, qui juge la péremption. */
+  at: number;
   /** L'onglet porteur est passé en arrière-plan ; le cycle attend son retour (§3.6). */
   paused?: boolean;
 };

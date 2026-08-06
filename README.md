@@ -1,7 +1,8 @@
-# Vinted Favoris
+# Vinted Smart Bookmarks
 
 A Chrome extension (Manifest V3) that saves Vinted listings locally and brings them back
-in a side panel: collections, sorting, price tracking.
+in a side panel: collections, sorting, photo gallery, price and availability tracking,
+ongoing offers, and a catalogue you no longer have to re-scan every day.
 
 No server, no account — everything is stored on your machine. The only thing that ever
 leaves the site is something you ask for: a "Chercher ailleurs" (search elsewhere)
@@ -58,6 +59,12 @@ After every code change: `pnpm build`, hit ↻ on the extension card in
   collection picker: the listing is saved as usual, then filed straight into the
   collection you pick, without a detour through the panel. You can create a collection
   on the spot from that menu. `Esc` closes it without filing anything.
+- **Pin a collection to the tab** from that same menu: a short click then saves straight
+  into it, no long-press needed. The choice belongs to the tab and dies with it — one
+  evening spent on Barbour jackets does not spill onto the next one.
+- **Dismiss button** (⦸) — to the left of the bookmark, visible when the pointer is over
+  the card: it hides listings you have already ruled out. See
+  [Cutting the noise](#cutting-the-noise-out-of-the-catalogue).
 
 Buttons stay in sync across every open Vinted tab.
 
@@ -85,8 +92,9 @@ Navigate with the arrows on either side of the image, the ←/→ keys, a swipe,
 thumbnail strip. `Esc` or a click outside closes it.
 
 Each photo loads at 600×800 first, then switches to 1200×1600 once the full-resolution
-version arrives. Listings saved before 0.3 have no gallery: their thumbnail opens the
-Vinted tab, as it used to. Saving them again gives them one.
+version arrives. A listing whose page could never be read has no gallery: its thumbnail
+opens the Vinted tab instead. Nothing fetches it after the fact — saving the listing
+again is what gives it one.
 
 At the bottom of the viewer, **"Chercher cette photo"** runs a Google Lens search on the
 image currently on screen (including the brand when it is known) — see
@@ -98,10 +106,13 @@ tab**, outside the panel.
 
 The seller's username sits next to the price and links to their wardrobe. That is who
 you negotiate with, and the first place to look for a second piece — shipping costs are
-shared across several items from the same seller.
+shared across several items from the same seller. Next to the name: their rating out of
+5 and their number of reviews, plus a flag for the country, which costs one extra read
+of `/member/{id}`.
 
-It only shows up on listings whose page has been read since 0.3. The others keep their
-price line as it is until you save them again.
+All of this comes from the listing page: a listing whose page was never read keeps its
+price line as it is until you save it again. The flag is the one field that can be
+missing on its own — the member may simply not publish a location.
 
 ### Sorting and manual order
 
@@ -162,15 +173,77 @@ size, which Vinted writes nowhere, is resolved from its label right after saving
 three criteria are therefore exact — "42" no longer brings back shoe sizes when you were
 after a waist.
 
-Text search remains as a fallback: listings saved before 0.3, a brand Vinted does not
-list, or a size that could not be resolved. Saving them again is enough to bring them up
-to date. See [known limitations](docs/limitations.md).
+Text search remains as a fallback: a listing whose page was never read, a brand Vinted
+does not list, or a size that could not be resolved. Saving the listing again is enough
+to bring it up to date. See [known limitations](docs/limitations.md).
+
+### Price and availability tracking
+
+A favourite is a purchase you have put off, and a listing from March still shows its
+March price. **Rafraîchir** (refresh), in the sort bar, re-reads the pages of the
+current collection; a **long-press** on it covers every collection at once.
+
+- The requests come from an open Vinted tab, never from the service worker: they carry
+  the session cookies and look like ordinary browsing. Without a Vinted tab the button
+  says so, and the click opens one.
+- The pace is deliberately held back — token bucket, daily budget, silence after a 429.
+  When Vinted throttles us, the button turns into "Réessai N min" and **stays
+  clickable**: it repeats the reason and the time it resumes.
+- Every check writes a price point. A **−20 %** badge appears next to the price when it
+  drops meaningfully, and clicking it opens the history as a step chart — between two
+  readings the price was flat, so nothing is interpolated.
+- A listing badged **"Vendu"** on its page is marked sold; two consecutive absences make
+  it **"Retiré"** (gone) — never a single one.
+- As soon as a collection holds sold listings, a line under the sort bar offers to
+  **hide** them or to **archive** them into the 🗄️ **Archives** tab, always last in the
+  bar. Archiving is a move, not a delete, and an undo undoes it for 5 seconds.
+
+Details, rate-limiting strategy and data model: `docs/specs/suivi-prix.md`.
+
+### Offers in progress
+
+A listing under offer is neither an ordinary favourite nor a sold one: it is a decision
+pending on someone else's side. The **"Sous offres"** tab lists those whose offer is
+still live.
+
+The listing page carries no trace of an offer — the data comes from the conversations
+API (`/api/v2/inbox`, then one request per conversation), scanned from a Vinted tab
+because it answers 403 without session cookies. The panel triggers a scan when it opens,
+at most every 30 minutes, and works through the backlog of old conversations by slices.
+
+The badge next to the price says who made the offer and how much, and opens the
+conversation. **An offer that is over stays visible**, greyed out: "rejected at €42
+three weeks ago" is exactly what stops you making the same offer twice. Only the "Sous
+offres" tab restricts itself to live ones. See `docs/specs/offres.md`.
+
+### Cutting the noise out of the catalogue
+
+The same searches bring back the same results every day, and 90 % of what you see on
+Monday you already ruled out on Sunday. The ⦸ button on a card takes it out of the way.
+
+- A click does not make the card vanish: it folds into an **undo panel** for 2 seconds,
+  which also offers to hide **everything from that brand**, or **from that seller** when
+  the seller is known.
+- **No network request, no message between the panel and the page.** The rules live in
+  `chrome.storage.local`; the open Vinted tabs repaint on their own. **Nothing is ever
+  deleted** — a floating pill counts what is hidden on the page and shows it all again
+  in one click, and the ⦸ button of a card put aside by hand puts it back.
+- **Filtres Vinted**, at the bottom of the panel, is where the rules are managed: hidden
+  brands, excluded words, hidden sellers, listings put aside one by one — each
+  removable. A preset adds the usual fast-fashion brands (Shein, Temu, Zara…) in one
+  click.
+- **Masquer les pubs** (hide ads), next to it, is a plain toggle, off by default: it
+  takes the promoted inserts out of the feed.
+
+Rules, matching and both interfaces: `docs/specs/filtrage-bruit.md`.
 
 ### Export and diagnostics
 
-The bottom of the panel offers a **JSON export** of every favourite, plus a
-**Diagnostic** to run when something stops working — it tells you at a glance whether
-Vinted changed its DOM or whether the click simply never reaches the button.
+A **development bar** at the very bottom of the panel — meant to disappear from the
+published build — offers a **JSON export** of every favourite, a **Diagnostic** to run
+when something stops working (it tells you at a glance whether Vinted changed its DOM or
+whether the click simply never reaches the button), and a way to **clear the rate
+limiter** of the tracking cycle.
 
 ## Documentation
 
@@ -182,6 +255,15 @@ Vinted changed its DOM or whether the click simply never reaches the button.
 | [diagnostic.md](docs/diagnostic.md)     | Reading the diagnostic report                     |
 | [testing.md](docs/testing.md)           | Running the tests, harness, fixtures              |
 | [limitations.md](docs/limitations.md)   | Known limitations                                 |
+
+Specifications, written before the code and kept in step with it:
+
+| Spec                                                      | Feature                                   |
+| --------------------------------------------------------- | ----------------------------------------- |
+| [suivi-prix.md](docs/specs/suivi-prix.md)                 | Price and availability tracking           |
+| [offres.md](docs/specs/offres.md)                         | Offers in progress                        |
+| [filtrage-bruit.md](docs/specs/filtrage-bruit.md)         | Cutting the noise out of the catalogue    |
+| [recherche-inversee.md](docs/specs/recherche-inversee.md) | "Search elsewhere" — Google Lens and text |
 
 To contribute: [CONTRIBUTING.md](CONTRIBUTING.md). To work on this repository with an
 agent: [CLAUDE.md](CLAUDE.md).
@@ -199,12 +281,12 @@ pnpm dev        # rebuilds dist/ on every save
 | ---------------- | -------------------------------------------------------- |
 | `pnpm dev`       | development build in watch mode (sourcemaps, unminified) |
 | `pnpm build`     | production `dist/`, minified                             |
-| `pnpm test`      | 88 jsdom tests against real Vinted fixtures (~25 s)      |
+| `pnpm test`      | 496 tests against real Vinted fixtures (~31 s)           |
 | `pnpm typecheck` | `tsc --noEmit`                                           |
 | `pnpm lint`      | ESLint + stylelint                                       |
 | `pnpm format`    | Prettier, writing in place                               |
 | `pnpm check`     | all of the above — what CI replays                       |
-| `pnpm package`   | `artifacts/vinted-favoris-<version>.zip`                 |
+| `pnpm package`   | `artifacts/vinted-smart-bookmarks-<version>.zip`         |
 
 ### What the project enforces mechanically
 

@@ -4,7 +4,7 @@ import { watchSavedItems } from './saved-pulse.ts';
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch((err) => console.error('[Vinted Favoris] setPanelBehavior', err));
+    .catch((err) => console.error('[Vinted Smart Bookmarks] setPanelBehavior', err));
 });
 
 // Au niveau du module, pas dans `onInstalled` : le service worker est arrêté et

@@ -78,7 +78,7 @@ jobs:
       - name: Publier l'artefact
         uses: actions/upload-artifact@v4
         with:
-          name: vinted-favoris-${{ github.sha }}
+          name: vinted-smart-bookmarks-${{ github.sha }}
           path: artifacts/*.zip
           if-no-files-found: error
           retention-days: 30

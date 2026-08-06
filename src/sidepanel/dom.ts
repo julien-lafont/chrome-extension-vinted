@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — les deux accès au DOM du panneau.
+ * Vinted Smart Bookmarks — les deux accès au DOM du panneau.
  *
  * Un élément absent de `sidepanel.html` n'est pas un cas à gérer mais un bug du
  * HTML : sans ses conteneurs, le panneau n'a rien à afficher. Échouer ici, avec

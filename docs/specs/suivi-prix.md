@@ -86,21 +86,21 @@ type WatchState = {
   /** Verrou d'onglet, avec bail : un onglet fermé en plein cycle ne bloque pas à vie. */
   lease?: { tabId: number; until: number };
   /**
-   * `at` et `paused` ajoutés le 30 juillet 2026. `at` avance à chaque article
-   * **et** pendant une pause (§3.6) : c'est le seul signe de vie du cycle, et donc
-   * le seul moyen de distinguer un cycle en cours d'un `progress` laissé par un
-   * onglet fermé en plein travail — voir `isSweepStale()`.
+   * `at` avance à chaque article **et** pendant une pause (§3.6) : c'est le seul
+   * signe de vie du cycle, et donc le seul moyen de distinguer un cycle en cours
+   * d'un `progress` laissé par un onglet fermé en plein travail — voir
+   * `isSweepStale()`.
    */
   progress?: {
     done: number;
     total: number;
     startedAt: number;
-    at?: number;
+    at: number;
     paused?: boolean;
   };
   /**
    * L'onglet Chrome porteur, écrit par le panneau — seul à connaître ces
-   * identifiants — pour le lien de §6.10. Ajouté le 30 juillet 2026.
+   * identifiants — pour le lien de §6.10.
    */
   host?: { tabId: number; windowId?: number };
   /** Fenêtre de silence après un 429 ou un challenge. Aucune requête avant. */

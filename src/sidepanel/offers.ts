@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — déclenchement du balayage des offres, côté panneau.
+ * Vinted Smart Bookmarks — déclenchement du balayage des offres, côté panneau.
  *
  * Même architecture que le suivi de prix (`watch.ts`) : le panneau n'émet
  * aucune requête vers Vinted, il élit un onglet et lui passe l'ordre. La raison

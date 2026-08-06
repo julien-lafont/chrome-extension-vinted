@@ -112,8 +112,8 @@ savedItems = {
     },
     imageUrl: 'https://images1.vinted.net/...webp',
     images: [
-      // toutes les photos de la fiche ; absent tant qu'elle n'a pas été lue,
-      // et sur les articles enregistrés avant la 0.3. Jamais un tableau vide.
+      // toutes les photos de la fiche ; absent tant qu'elle n'a pas été lue.
+      // Jamais un tableau vide.
       {
         thumb: 'https://images1.vinted.net/t/.../310x430/....webp?s=...',
         url: 'https://images1.vinted.net/t/.../f800/....webp?s=...', // 600×800
@@ -124,8 +124,7 @@ savedItems = {
       },
     ],
     // Les champs suivants ne viennent que de la fiche : absents tant qu'elle
-    // n'a pas été lue, et sur les articles enregistrés avant la 0.3 (0.4 pour
-    // ceux du vendeur). Seul `sellerCountry` fait exception : la fiche ne le
+    // n'a pas été lue. Seul `sellerCountry` fait exception : la fiche ne le
     // porte nulle part, il vient d'une lecture de /member/{id}.
     brandId: '53', // seul filtre de marque accepté par le catalogue
     sizeId: '208', // résolu après coup, voir shared/size-ids.ts
@@ -330,10 +329,9 @@ particularités valent d'être connues avant d'y toucher :
   recopierait un `[]` : une fiche devenue illisible effacerait alors une galerie déjà
   lue. `extractPhotos()` rend `undefined` quand il n'a rien trouvé.
 
-Rien ne rétro-remplit les articles enregistrés avant la 0.3 : leur miniature retombe sur
-l'onglet Vinted, comme avant. C'est un choix, pas un oubli — la seule façon de les
-compléter serait de refetcher chaque fiche, pour un gain que le prochain enregistrement
-apporte de lui-même.
+Un article dont la fiche n'a jamais pu être lue n'a pas de galerie : sa miniature ouvre
+l'onglet Vinted. Rien ne va la chercher après coup — il faudrait refetcher la fiche,
+pour un gain que le prochain enregistrement apporte de lui-même.
 
 ## Identifiants : deux sources par champ
 
@@ -382,8 +380,8 @@ catégorie, par la seule requête d'API du projet — et dans une écriture sép
 celle de la fiche. L'article n'attend pas ce champ pour être complet : `pending` est
 déjà levé, la taille exacte le rejoint. Voir `shared/size-ids.ts` et `completeSizeId()`.
 
-Comme la galerie, ces champs ne sont pas rétro-remplis : un article enregistré avant la
-0.3 les acquiert au prochain enregistrement, pas avant.
+Comme la galerie, ces champs ne sont jamais rattrapés : un article dont la fiche n'a pas
+répondu les acquiert au prochain enregistrement, pas avant.
 
 ## Quota
 

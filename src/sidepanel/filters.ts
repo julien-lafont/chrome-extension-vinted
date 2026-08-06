@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — la modale « Filtres du catalogue ».
+ * Vinted Smart Bookmarks — la modale « Filtres du catalogue ».
  *
  * L'écran de gestion des règles écrites depuis les pages Vinted : marques et
  * mots exclus, vendeurs masqués, articles écartés. Voir

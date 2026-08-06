@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — les briques communes aux surcouches posées dans la page.
+ * Vinted Smart Bookmarks — les briques communes aux surcouches posées dans la page.
  *
  * Trois modules injectent des éléments dans le DOM de Vinted
  * (`collection-picker`, `noise-ui`, `tab-default`). Deux choses leur étaient

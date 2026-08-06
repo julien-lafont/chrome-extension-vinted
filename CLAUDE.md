@@ -1,4 +1,4 @@
-# Vinted Favoris — guide de travail
+# Vinted Smart Bookmarks — guide de travail
 
 Extension Chrome **Manifest V3**, TypeScript, bundlée par esbuild. Cible
 `https://www.vinted.fr/*` uniquement. Le stockage est local (`chrome.storage.local`),
@@ -11,9 +11,9 @@ transmet à Google l'URL de la photo, à la demande, jamais en tâche de fond.
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 498 tests, ~31 s, runner Node natif via tsx
+pnpm test         # 496 tests, ~31 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
-pnpm package      # artifacts/vinted-favoris-<version>.zip
+pnpm package      # artifacts/vinted-smart-bookmarks-<version>.zip
 ```
 
 Node 22 minimum (`.nvmrc`), pnpm 10. **Chrome charge `dist/`, jamais `src/`.** Après

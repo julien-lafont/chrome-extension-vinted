@@ -341,14 +341,6 @@ describe('signe de vie d’un cycle', () => {
     assert.equal(isSweepRunning({ progress: orphan }, now), false);
   });
 
-  test('un progress d’avant le battement se juge sur son démarrage', () => {
-    // Compatibilité : `at` est arrivé après `startedAt`, et un cycle interrompu
-    // par la mise à jour de l'extension n'en a pas.
-    const legacy = { done: 1, total: 9, startedAt: now - SWEEP_STALE_MS - 1 };
-    assert.equal(isSweepStale(legacy, now), true);
-    assert.equal(isSweepStale({ done: 1, total: 9, startedAt: now - 1_000 }, now), false);
-  });
-
   test('sans cycle annoncé, il n’y a rien de périmé ni rien en cours', () => {
     assert.equal(isSweepStale(undefined, now), false);
     assert.equal(isSweepRunning({}, now), false);

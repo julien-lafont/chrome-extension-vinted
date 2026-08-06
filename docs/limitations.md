@@ -28,12 +28,11 @@ file recomposée.
 
 ## Données de tri incomplètes
 
-**Les articles enregistrés avant l'extraction des champs de tri gardent leurs lacunes.**
-`favouriteCount` et `priceValue` n'existaient pas ; une taille pouvait recevoir un état
-(`"Très bon état"`) sur les articles sans taille. Rien ne recalcule ces champs a
-posteriori — la donnée n'est lisible que sur la page Vinted. Les réenregistrer depuis le
-site (un clic pour retirer, un pour remettre) les remet à niveau ; le
-[Diagnostic](diagnostic.md) les compte sous `donneesDeTri`.
+**Un champ de tri illisible à l'enregistrement le reste.** `favouriteCount` et
+`priceValue` sont extraits une fois pour toutes ; si l'ancre a cassé ce jour-là, rien ne
+les recalcule a posteriori — la donnée n'est lisible que sur la page Vinted.
+Réenregistrer l'article depuis le site (un clic pour retirer, un pour remettre) le remet
+à niveau ; le [Diagnostic](diagnostic.md) compte les manques sous `donneesDeTri`.
 
 **Le nombre de favoris de la fiche article est lu dans le flux d'hydratation.** Le
 bouton cœur de la fiche arrive vide et désactivé, Vinted l'hydrate côté client. Le
@@ -51,8 +50,8 @@ catégorie, par la seule requête d'API du projet (voir
 [vinted-dom.md](vinted-dom.md#la-table-des-tailles-dune-catégorie)). Trois cas laissent
 l'article sans identifiant, et la recherche retombe alors sur le texte :
 
-- **la catégorie n'est pas exacte** — fiche jamais lue, ou article enregistré avant la
-  0.3 : la table d'un rayon large est ambiguë, on ne demande donc rien ;
+- **la catégorie n'est pas exacte** — fiche jamais lue : la table d'un rayon large est
+  ambiguë, on ne demande donc rien ;
 - **le libellé est ambigu dans sa catégorie** : « M » vaut 208 en vêtements, 1390 en
   chapeaux, 1426 en gants. Sur une catégorie feuille — la seule qu'on enregistre — le
   cas ne s'est pas présenté, mais le renoncement est explicite ;
@@ -67,7 +66,7 @@ relire plus tard supposerait de recharger toutes les fiches.
 
 **Le vendeur est connu par son identifiant, son pseudo, sa note, son nombre
 d'évaluations et son pays** — voir la section « Vendeur » plus bas pour ce qui manque
-encore, et ce que rien ne rétro-remplit.
+encore.
 
 ## Catégorie
 
@@ -77,10 +76,9 @@ aucun `catalog_id`. C'est la raison d'être de l'enrichissement par la fiche (vo
 [architecture.md](architecture.md)) : la catégorie enregistrée est donc exacte, une fois
 la fiche lue.
 
-Les valeurs approchées (`exact: false`) ne subsistent que dans deux cas : une fiche que
-le `fetch` n'a jamais pu lire, et les articles enregistrés avant la mise en place de
-l'enrichissement. Le [Diagnostic](diagnostic.md) les compte (`categorieApprochee`,
-`sansCategorie`, `enAttenteDeFiche`).
+Les valeurs approchées (`exact: false`) ne subsistent que sur les articles dont le
+`fetch` n'a jamais pu lire la fiche. Le [Diagnostic](diagnostic.md) les compte
+(`categorieApprochee`, `sansCategorie`, `enAttenteDeFiche`).
 
 **L'enrichissement dépend d'une requête vers Vinted.** Une seule à la fois, en tâche de
 fond, avec 15 s d'expiration. Si Vinted venait à la bloquer (403, page anti-bot,
@@ -108,8 +106,8 @@ en tête. L'en-tête du panneau indique combien d'articles sont dans ce cas.
 **Le pays coûte une requête, et n'arrive pas toujours.** Il n'est sur aucune fiche : il
 faut lire `/member/{id}`, ce qui se fait après l'enregistrement, en tâche de fond. Trois
 cas où le drapeau n'apparaît pas, et ils ne se distinguent pas à l'œil : le membre
-n'expose pas sa localisation, la requête a échoué, ou l'article date d'avant la 0.4.
-Seul le [Diagnostic](diagnostic.md) les sépare (`debug.sellerProfiles` /
+n'expose pas sa localisation, la requête a échoué, ou la fiche n'a jamais été lue. Seul
+le [Diagnostic](diagnostic.md) les sépare (`debug.sellerProfiles` /
 `sellerProfilesEmpty`).
 
 **Le pays n'est jamais rafraîchi**, délibérément : celui d'un compte ne change pas, et
@@ -123,10 +121,10 @@ l'infobulle, dans les deux cas.
 servi nulle part (aucun `created_at` dans le HTML de la fiche ni du profil) ; le second
 n'existe qu'après hydratation côté client, hors de portée d'une lecture par `fetch()`.
 
-**Note et évaluations ne sont pas rétro-remplies.** Comme la galerie et les
-identifiants, elles n'arrivent qu'aux articles enregistrés depuis la 0.4. Le cycle de
-veille relit pourtant ces fiches — propager la réputation au passage ne coûterait aucune
-requête, et reste à faire.
+**Note et évaluations ne sont pas rattrapées.** Comme la galerie et les identifiants,
+elles n'arrivent qu'avec la lecture de la fiche, et un article dont le `fetch` a échoué
+reste sans. Le cycle de veille relit pourtant ces fiches — propager la réputation au
+passage ne coûterait aucune requête, et reste à faire.
 
 ## Offres
 
@@ -157,10 +155,10 @@ et sont écartées délibérément (`current_user_side`).
 
 ## Galerie de photos
 
-**Les articles enregistrés avant la 0.3 n'en ont pas.** Rien ne rétro-remplit `images` :
-leur miniature continue d'ouvrir l'onglet Vinted, comme avant. Les réenregistrer (un
-clic pour retirer, un pour remettre) leur donne la galerie — c'est le même geste que
-pour compléter un nombre de favoris manquant.
+**Un article dont la fiche n'a pas été lue n'en a pas.** Rien ne va chercher `images`
+après coup : sa miniature ouvre l'onglet Vinted. Le réenregistrer (un clic pour retirer,
+un pour remettre) lui donne la galerie — c'est le même geste que pour compléter un
+nombre de favoris manquant.
 
 **Les URLs d'images sont signées, et on ignore leur durée de vie.** Le `?s=…` qui les
 termine est lié à l'URL exacte : rien ne peut être reconstruit, et si Vinted fait

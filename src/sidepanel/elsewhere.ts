@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — recherche « ailleurs » : Google Lens sur la photo, ou repli
+ * Vinted Smart Bookmarks — recherche « ailleurs » : Google Lens sur la photo, ou repli
  * texte sur marque + titre + taille.
  *
  * Même contrat que `search.ts` : des fonctions pures qui construisent une URL,

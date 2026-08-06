@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — la trace, dans la page, du cycle de rafraîchissement.
+ * Vinted Smart Bookmarks — la trace, dans la page, du cycle de rafraîchissement.
  *
  * Le cycle tourne dans **un** onglet Vinted (`docs/specs/suivi-prix.md` §1 et
  * §3.2), et rien ne disait lequel. Avec trois onglets ouverts, « reviens sur ton

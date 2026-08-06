@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — recherche d'articles similaires.
+ * Vinted Smart Bookmarks — recherche d'articles similaires.
  *
  * Construit une URL de catalogue Vinted pré-filtrée à partir d'un favori :
  * même marque, même taille, prix dans une fourchette autour du sien, et
@@ -47,10 +47,10 @@ const CATALOG_URL = 'https://www.vinted.fr/catalog';
  * Ajoute le filtre de marque : par identifiant si l'article en porte un, sinon
  * en recherche textuelle. Vinted n'accepte pas de nom dans `brand_ids[]`.
  *
- * `brandId` est renseigné depuis la 0.3 pour tout article dont la fiche a été
- * lue (fil d'Ariane, flux d'hydratation en repli — voir `content.ts`). Le repli
- * textuel sert les articles enregistrés avant, et ceux dont Vinted ne référence
- * pas la marque.
+ * `brandId` est renseigné pour tout article dont la fiche a été lue (fil
+ * d'Ariane, flux d'hydratation en repli — voir `content.ts`). Le repli textuel
+ * sert les articles dont la fiche n'a pas encore répondu, et ceux dont Vinted ne
+ * référence pas la marque.
  *
  * @returns vrai si un filtre a pu être posé
  */
@@ -108,15 +108,15 @@ export function brandSearchUrl(item: SavedItem): string | null {
 /**
  * URL de recherche des articles similaires à un favori.
  *
- * Les trois critères sont filtrés par identifiant depuis la 0.3 : la catégorie
- * et la marque viennent de la fiche, la taille est résolue depuis son libellé
+ * Les trois critères sont filtrés par identifiant : la catégorie et la marque
+ * viennent de la fiche, la taille est résolue depuis son libellé
  * (`shared/size-ids.ts`). C'est le seul filtrage exact — Vinted ignore les
  * libellés dans `catalog[]`, `brand_ids[]` et `size_ids[]`.
  *
- * `search_text` n'est plus qu'un repli, pour ce que l'article n'a pas pu faire
- * résoudre : article enregistré avant la 0.3, marque non référencée, taille
- * ambiguë ou API muette. Il reste approximatif — « 42 » y remonte aussi bien une
- * pointure qu'un tour de taille — mais la catégorie exacte borne le flou.
+ * `search_text` n'est qu'un repli, pour ce que l'article n'a pas pu faire
+ * résoudre : fiche jamais lue, marque non référencée, taille ambiguë ou API
+ * muette. Il reste approximatif — « 42 » y remonte aussi bien une pointure qu'un
+ * tour de taille — mais la catégorie exacte borne le flou.
  *
  * @param item favori enregistré
  * @returns URL de catalogue Vinted

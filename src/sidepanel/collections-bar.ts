@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — la barre d'onglets des collections.
+ * Vinted Smart Bookmarks — la barre d'onglets des collections.
  *
  * Un onglet par collection, son compteur d'articles, sa croix de suppression
  * quand elle est vide, et le `+` de création. « Archives » y tient une place à

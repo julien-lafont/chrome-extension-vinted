@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — filtrage du bruit dans le catalogue.
+ * Vinted Smart Bookmarks — filtrage du bruit dans le catalogue.
  *
  * Le cœur de `docs/specs/filtrage-bruit.md` : décider si une carte doit être
  * masquée, et pourquoi. **Module pur** — aucun accès à `chrome`, aucun accès au
@@ -71,10 +71,8 @@ export function emptyNoise(): NoiseFilters {
 }
 
 /**
- * Complète ce que rend le storage. Clé absente = aucune règle, ce qui est
- * exactement l'état de tout le monde avant cette fonctionnalité : aucune
- * migration n'est nécessaire, et un champ manquant (storage écrit par une
- * version antérieure) ne doit pas faire tomber le scan.
+ * Complète ce que rend le storage. Clé absente = aucune règle : c'est l'état
+ * d'une installation neuve, et le scan doit y tourner sans rien de particulier.
  */
 export function normalizeNoise(raw: Partial<NoiseFilters> | undefined): NoiseFilters {
   return {

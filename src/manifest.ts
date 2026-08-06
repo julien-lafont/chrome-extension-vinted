@@ -23,8 +23,10 @@ export function buildManifest(version: string): chrome.runtime.ManifestV3 {
     manifest_version: 3,
     name: 'Vinted Smart Bookmarks',
     version,
+    // 132 caractères maximum côté Chrome — la phrase reste courte par obligation,
+    // pas par choix.
     description:
-      'Enregistre tes articles Vinted préférés en local et retrouve-les dans un panneau latéral.',
+      'Enregistre tes articles Vinted en local : collections, galerie photo, suivi des prix, offres en cours, catalogue filtré.',
 
     permissions: ['storage', 'sidePanel'],
     host_permissions: [VINTED_ORIGIN],

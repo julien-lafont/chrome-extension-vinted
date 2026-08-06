@@ -1,9 +1,9 @@
 {
-  "name": "vinted-favoris",
-  "version": "0.2.1",
+  "name": "vinted-smart-bookmarks",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Extension Chrome (Manifest V3) pour enregistrer des articles Vinted en local et les retrouver dans un panneau latéral.",
+  "description": "Chrome extension (MV3) that saves Vinted listings locally and brings them back in a side panel: collections, sorting, photo gallery, price & availability tracking, catalogue noise filtering.",
   "license": "MIT",
   "packageManager": "pnpm@10.17.0",
   "engines": {

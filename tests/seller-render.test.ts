@@ -49,8 +49,8 @@ const el = (node: DocumentFragment, selector: string): HTMLElement => {
 
 describe('ligne du vendeur', () => {
   test('reste absente tant que la fiche n’a pas été lue', () => {
-    // Articles enregistrés avant la 0.4 : aucun champ vendeur, et rien ne les
-    // recalcule. La ligne ne doit pas apparaître vide.
+    // Article enregistré depuis sa carte, fiche pas encore lue : aucun champ
+    // vendeur. La ligne ne doit pas apparaître vide.
     const node = mount({});
     assert.equal(el(node, '.item-seller-line').hidden, true);
   });

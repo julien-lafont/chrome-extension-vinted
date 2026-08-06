@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — choix de collection depuis la page Vinted.
+ * Vinted Smart Bookmarks — choix de collection depuis la page Vinted.
  *
  * Le menu qu'ouvre l'appui long (ou Alt+clic) sur un bouton injecté : la liste
  * des collections, plus une création à la volée. Il ne décide de rien sur
@@ -223,7 +223,7 @@ export async function openCollectionPicker(options: PickerOptions): Promise<void
     // L'écriture n'est pas attendue : le menu se ferme tout de suite, et le
     // storage notifiera les onglets et le panneau de lui-même.
     void assignCollection(options.itemId, id).catch((err: unknown) => {
-      console.error('[Vinted Favoris] rangement échoué :', errorText(err));
+      console.error('[Vinted Smart Bookmarks] rangement échoué :', errorText(err));
     });
     done(name, pinned);
   };
@@ -326,7 +326,7 @@ export async function openCollectionPicker(options: PickerOptions): Promise<void
         done(collection.name, pinned);
       } catch (err) {
         creating = false;
-        console.error('[Vinted Favoris] création de collection échouée :', errorText(err));
+        console.error('[Vinted Smart Bookmarks] création de collection échouée :', errorText(err));
       }
     })();
   }

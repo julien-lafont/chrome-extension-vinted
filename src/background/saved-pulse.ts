@@ -90,7 +90,7 @@ async function flashBadge(count: number, mine: number): Promise<void> {
 
     await chrome.action.setBadgeText({ text: '' });
   } catch (err) {
-    console.error('[Vinted Favoris] badge', err);
+    console.error('[Vinted Smart Bookmarks] badge', err);
   }
 }
 
@@ -161,7 +161,7 @@ async function bumpIcon(mine: number): Promise<void> {
     if (mine !== generation) return;
     await restoreIcon();
   } catch (err) {
-    console.error('[Vinted Favoris] pulsation de l icône', err);
+    console.error('[Vinted Smart Bookmarks] pulsation de l icône', err);
     // Ne pas laisser la barre d'outils figée sur une image intermédiaire.
     void restoreIcon().catch(() => undefined);
   }

@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — bouton de rafraîchissement et pilotage du cycle de suivi.
+ * Vinted Smart Bookmarks — bouton de rafraîchissement et pilotage du cycle de suivi.
  *
  * Le rafraîchissement tourne dans le content script d'un onglet Vinted, jamais
  * ici (§1 de `docs/specs/suivi-prix.md`) : ce module élit un onglet, lui
@@ -26,7 +26,7 @@ function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
 /**
  * Journal de bord temporaire pour diagnostiquer « je clique sur Rafraîchir et
  * rien ne se passe » : cette console (celle du panneau) montre le côté
- * élection d'onglet / envoi du message ; `[Vinted Favoris][watch]` dans la
+ * élection d'onglet / envoi du message ; `[Vinted Smart Bookmarks][watch]` dans la
  * console de l'onglet Vinted montre ce que le content script en a fait.
  *
  * Se neutralise en `function log(..._args: unknown[]): void {}` une fois le
@@ -35,7 +35,7 @@ function sendToTab<T>(tabId: number, message: unknown): Promise<T> {
  */
 function log(...args: unknown[]): void {
   // eslint-disable-next-line no-console -- journal de diagnostic assumé, pas une erreur
-  console.log('[Vinted Favoris][panneau]', ...args);
+  console.log('[Vinted Smart Bookmarks][panneau]', ...args);
 }
 
 /**
@@ -320,8 +320,8 @@ function setNotice(text: string | null, host?: WatchState['host']): void {
 
   const [before, after] = text.split('{lien}');
 
-  // Sans onglet connu (cycle lancé par une version antérieure, ou storage
-  // incomplet), la phrase reste lisible : le lien redevient du texte.
+  // Sans onglet connu (storage incomplet), la phrase reste lisible : le lien
+  // redevient du texte.
   if (after === undefined || !host) {
     el.notice.textContent = text.replace('{lien}', HOST_LINK_LABEL);
     return;

@@ -141,8 +141,8 @@ export function refreshOfferAges(root: ParentNode): void {
  * bas, compte sans évaluation » se lit tout seul, et un avertissement se
  * tromperait sur les vendeurs neufs parfaitement honnêtes.
  *
- * Ces champs n'existent que sur les articles dont la fiche a été lue depuis la
- * 0.4 : rien ne les recalcule, la ligne reste absente pour les autres.
+ * Ces champs n'existent que sur les articles dont la fiche a été lue : la ligne
+ * reste absente tant que l'enrichissement n'a pas abouti.
  */
 export function renderSeller(node: ParentNode, item: SavedItem): void {
   const name = item.sellerName?.trim();
@@ -171,8 +171,8 @@ export function renderSeller(node: ParentNode, item: SavedItem): void {
 
   // Une note sans évaluation n'existe pas, et zéro évaluation est justement ce
   // qu'il faut voir : les deux champs se rendent donc ensemble, jamais l'un
-  // pour l'autre. `null` (fiche lue avant la 0.4, ou ancre cassée) ne dit rien
-  // et n'affiche rien.
+  // pour l'autre. `null` (ancre cassée, ou fiche jamais lue) ne dit rien et
+  // n'affiche rien.
   const count = item.sellerFeedbackCount;
   if (count == null) return;
 

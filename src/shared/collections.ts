@@ -1,5 +1,5 @@
 /**
- * Vinted Favoris — les collections, côté storage.
+ * Vinted Smart Bookmarks — les collections, côté storage.
  *
  * Ce module existe pour la même raison que le reste de `src/shared/` : deux
  * mondes écrivent désormais sur la clé `collections`. Le panneau le faisait

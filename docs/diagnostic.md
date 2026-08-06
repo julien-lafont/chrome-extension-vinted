@@ -204,10 +204,10 @@ navigation et non de leur fiche (`exact: false`) — voir
 `categorie` : le fil d'Ariane lu sur la page courante, ou le message expliquant qu'il
 n'y en a pas.
 
-`sansLikes` compte les articles **déjà enregistrés** sans nombre de favoris : ceux
-d'avant l'extraction du champ. Les réenregistrer (un clic pour retirer, un pour
-remettre) les complète. `sansLikes` égal au total sur des articles récents signale en
-revanche que l'ancre a cassé — voir [vinted-dom.md](vinted-dom.md).
+`sansLikes` compte les articles enregistrés sans nombre de favoris : l'ancre n'a rien
+donné ce jour-là. Les réenregistrer (un clic pour retirer, un pour remettre) les
+complète. `sansLikes` égal au total signale en revanche que l'ancre a cassé pour de bon
+— voir [vinted-dom.md](vinted-dom.md).
 
 ## `articles` — le contenu enregistré
 

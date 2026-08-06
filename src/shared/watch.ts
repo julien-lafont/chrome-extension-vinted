@@ -36,7 +36,7 @@ export const SWEEP_STALE_MS = 4 * 60 * 1000;
  */
 export function isSweepStale(progress: WatchProgress | undefined, now: number): boolean {
   if (!progress) return false;
-  return now - (progress.at ?? progress.startedAt) > SWEEP_STALE_MS;
+  return now - progress.at > SWEEP_STALE_MS;
 }
 
 /** Un cycle réellement en cours : annoncé, et dont le porteur donne signe de vie. */

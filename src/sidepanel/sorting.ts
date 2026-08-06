@@ -1,21 +1,16 @@
 /**
- * Vinted Favoris — modes de tri.
+ * Vinted Smart Bookmarks — modes de tri.
  *
  * Chaque mode expose une clé numérique par article. Les articles dont la clé
  * est indisponible (champ absent ou illisible) sont toujours renvoyés en fin de
  * liste, quel que soit le sens du tri : une donnée manquante ne doit pas
  * remonter artificiellement en tête.
  *
- * Champs lus en priorité s'ils existent (fournis par le content script), sinon
- * reconstruits depuis les chaînes affichées :
- *   priceValue     nombre        ← sinon parsé depuis `price` ("12,00 €")
- *   favouriteCount nombre        ← sinon indisponible
- *
- * Les deux sont extraits depuis fin juillet 2026 ; les replis servent les articles
- * enregistrés avant, que rien ne recalcule — voir docs/limitations.md.
+ * Les clés numériques viennent du content script, qui les extrait à
+ * l'enregistrement (`priceValue`, `favouriteCount`) : le tri les lit telles
+ * quelles, il ne relit jamais les chaînes affichées.
  */
 
-import { parsePriceString } from '../shared/price.ts';
 import type { KeyedSortMode, SavedItem, SortDir, SortMode } from '../shared/types.ts';
 
 export const SORT_MODES: readonly { id: SortMode; label: string }[] = [
@@ -52,17 +47,13 @@ export const DIR_LABELS: Partial<Record<SortMode, Record<SortDir, string>>> = {
 // --- Extraction des clés de tri ---------------------------------------------
 
 /**
- * Prix d'un article : le nombre extrait à l'enregistrement s'il existe, sinon
- * relu depuis le prix affiché.
- *
- * Le repli sert les articles enregistrés avant l'ajout de `priceValue`, que rien
- * ne recalcule — voir `docs/limitations.md`.
+ * Prix d'un article : le nombre extrait à l'enregistrement, `null` quand la
+ * chaîne affichée n'en portait aucun de lisible.
  */
 export function parsePrice(item: SavedItem): number | null {
-  if (typeof item.priceValue === 'number' && Number.isFinite(item.priceValue)) {
-    return item.priceValue;
-  }
-  return parsePriceString(item.price);
+  return typeof item.priceValue === 'number' && Number.isFinite(item.priceValue)
+    ? item.priceValue
+    : null;
 }
 
 /** Échelle des états Vinted, du plus usé au neuf. */
@@ -87,7 +78,7 @@ export function parseCondition(item: SavedItem): number | null {
 }
 
 export function parseLikes(item: SavedItem): number | null {
-  const value = item.favouriteCount ?? item.likes;
+  const value = item.favouriteCount;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
