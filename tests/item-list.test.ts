@@ -28,7 +28,13 @@ let dom: JSDOM;
 let listEl: HTMLElement;
 
 /** Ce que la liste a demandé à l'extérieur pendant le cas en cours. */
-let asked: { photos: SavedItem[]; tabs: string[]; moved: SavedItem[]; removed: SavedItem[] };
+let asked: {
+  photos: SavedItem[];
+  tabs: string[];
+  moved: SavedItem[];
+  removed: SavedItem[];
+  opened: string[];
+};
 
 before(() => {
   dom = new JSDOM(readFileSync(join(PANEL, 'sidepanel.html'), 'utf8'), {
@@ -46,7 +52,7 @@ beforeEach(() => {
 
   listEl = byId('list');
   listEl.textContent = '';
-  asked = { photos: [], tabs: [], moved: [], removed: [] };
+  asked = { photos: [], tabs: [], moved: [], removed: [], opened: [] };
 
   initItemList(
     { list: listEl, template: byId('item-template') as HTMLTemplateElement },
@@ -55,6 +61,7 @@ beforeEach(() => {
       openTab: (url) => asked.tabs.push(url),
       openMoveMenu: (item) => asked.moved.push(item),
       onRemove: (item) => asked.removed.push(item),
+      openCollection: (id) => asked.opened.push(id),
     }
   );
 });
@@ -127,6 +134,60 @@ describe('rendu d une ligne', () => {
     const count = row('2').querySelector<HTMLElement>('.item-photo-count');
     assert.equal(count?.hidden, false);
     assert.equal(count?.textContent, '3');
+  });
+});
+
+/**
+ * La pastille de collection : le repère qui rend « Mes favoris » lisible, où
+ * classés et non classés se côtoient. Elle vient de l'appelant, pas de
+ * l'article — le nom de la collection et l'onglet affiché ne se lisent pas
+ * dessus.
+ */
+describe('pastille de collection', () => {
+  const badge = () => ({ id: 'col-jeans', name: 'Jeans' });
+
+  test('elle annonce la collection quand l article est classé', () => {
+    renderItems([makeItem({ id: '1' })], badge);
+
+    const where = row('1').querySelector<HTMLElement>('.item-where');
+    assert.equal(where?.hidden, false);
+    assert.equal(row('1').querySelector('.item-collection-name')?.textContent, 'Jeans');
+  });
+
+  test('elle reste masquée pour un article non classé', () => {
+    renderItems([makeItem({ id: '1' })]);
+
+    assert.equal(row('1').querySelector<HTMLElement>('.item-where')?.hidden, true);
+  });
+
+  test('un clic dessus demande l ouverture de la collection', () => {
+    renderItems([makeItem({ id: '1' })], badge);
+
+    click(row('1').querySelector('.item-collection')!);
+
+    assert.deepEqual(asked.opened, ['col-jeans']);
+  });
+
+  test('un renommage repeint la ligne, alors que l article n a pas changé', () => {
+    // L'empreinte de réutilisation ne porte que sur l'article : sans la pastille
+    // dedans, la ligne conservée afficherait encore l'ancien nom.
+    renderItems([makeItem({ id: '1' })], badge);
+    const before = row('1');
+
+    renderItems([makeItem({ id: '1' })], () => ({ id: 'col-jeans', name: 'Jeans bruts' }));
+
+    assert.notEqual(row('1'), before, 'la ligne devait être refaite');
+    assert.equal(row('1').querySelector('.item-collection-name')?.textContent, 'Jeans bruts');
+  });
+
+  test('passer sous l onglet de la collection retire la pastille', () => {
+    renderItems([makeItem({ id: '1' })], badge);
+
+    // L'appelant rend `null` dès que la collection affichée est celle de
+    // l'article : la répéter à chaque ligne n'apprendrait rien.
+    renderItems([makeItem({ id: '1' })]);
+
+    assert.equal(row('1').querySelector<HTMLElement>('.item-where')?.hidden, true);
   });
 });
 

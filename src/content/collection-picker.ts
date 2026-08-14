@@ -39,8 +39,12 @@ export type PickerOptions = {
   itemId: string;
   /** Titre de l'article, affiché en tête du menu pour lever tout doute sur la cible. */
   itemTitle: string;
-  /** Collection actuelle, marquée `aria-current` — souvent la collection par défaut. */
-  currentCollectionId: string;
+  /**
+   * Collection actuelle, marquée `aria-current`. `null` — ou `'default'`, qui
+   * dit la même chose dans un storage hérité — quand l'article n'est classé
+   * nulle part : c'est alors « Aucune collection » qui porte la marque.
+   */
+  currentCollectionId: string | null;
   /** Position du bouton d'où part le geste, en coordonnées viewport. */
   anchor: { top: number; bottom: number; left: number; right: number };
   /** Collection épinglée sur cet onglet, `null` si aucune — voir `tab-default.ts`. */
@@ -151,8 +155,11 @@ function paintPin(btn: HTMLButtonElement, collection: Collection, pinnedId: stri
 
   if (pinned) {
     btn.title = natural
-      ? `Sur cet onglet, un clic enregistre dans « ${collection.name} »`
+      ? `Sur cet onglet, un clic enregistre dans « ${collection.name} », sans collection`
       : `Revenir à « Mes favoris » sur cet onglet`;
+  } else if (natural) {
+    // La ligne « Aucune collection » : y ranger, c'est déclasser.
+    btn.title = `Retirer de sa collection, et enregistrer sans collection sur cet onglet`;
   } else {
     btn.title = `Ranger ici, et enregistrer par défaut dans « ${collection.name} » sur cet onglet`;
   }
@@ -219,13 +226,29 @@ export async function openCollectionPicker(options: PickerOptions): Promise<void
     toast(pinned ? `« ${name} » par défaut sur cet onglet` : `Rangé dans « ${name} »`);
   };
 
+  /**
+   * Range l'article, ou le déclasse si la ligne est « Aucune collection ».
+   *
+   * Déclasser ne le retire de rien : « Mes favoris » récapitule tout ce qui est
+   * enregistré, l'article y reste — le toast le dit, parce que rien à l'écran ne
+   * le montrerait autrement (le panneau est souvent fermé quand on chine).
+   */
   const rangeInto = (id: string, name: string, pinned = false): void => {
+    const unclassify = id === DEFAULT_COLLECTION_ID;
+
     // L'écriture n'est pas attendue : le menu se ferme tout de suite, et le
     // storage notifiera les onglets et le panneau de lui-même.
-    void assignCollection(options.itemId, id).catch((err: unknown) => {
+    void assignCollection(options.itemId, unclassify ? null : id).catch((err: unknown) => {
       console.error('[Vinted Smart Bookmarks] rangement échoué :', errorText(err));
     });
-    done(name, pinned);
+
+    if (!unclassify) {
+      done(name, pinned);
+      return;
+    }
+
+    closePicker();
+    toast('Sans collection — toujours dans « Mes favoris »');
   };
 
   // Aucune épingle explicite veut dire « Mes favoris » : c'est là que part un
@@ -264,9 +287,17 @@ export async function openCollectionPicker(options: PickerOptions): Promise<void
 
     pins.push({ collection, btn: pinButton });
 
+    // « Mes favoris » n'est plus une destination : tout y est déjà. Sa ligne
+    // devient le geste inverse — retirer l'article de sa collection — et c'est
+    // elle qui porte la marque quand il n'est classé nulle part.
+    const isDefault = collection.id === DEFAULT_COLLECTION_ID;
+    const current = isDefault
+      ? !options.currentCollectionId || options.currentCollectionId === DEFAULT_COLLECTION_ID
+      : collection.id === options.currentCollectionId;
+
     list.appendChild(
       row(
-        entry(collection.name, collection.id === options.currentCollectionId, () => {
+        entry(isDefault ? 'Aucune collection' : collection.name, current, () => {
           rangeInto(collection.id, collection.name);
         }),
         pinButton

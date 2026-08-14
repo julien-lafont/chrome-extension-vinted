@@ -12,10 +12,12 @@ import {
   NOISE_KEY,
   DEFAULT_COLLECTION_ID,
   OFFERS_VIEW_ID,
+  isInTab,
   isView,
+  migrateStorage,
   readAll,
   sortCollections,
-  collectionOf,
+  classifiedIn,
   saveSettings,
   createCollection,
   renameCollection,
@@ -42,6 +44,7 @@ import { enableDragAndDrop } from './dnd.ts';
 import { required } from './dom.ts';
 import { initGallery, openGallery } from './gallery.ts';
 import { initItemList, renderEmpty, renderItems } from './item-list.ts';
+import type { CollectionBadge } from './item-list.ts';
 import { refreshOfferAges } from './item-render.ts';
 import { maybeScanOffers, offersReport } from './offers.ts';
 import { isLiveOffer } from '../shared/offers.ts';
@@ -127,16 +130,18 @@ const activeCollection = () =>
 const inOffersView = () => settings.activeCollectionId === OFFERS_VIEW_ID;
 
 /**
- * Articles de la collection active, avant tri et avant filtre de recherche.
+ * Articles de l'onglet actif, avant tri et avant filtre de recherche.
  *
- * Dans la vue « Sous offres », ce n'est pas un rangement qu'on lit mais un état :
- * les articles y sont **empruntés** à leurs collections, qu'ils ne quittent pas.
+ * « Mes favoris » n'est pas un rangement mais un récapitulatif : tout s'y
+ * affiche, classé ou non, sauf ce qui est archivé (`isInTab()`). Même principe
+ * dans la vue « Sous offres », où les articles sont **empruntés** à leurs
+ * collections, qu'ils ne quittent pas.
  */
 function itemsOfActiveCollection(): SavedItem[] {
   if (inOffersView()) return items.filter(isLiveOffer);
 
   const activeId = settings.activeCollectionId;
-  return items.filter((item) => collectionOf(item, collections) === activeId);
+  return items.filter((item) => isInTab(item, activeId, collections));
 }
 
 /**
@@ -250,10 +255,12 @@ function renderWatchbar(gone: SavedItem[]): void {
 
   watchbarEl.hidden = false;
   watchbarEl.textContent = '';
+  const where =
+    settings.activeCollectionId === DEFAULT_COLLECTION_ID
+      ? 'dans tes favoris'
+      : 'dans cette collection';
   watchbarEl.append(
-    document.createTextNode(
-      `${gone.length} vendu${gone.length > 1 ? 's' : ''} dans cette collection`
-    )
+    document.createTextNode(`${gone.length} vendu${gone.length > 1 ? 's' : ''} ${where}`)
   );
 
   watchbarEl.append(document.createTextNode(' · '));
@@ -288,9 +295,9 @@ function renderWatchbar(gone: SavedItem[]): void {
  */
 async function archiveSoldFromButton(): Promise<void> {
   const result = await archiveSold(settings.activeCollectionId);
-  if (!result.movedIds.length) return;
+  if (!result.moved.length) return;
 
-  const count = result.movedIds.length;
+  const count = result.moved.length;
   flash(`${count} article${count > 1 ? 's' : ''} archivé${count > 1 ? 's' : ''}`, () => {
     void restoreArchived(result);
   });
@@ -308,8 +315,28 @@ initItemList(
       void removeItem(item.id);
       flash('Article retiré', () => void restoreItem(item));
     },
+    openCollection: (collectionId) => {
+      void saveSettings({ activeCollectionId: collectionId }).then((next) => {
+        settings = next;
+        render();
+      });
+    },
   }
 );
+
+/**
+ * La pastille de collection d'une ligne, ou `null` quand elle n'apprendrait
+ * rien : sous l'onglet d'une collection, tout ce qui s'affiche y est rangé.
+ *
+ * Elle n'apparaît donc que dans « Mes favoris » — qui montre le classé comme le
+ * non classé — et dans la vue « Sous offres », où les articles viennent de
+ * partout.
+ */
+function collectionBadge(item: SavedItem): CollectionBadge | null {
+  const collection = classifiedIn(item, collections);
+  if (!collection || collection.id === settings.activeCollectionId) return null;
+  return { id: collection.id, name: collection.name };
+}
 
 function render(): void {
   if (dragging) {
@@ -350,12 +377,15 @@ function render(): void {
       return;
     }
 
-    renderEmpty(
-      'Collection vide',
-      settings.activeCollectionId === DEFAULT_COLLECTION_ID
-        ? "Ouvre Vinted et clique sur l'icône en haut à droite d'un article."
-        : 'Glisse un article sur cet onglet pour le classer ici.'
-    );
+    if (settings.activeCollectionId === DEFAULT_COLLECTION_ID) {
+      renderEmpty(
+        'Aucun favori',
+        "Ouvre Vinted et clique sur l'icône en haut à droite d'un article."
+      );
+      return;
+    }
+
+    renderEmpty('Collection vide', 'Glisse un article sur cet onglet pour le classer ici.');
     return;
   }
 
@@ -364,7 +394,7 @@ function render(): void {
     return;
   }
 
-  renderItems(ordered);
+  renderItems(ordered, collectionBadge);
 }
 
 // --- Glisser-déposer ----------------------------------------------------------
@@ -404,13 +434,26 @@ enableDragAndDrop(listEl, {
     void commitCustomOrder(collectionId, order);
   },
 
+  /**
+   * Déposer sur « Mes favoris » déclasse : l'article y figure déjà, le seul sens
+   * possible du geste est « retire-le de sa collection ». Même sémantique que
+   * l'entrée « Aucune collection » du menu de rangement.
+   */
   onDropToCollection: (itemId, collectionId) => {
     dragging = false;
-    if (collectionId === settings.activeCollectionId) {
+
+    const target = collectionId === DEFAULT_COLLECTION_ID ? null : collectionId;
+    const item = items.find((candidate) => candidate.id === itemId);
+
+    // Comparé au classement de l'article, pas à l'onglet affiché : depuis « Mes
+    // favoris », déposer sur « Mes favoris » est un geste utile pour un article
+    // classé ailleurs, et un geste vide pour les autres.
+    if (!item || (classifiedIn(item, collections)?.id ?? null) === target) {
       render();
       return;
     }
-    void moveItemToCollection(itemId, collectionId);
+
+    void moveItemToCollection(itemId, target);
   },
 
   onCancel: () => {
@@ -439,13 +482,32 @@ document.addEventListener('pointerup', () => {
 
 initMenus(menuEl);
 
+/**
+ * Le menu de rangement d'une ligne.
+ *
+ * « Mes favoris » n'y figure plus comme destination — l'article y est déjà, quoi
+ * qu'il arrive. À sa place, « Aucune collection » : le seul geste qui manquait
+ * depuis que le classement est facultatif, retirer l'étiquette sans retirer
+ * l'article.
+ */
 function openMoveMenu(item: SavedItem, anchor: HTMLElement): void {
-  const currentId = collectionOf(item, collections);
+  const currentId = classifiedIn(item, collections)?.id ?? null;
 
   openMenu(anchor, (menu) => {
-    menu.append(menuTitle('Déplacer vers'));
+    menu.append(menuTitle('Ranger dans'));
+
+    menu.append(
+      menuButton(
+        'Aucune collection',
+        () => {
+          void moveItemToCollection(item.id, null);
+        },
+        { current: currentId === null }
+      )
+    );
 
     for (const collection of sortCollections(collections)) {
+      if (collection.id === DEFAULT_COLLECTION_ID) continue;
       menu.append(
         menuButton(
           collection.name,
@@ -465,27 +527,42 @@ function openMoveMenu(item: SavedItem, anchor: HTMLElement): void {
 }
 
 /**
- * Supprime une collection vide et revient sur celle par défaut si c'était l'active.
+ * Supprime une collection et revient sur « Mes favoris » si c'était l'onglet actif.
  *
- * Le refus du storage n'est pas théorique : un autre onglet Vinted a pu y classer
- * un article depuis le dernier rendu. On le dit alors, plutôt que de laisser un
- * clic sans effet visible.
+ * Une collection pleine se supprime désormais : ses articles restent dans le
+ * récapitulatif, simplement déclassés. Ce n'est plus une perte, mais ça reste un
+ * geste qu'on ne fait pas par mégarde — d'où la confirmation, avec le nombre en
+ * toutes lettres et ce qu'il advient des articles.
  */
 async function removeCollection(collection: Collection): Promise<void> {
+  const size = items.filter((item) => classifiedIn(item, collections)?.id === collection.id).length;
+
+  if (
+    size > 0 &&
+    !confirm(
+      `Supprimer la collection « ${collection.name} » ?\n\n` +
+        `Ses ${size} article${size > 1 ? 's' : ''} rest${size > 1 ? 'ent' : 'e'} dans « Mes favoris », sans collection.`
+    )
+  ) {
+    return;
+  }
+
   const result = await deleteCollection(collection.id);
 
   if (!result.ok) {
-    const raison =
-      result.reason === 'not-empty'
-        ? `« ${collection.name} » n'est plus vide : elle ne peut plus être supprimée.`
-        : `« ${collection.name} » n'a pas pu être supprimée.`;
     await reload();
-    flash(raison);
+    flash(`« ${collection.name} » n'a pas pu être supprimée.`);
     return;
   }
 
   if (settings.activeCollectionId === collection.id) {
     settings = await saveSettings({ activeCollectionId: DEFAULT_COLLECTION_ID });
+  }
+
+  if (result.freed) {
+    flash(
+      `${result.freed} article${result.freed > 1 ? 's' : ''} désormais sans collection, dans « Mes favoris »`
+    );
   }
 }
 
@@ -624,7 +701,12 @@ function exportJson(): void {
   const payload = {
     exportedAt: new Date().toISOString(),
     collections: sortCollections(collections).map(({ id, name, order }) => ({ id, name, order })),
-    items: items.map((item) => ({ ...item, collectionId: collectionOf(item, collections) })),
+    // `null` là où l'article n'est classé nulle part — il reste dans « Mes
+    // favoris », qui n'est pas une collection dont on puisse être membre.
+    items: items.map((item) => ({
+      ...item,
+      collectionId: classifiedIn(item, collections)?.id ?? null,
+    })),
   };
 
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -676,6 +758,9 @@ async function runDiagnostic(): Promise<void> {
     sansTaille: items.filter((item) => !item.size).length,
     sansEtat: items.filter((item) => !item.condition).length,
     sansCategorie: items.filter((item) => !item.category?.url).length,
+    // Non classés : présents dans « Mes favoris » et dans aucune collection.
+    // C'est l'état normal d'un article fraîchement enregistré, pas une anomalie.
+    sansCollection: items.filter((item) => !classifiedIn(item, collections)).length,
     // Fiche encore en cours de lecture : ces articles n'ont que les données de
     // leur carte. Un compte qui ne redescend jamais signale un fetch qui échoue.
     enAttenteDeFiche: items.filter((item) => item.pending).length,
@@ -696,7 +781,7 @@ async function runDiagnostic(): Promise<void> {
   // En dernière clé du rapport : le reste doit rester lisible sans défiler.
   report.articles = items.map((item) => ({
     ...item,
-    collectionId: collectionOf(item, collections),
+    collectionId: classifiedIn(item, collections)?.id ?? null,
   }));
 
   reportEl.textContent = JSON.stringify(report, null, 2);
@@ -781,5 +866,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[ITEMS_KEY] || changes[COLLECTIONS_KEY] || changes[SETTINGS_KEY] || changes[NOISE_KEY])
     void reload();
 });
+
+// Nettoyage ponctuel du storage (`shared/migrate.ts`). Sans effet une fois fait,
+// et surtout : rien de ce qui s'affiche n'en dépend — l'écriture qu'il produit
+// déclenche un `onChanged`, donc un `reload()`, il n'y a rien à attendre ici.
+void migrateStorage();
 
 void reload();

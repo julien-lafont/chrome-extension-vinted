@@ -208,11 +208,11 @@ badges — pas de relecture du storage, pas de rendu de liste, et donc rien qui 
 bouger sous la souris.
 
 **L'onglet « Sous offres »** (💸), à gauche d'« Archives ». Ce n'est **pas une
-collection** : l'article reste dans la sienne, `collectionOf()` n'en sait rien, et rien
-ne s'y dépose au glisser. C'est une vue, portée par un `activeCollectionId` réservé
-(`view:offers`) que le panneau interprète comme un filtre. Elle contient les offres en
-attente (les deux côtés), sur des articles ni vendus ni retirés, et sa pastille en donne
-le nombre — la seule information qu'on veuille piloter du regard.
+collection** : l'article reste classé là où il l'était, `classifiedIn()` n'en sait rien,
+et rien ne s'y dépose au glisser. C'est une vue, portée par un `activeCollectionId`
+réservé (`view:offers`) que le panneau interprète comme un filtre. Elle contient les
+offres en attente (les deux côtés), sur des articles ni vendus ni retirés, et sa
+pastille en donne le nombre — la seule information qu'on veuille piloter du regard.
 
 ## 6. Ce que cette spec ne fait pas
 

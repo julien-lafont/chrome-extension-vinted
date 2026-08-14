@@ -529,6 +529,48 @@ h1 {
   font-weight: 600;
 }
 
+/* Ligne de la pastille de collection. Elle n'existe que sur les articles
+   classés (`hidden` sinon) : rien n'est réservé pour les autres. */
+.item-where {
+  margin: 4px 0 0;
+}
+
+/* La pastille elle-même : le nom de la collection où l'article est rangé,
+   cliquable. Discrète — c'est un repère de balayage dans « Mes favoris », pas
+   une action qu'on cherche du regard. */
+.item-collection {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 7px 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.item-collection:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.item-collection svg {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+}
+
+.item-collection-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /*
  * Prix courant, ancien prix barré et pastille de variation ne doivent jamais
  * céder leur place. Le vendeur a quitté cette ligne pour la sienne : à quatre

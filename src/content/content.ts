@@ -1525,7 +1525,8 @@ import {
       await openCollectionPicker({
         itemId: item.id,
         itemTitle: item.title || '',
-        currentCollectionId: item.collectionId || DEFAULT_COLLECTION_ID,
+        // `null` = non classé, ce que le menu marque sur « Aucune collection ».
+        currentCollectionId: item.collectionId ?? null,
         anchor: { top: box.top, bottom: box.bottom, left: box.left, right: box.right },
         pinnedCollectionId: tabDefaultId(),
         onPin: setTabDefault,

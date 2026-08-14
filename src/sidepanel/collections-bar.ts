@@ -13,7 +13,7 @@ import {
   ARCHIVE_COLLECTION_ID,
   DEFAULT_COLLECTION_ID,
   OFFERS_VIEW_ID,
-  collectionOf,
+  isInTab,
   sortCollections,
 } from '../shared/collections.ts';
 import { isLiveOffer } from '../shared/offers.ts';
@@ -43,10 +43,15 @@ export function renderCollectionsBar(
 ): void {
   container.textContent = '';
 
+  // Un article compte dans « Mes favoris » **et** dans sa collection : les
+  // compteurs se recouvrent, c'est le sens même du récapitulatif. D'où le
+  // décompte par onglet plutôt qu'une répartition en une passe.
   const counts = new Map<string, number>();
-  for (const item of state.items) {
-    const id = collectionOf(item, state.collections);
-    counts.set(id, (counts.get(id) || 0) + 1);
+  for (const collection of Object.values(state.collections)) {
+    counts.set(
+      collection.id,
+      state.items.filter((item) => isInTab(item, collection.id, state.collections)).length
+    );
   }
 
   for (const collection of sortCollections(state.collections)) {
@@ -90,15 +95,20 @@ export function renderCollectionsBar(
 
     tab.append(select);
 
-    // Supprimable seulement une fois vidée : la collection par défaut, jamais.
-    // « Archives » non plus — elle est recréée d'elle-même au prochain archivage,
-    // et une croix à côté d'une icône seule ferait un onglet illisible.
-    if (collection.id !== DEFAULT_COLLECTION_ID && !isArchive && size === 0) {
+    // Supprimable même pleine : ses articles restent dans « Mes favoris », qui
+    // récapitule tout — la croix ne fait plus disparaître que l'étiquette, et
+    // c'est le panneau qui demande confirmation quand il en reste. « Mes
+    // favoris » n'est pas supprimable (ce n'est plus une collection, mais la vue
+    // de tout), « Archives » non plus — elle est recréée d'elle-même au prochain
+    // archivage, et une croix à côté d'une icône seule ferait un onglet illisible.
+    if (collection.id !== DEFAULT_COLLECTION_ID && !isArchive) {
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'tab-delete';
       remove.textContent = '×';
-      remove.title = `Supprimer la collection « ${collection.name} »`;
+      remove.title = size
+        ? `Supprimer la collection « ${collection.name} » (ses ${size} articles restent dans « Mes favoris »)`
+        : `Supprimer la collection « ${collection.name} »`;
       remove.setAttribute('aria-label', remove.title);
       remove.addEventListener('click', () => {
         hooks.onDelete(collection);

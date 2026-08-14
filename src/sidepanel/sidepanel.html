@@ -117,6 +117,30 @@
           <a class="item-title" target="_blank" rel="noreferrer"></a>
           <p class="item-meta"></p>
 
+          <!-- Où l'article est classé, quand ce n'est pas l'onglet affiché :
+               c'est ce qui permet de balayer « Mes favoris » — qui montre tout —
+               en voyant d'un coup d'œil ce qui est déjà rangé. Un bouton, il
+               ouvre la collection. Masqué pour un article non classé : l'absence
+               de pastille *est* l'information. -->
+          <p class="item-where" hidden>
+            <button type="button" class="item-collection">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path
+                  d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                />
+              </svg>
+              <span class="item-collection-name"></span>
+            </button>
+          </p>
+
           <p class="item-price">
             <span class="item-price-value"></span>
             <s class="item-price-was" hidden></s>

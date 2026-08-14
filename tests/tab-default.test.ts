@@ -44,7 +44,7 @@ describe('épingler une collection depuis le menu', () => {
 
     // C'est là que va un clic court : montrer toutes les épingles vides
     // laisserait croire à une destination indéterminée.
-    assert.equal(page.pickerPin('Mes favoris').getAttribute('aria-pressed'), 'true');
+    assert.equal(page.pickerPin('Aucune collection').getAttribute('aria-pressed'), 'true');
     assert.equal(page.pickerPin('Vestes').getAttribute('aria-pressed'), 'false');
     assert.equal(page.defaultPillText(), null, 'l’état normal n’a pas besoin de pastille');
   });
@@ -58,7 +58,7 @@ describe('épingler une collection depuis le menu', () => {
 
     assert.equal(page.pickerPin('Vestes').getAttribute('aria-pressed'), 'true');
     assert.equal(
-      page.pickerPin('Mes favoris').getAttribute('aria-pressed'),
+      page.pickerPin('Aucune collection').getAttribute('aria-pressed'),
       'false',
       'une seule collection à la fois porte l’épingle'
     );
@@ -164,7 +164,7 @@ describe('annuler l’épinglage', () => {
     assert.equal(page.tabDefault(), null);
     assert.equal(pin.getAttribute('aria-pressed'), 'false', 'l’épingle doit se vider sur place');
     assert.equal(
-      page.pickerPin('Mes favoris').getAttribute('aria-pressed'),
+      page.pickerPin('Aucune collection').getAttribute('aria-pressed'),
       'true',
       'l’épingle ne disparaît pas, elle revient à la collection par défaut'
     );
@@ -180,7 +180,7 @@ describe('annuler l’épinglage', () => {
     const page = await catalogWithCollections();
 
     await page.pressLong(page.cardButtons()[0]);
-    const pin = page.pickerPin('Mes favoris');
+    const pin = page.pickerPin('Aucune collection');
     await page.choose(pin);
 
     // Un radio déjà coché : le geste ne fait rien plutôt que d'inventer un état

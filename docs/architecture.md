@@ -34,6 +34,7 @@ src/
   shared/types.ts                  modèle de données (SavedItem, Collection, Settings)
   shared/storage.ts                clés, forme du storage, écritures sérialisées
   shared/collections.ts            clé `collections` : lecture, création, rangement
+  shared/migrate.ts                nettoyages de storage, versionnés (jamais requis pour lire)
   shared/noise.ts                  règles de filtrage du catalogue (pur, testé)
   shared/noise-storage.ts          clé `noise` : relecture puis écriture
   shared/offers.ts                 offres lues dans l'API des conversations (pur)
@@ -136,7 +137,10 @@ savedItems = {
     description: 'Veste Nike Dri-FIT…', // tronquée, encore inexploitée
     savedAt: 1753500000000,
     source: 'catalog', // ou "detail"
-    collectionId: 'col-lq3x8f-4b2', // absent = collection par défaut
+    // Collection où l'article est classé **en plus** d'être dans « Mes favoris »,
+    // qui récapitule tout. Absent = non classé, l'état d'un article fraîchement
+    // enregistré — voir docs/specs/favoris-recapitulatif.md.
+    collectionId: 'col-lq3x8f-4b2',
     // Suivi de prix et de disponibilité, absents tant que l'article n'a jamais
     // été vérifié — voir docs/specs/suivi-prix.md.
     lastCheckedAt: 1753500000000,
@@ -157,6 +161,8 @@ savedItems = {
 };
 
 collections = {
+  // « Mes favoris » n'est plus une collection mais la vue de tout ce qui est
+  // enregistré : son entrée ne subsiste que pour porter l'ordre manuel global.
   default: { id: 'default', name: 'Mes favoris', createdAt: 0, order: [] },
   'col-lq3x8f-4b2': {
     id: 'col-lq3x8f-4b2',
@@ -170,6 +176,7 @@ collections = {
 
 settings = {
   activeCollectionId: 'default',
+  schemaVersion: 2, // absent = 1 ; ne conditionne qu'un nettoyage, jamais la lecture
   sortMode: 'custom', // custom | savedAt | price | condition | likes | size
   sortDir: 'asc',
   hideSold: false,
@@ -240,12 +247,21 @@ relancer la recherche plus tard. `exact` dit d'où elle vient — voir
 
 ## Répartition des responsabilités
 
-L'appartenance à une collection vit sur l'**article** (`collectionId`), l'ordre manuel
-vit sur la **collection** (`order`).
+Le classement d'un article vit sur l'**article** (`collectionId`), l'ordre manuel vit
+sur la **collection** (`order`).
 
 C'est ce qui permet au content script d'écrire dans `savedItems` sans rien savoir des
 collections. Un article sans `collectionId` — ou pointant vers une collection supprimée
-— retombe sur la collection par défaut, sans migration ni réparation.
+— est simplement **non classé**, sans migration ni réparation : il reste affiché dans «
+Mes favoris », qui récapitule tout ce qui est enregistré (voir
+[favoris-recapitulatif.md](specs/favoris-recapitulatif.md)). Une collection ne remplace
+donc pas les favoris, elle s'y ajoute, et les compteurs de la barre d'onglets se
+recouvrent.
+
+Deux fonctions portent cette lecture, et elles sont les seules : `classifiedIn()` rend
+la collection d'un article ou `null`, `isInTab()` dit s'il s'affiche sous un onglet
+donné — la liste et les compteurs passent par la même, faute de quoi ils finiraient par
+diverger.
 
 Depuis la capture avec choix de collection (appui long sur un bouton injecté), le
 content script écrit **aussi** sur la clé `collections`. Les deux mondes partagent alors
@@ -275,13 +291,12 @@ Le clic court écrit alors `savedItems` **et** `collections` dans un seul `set` 
 depuis le panneau ne laisse pas de référence morte — `syncTabDefault()` retire l'épingle
 à la notification du storage.
 
-**Une collection ne se supprime que vide** (`deleteCollection`), et jamais celle par
-défaut. La vérification est faite dans le storage après relecture, pas seulement à
-l'affichage : la croix est rendue à partir d'un état qui peut dater d'avant qu'un autre
-onglet y classe un article. Le panneau se contente d'afficher la croix quand le compteur
-est à zéro ; c'est le store qui tranche, et qui renvoie
-`{ ok: false, reason: 'not-empty' }` le cas échéant. Aucun article n'est donc jamais
-déplacé par une suppression.
+**Une collection se supprime même pleine** (`deleteCollection`) — jamais « Mes favoris
+», qui n'en est pas une. Ses articles ne sont pas perdus : ils redeviennent non classés
+et restent dans le récapitulatif, le champ étant effacé sur chacun dans la même section
+critique que la suppression. La règle « seulement si vide » qui valait avant protégeait
+d'une perte qui ne peut plus se produire ; c'est désormais le panneau qui demande
+confirmation, en annonçant le nombre d'articles concernés.
 
 ## Concurrence
 

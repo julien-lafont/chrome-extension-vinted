@@ -16,10 +16,11 @@
  * écriture ne s'intercale ; c'est ce qui autorise à décider *dans* la mutation
  * (`deleteCollection` refuse une collection qu'un autre onglet vient de remplir).
  *
- * Un article appartient à une collection via `item.collectionId`. Le content
- * script ne renseigne ce champ qu'à la capture avec choix de collection (appui
- * long) : un article sans collection connue retombe sur la collection par
- * défaut, sans migration nécessaire.
+ * Un article est classé dans une collection via `item.collectionId`, **en plus**
+ * d'apparaître dans « Mes favoris », qui récapitule tout ce qui est enregistré.
+ * Le content script ne renseigne ce champ qu'à la capture avec choix de
+ * collection (appui long) : un article sans collection connue est simplement non
+ * classé, sans migration nécessaire pour l'afficher.
  *
  * Ce qui touche à la clé `collections` vit dans `shared/collections.ts` depuis
  * que le content script y écrit lui aussi, et n'est que réexporté ici — le
@@ -33,18 +34,20 @@ import {
   ITEMS_KEY,
   OFFERS_VIEW_ID,
   assignCollection,
-  collectionOf,
+  classifiedIn,
   createCollection,
+  isInTab,
   isView,
   makeArchiveCollection,
   makeDefaultCollection,
   sortCollections,
 } from '../shared/collections.ts';
+import { migrateStorage } from '../shared/migrate.ts';
 import { normalizeNoise } from '../shared/noise.ts';
 import type { NoiseFilters } from '../shared/noise.ts';
 import { patchNoise } from '../shared/noise-storage.ts';
 import { NOISE_KEY, SETTINGS_KEY, read, update } from '../shared/storage.ts';
-import type { Collection, CollectionMap, SavedItem, Settings } from '../shared/types.ts';
+import type { Collection, CollectionMap, ItemMap, SavedItem, Settings } from '../shared/types.ts';
 
 export {
   ARCHIVE_COLLECTION_ID,
@@ -54,9 +57,11 @@ export {
   NOISE_KEY,
   OFFERS_VIEW_ID,
   SETTINGS_KEY,
-  collectionOf,
+  classifiedIn,
   createCollection,
+  isInTab,
   isView,
+  migrateStorage,
   sortCollections,
 };
 
@@ -141,24 +146,30 @@ export async function renameCollection(id: string, name: string): Promise<void> 
 }
 
 export type DeleteResult =
-  { ok: true } | { ok: false; reason: 'default' | 'not-empty' | 'unknown' };
+  { ok: true; freed: number } | { ok: false; reason: 'default' | 'unknown' };
 
 /**
- * Supprime une collection **vide**.
+ * Supprime une collection, **même pleine**.
  *
- * La règle est appliquée ici et pas seulement à l'affichage : le bouton est rendu
- * à partir d'un état qui peut dater, un autre onglet Vinted ayant pu y classer un
- * article entre-temps. On relit donc juste avant d'écrire, et on renonce plutôt
- * que de déplacer des articles à l'insu de l'utilisateur.
+ * Ce qu'elle contenait n'est pas perdu : depuis que « Mes favoris » récapitule
+ * tout, un article déclassé y reste affiché — la collection n'est qu'une
+ * étiquette, la retirer ne retire rien. La règle « seulement si vide » qui valait
+ * avant protégeait d'une perte qui ne peut plus se produire ; c'est au panneau de
+ * demander confirmation quand il reste des articles.
  *
+ * Le champ est effacé sur chaque article dans la **même** section critique :
+ * `classifiedIn()` lirait de toute façon une référence morte comme « non
+ * classé », mais un identifiant qui ne désigne plus rien finit par être lu comme
+ * s'il désignait quelque chose (export, diagnostic).
+ *
+ * @returns le nombre d'articles déclassés au passage
  */
 export async function deleteCollection(id: string): Promise<DeleteResult> {
   if (id === DEFAULT_COLLECTION_ID) return { ok: false, reason: 'default' };
 
   // Le verdict se décide sur l'état relu, dans la même section critique que
-  // l'écriture : sans cela, un rangement concurrent glisserait un article dans
-  // la collection entre le contrôle et la suppression.
-  let result: DeleteResult = { ok: true };
+  // l'écriture : un autre onglet a pu supprimer la collection entre-temps.
+  let result: DeleteResult = { ok: true, freed: 0 };
 
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const collections = current[COLLECTIONS_KEY] || {};
@@ -167,19 +178,28 @@ export async function deleteCollection(id: string): Promise<DeleteResult> {
       return null;
     }
 
-    const items = Object.values(current[ITEMS_KEY] || {});
-    if (items.some((item) => item.collectionId === id)) {
-      result = { ok: false, reason: 'not-empty' };
-      return null;
+    const items = current[ITEMS_KEY] || {};
+    const nextItems: ItemMap = {};
+    let freed = 0;
+
+    for (const [itemId, item] of Object.entries(items)) {
+      if (item.collectionId !== id) {
+        nextItems[itemId] = item;
+        continue;
+      }
+      const next: SavedItem = { ...item };
+      delete next.collectionId;
+      nextItems[itemId] = next;
+      freed += 1;
     }
 
-    const next = { ...collections };
-    delete next[id];
-    return { [COLLECTIONS_KEY]: next };
+    result = { ok: true, freed };
+
+    const nextCollections = { ...collections };
+    delete nextCollections[id];
+    return { [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections };
   });
 
-  // Aucun article à rapatrier : la collection était vide. Une référence résiduelle
-  // vers une collection disparue retomberait de toute façon sur celle par défaut.
   return result;
 }
 
@@ -276,20 +296,30 @@ export async function restoreItem(item: SavedItem): Promise<void> {
   });
 }
 
-/** Ce qu'un archivage a déplacé, de quoi l'annuler — §6.5. */
-export type ArchiveResult = { movedIds: string[]; sourceCollectionId: string };
+/**
+ * Ce qu'un archivage a déplacé, de quoi l'annuler — §6.5.
+ *
+ * L'origine est notée **par article**, et pas une fois pour toute l'opération :
+ * depuis « Mes favoris », l'archivage balaie tous les vendus, quelle que soit
+ * leur collection. Une origine unique les rendrait tous à la même — c'est-à-dire
+ * les déclasserait en bloc, en silence, sur un simple « Annuler ».
+ */
+export type ArchivedItem = { id: string; from: string | null };
+export type ArchiveResult = { moved: ArchivedItem[] };
 
 /**
- * Déplace les articles `sold`/`gone` d'**une** collection vers « Archives »,
- * créée à la demande au premier usage. Pas une suppression, et réversible via
- * `restoreArchived()` — sur le modèle exact de l'annulation de retrait
- * ci-dessus, en un seul `set` pour les mêmes raisons que `commitCustomOrder` :
- * deux écritures successives (articles, puis collections) déclencheraient deux
- * rendus, et le premier verrait des articles déjà déplacés dans une
- * « Archives » qui n'existe pas encore.
+ * Déplace vers « Archives » — créée à la demande au premier usage — les articles
+ * `sold`/`gone` **affichés sous l'onglet courant** : ceux d'une collection
+ * donnée, ou tous depuis « Mes favoris ».
+ *
+ * Pas une suppression, et réversible via `restoreArchived()` — sur le modèle
+ * exact de l'annulation de retrait ci-dessus, en un seul `set` pour les mêmes
+ * raisons que `commitCustomOrder` : deux écritures successives (articles, puis
+ * collections) déclencheraient deux rendus, et le premier verrait des articles
+ * déjà déplacés dans une « Archives » qui n'existe pas encore.
  */
-export async function archiveSold(collectionId: string): Promise<ArchiveResult> {
-  const result: ArchiveResult = { movedIds: [], sourceCollectionId: collectionId };
+export async function archiveSold(tabId: string): Promise<ArchiveResult> {
+  const result: ArchiveResult = { moved: [] };
 
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const items = current[ITEMS_KEY] || {};
@@ -297,8 +327,7 @@ export async function archiveSold(collectionId: string): Promise<ArchiveResult> 
 
     const targets = Object.values(items).filter(
       (item) =>
-        collectionOf(item, collections) === collectionId &&
-        (item.status === 'sold' || item.status === 'gone')
+        isInTab(item, tabId, collections) && (item.status === 'sold' || item.status === 'gone')
     );
     if (!targets.length) return null;
 
@@ -306,9 +335,13 @@ export async function archiveSold(collectionId: string): Promise<ArchiveResult> 
       collections[ARCHIVE_COLLECTION_ID] = makeArchiveCollection();
     }
 
-    const movedIds = targets.map((item) => item.id);
+    result.moved = targets.map((item) => ({
+      id: item.id,
+      from: classifiedIn(item, collections)?.id ?? null,
+    }));
+
+    const movedIds = result.moved.map((entry) => entry.id);
     const moved = new Set(movedIds);
-    result.movedIds = movedIds;
 
     const nextItems = { ...items };
     for (const id of movedIds) {
@@ -316,6 +349,8 @@ export async function archiveSold(collectionId: string): Promise<ArchiveResult> 
       if (item) nextItems[id] = { ...item, collectionId: ARCHIVE_COLLECTION_ID };
     }
 
+    // Les archivés quittent « Mes favoris » : leur place dans l'ordre global
+    // part avec eux, et `restoreArchived()` la leur rend.
     const nextCollections: CollectionMap = {};
     for (const [id, collection] of Object.entries(collections)) {
       const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
@@ -331,37 +366,48 @@ export async function archiveSold(collectionId: string): Promise<ArchiveResult> 
   return result;
 }
 
-/** Annule un archivage : remet chaque article dans la collection d'où il venait. */
-export async function restoreArchived({
-  movedIds,
-  sourceCollectionId,
-}: ArchiveResult): Promise<void> {
-  if (!movedIds.length) return;
-  const moved = new Set(movedIds);
+/** Annule un archivage : remet chaque article là où il était classé, ou nulle part. */
+export async function restoreArchived({ moved }: ArchiveResult): Promise<void> {
+  if (!moved.length) return;
+  const back = new Map(moved.map((entry) => [entry.id, entry.from]));
 
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const items = current[ITEMS_KEY] || {};
     const collections = current[COLLECTIONS_KEY] || {};
 
     const nextItems = { ...items };
-    for (const id of movedIds) {
+    // Où chaque article revient **vraiment** : la collection d'origine a pu être
+    // supprimée pendant les cinq secondes d'annulation, auquel cas l'article
+    // revient non classé plutôt que sur une référence morte.
+    const target = new Map<string, string | null>();
+
+    for (const [id, from] of back) {
       const item = nextItems[id];
       if (!item) continue;
-      const patched: SavedItem = { ...item, collectionId: sourceCollectionId };
-      // Absent = collection par défaut (voir `collectionOf()`) : ne pas écrire
-      // une valeur qui vaudrait la même chose, pour rester cohérent avec ce que
-      // le content script produit lui-même (il ne renseigne jamais ce champ).
-      if (sourceCollectionId === DEFAULT_COLLECTION_ID) delete patched.collectionId;
+
+      const to = from && collections[from] ? from : null;
+      target.set(id, to);
+
+      const patched: SavedItem = { ...item, collectionId: to ?? undefined };
+      // Non classé s'écrit par l'absence du champ, jamais par `'default'` : c'est
+      // la seule forme que le content script produit, et deux écritures pour un
+      // même état finissent par se lire différemment quelque part.
+      if (!to) delete patched.collectionId;
       nextItems[id] = patched;
     }
 
+    // Chaque article reprend la tête de l'ordre d'où il venait — celui de sa
+    // collection s'il en avait une, celui de la vue globale sinon.
     const nextCollections: CollectionMap = {};
     for (const [id, collection] of Object.entries(collections)) {
-      const order = (collection.order || []).filter((entryId) => !moved.has(entryId));
-      nextCollections[id] =
-        id === sourceCollectionId
-          ? { ...collection, order: [...movedIds, ...order] }
-          : { ...collection, order };
+      const order = (collection.order || []).filter((entryId) => !back.has(entryId));
+      const returning = [...target]
+        .filter(([, to]) => (to ?? DEFAULT_COLLECTION_ID) === id)
+        .map(([itemId]) => itemId);
+
+      nextCollections[id] = returning.length
+        ? { ...collection, order: [...returning, ...order] }
+        : { ...collection, order };
     }
 
     return { [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections };

@@ -31,8 +31,8 @@ describe('appui long sur une carte du catalogue', () => {
     assert.ok(page.picker(), 'aucun menu de collection ouvert');
     assert.deepEqual(
       page.pickerLabels(),
-      ['Mes favoris'],
-      'la collection par défaut doit être proposée'
+      ['Aucune collection'],
+      'la ligne de déclassement doit être proposée, même sans aucune collection'
     );
   });
 
@@ -46,11 +46,11 @@ describe('appui long sur une carte du catalogue', () => {
 
     await page.pressLong(page.cardButtons()[0]);
 
-    assert.deepEqual(page.pickerLabels(), ['Mes favoris', 'Vestes', 'Bottes']);
+    assert.deepEqual(page.pickerLabels(), ['Aucune collection', 'Vestes', 'Bottes']);
     assert.equal(
-      page.pickerItem('Mes favoris').getAttribute('aria-current'),
+      page.pickerItem('Aucune collection').getAttribute('aria-current'),
       'true',
-      'un article fraîchement capturé est dans la collection par défaut'
+      'un article fraîchement capturé n’est classé nulle part'
     );
   });
 
@@ -66,7 +66,7 @@ describe('appui long sur une carte du catalogue', () => {
 
     // C'est le dépôt de ce qui est vendu ou parti : y ranger une pièce qu'on
     // vient de trouver n'a aucun sens, et la proposer à chaque geste fait du bruit.
-    assert.deepEqual(page.pickerLabels(), ['Mes favoris', 'Vestes']);
+    assert.deepEqual(page.pickerLabels(), ['Aucune collection', 'Vestes']);
   });
 
   test('un clic court reste un simple enregistrement', async () => {

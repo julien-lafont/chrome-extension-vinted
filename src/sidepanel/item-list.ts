@@ -36,11 +36,16 @@ export type ItemListHooks = {
   openPhotos: (item: SavedItem) => void;
   /** Une URL dans un nouvel onglet — `chrome.tabs` ne se voit pas d'ici. */
   openTab: (url: string) => void;
-  /** Le menu « Déplacer vers », ancré sur le bouton cliqué. */
+  /** Le menu de rangement, ancré sur le bouton cliqué. */
   openMoveMenu: (item: SavedItem, anchor: HTMLElement) => void;
   /** Retrait demandé depuis la ligne ; l'annulation est offerte par l'appelant. */
   onRemove: (item: SavedItem) => void;
+  /** Clic sur la pastille de collection : le panneau bascule sur cet onglet. */
+  openCollection: (collectionId: string) => void;
 };
+
+/** La collection à annoncer sur une ligne, ou `null` — voir `renderItems()`. */
+export type CollectionBadge = { id: string; name: string };
 
 let el: ItemListElements;
 let hooks: ItemListHooks;
@@ -85,14 +90,24 @@ export function renderEmpty(message: string, hint: string): void {
  * rien à maintenir. Un cycle de suivi de prix n'écrit qu'un article à la fois :
  * les autres lignes sont conservées telles quelles — voir `reconcile.ts` pour ce
  * que cette conservation préserve.
+ *
+ * @param badgeOf collection à annoncer sur la ligne, ou `null`. Elle **entre
+ *   dans l'empreinte** : elle ne se déduit pas de l'article seul (il faudrait le
+ *   nom de la collection et l'onglet affiché), et sans elle un renommage ou un
+ *   changement d'onglet laisserait des pastilles périmées sur les lignes
+ *   réutilisées.
  */
-export function renderItems(items: readonly SavedItem[]): void {
+export function renderItems(
+  items: readonly SavedItem[],
+  badgeOf: (item: SavedItem) => CollectionBadge | null = () => null
+): void {
   const nodes = items.map((item) => {
-    const fingerprint = JSON.stringify(item);
+    const badge = badgeOf(item);
+    const fingerprint = JSON.stringify([item, badge]);
     const previous = renderedItems.get(item.id);
     if (previous && previous.fingerprint === fingerprint) return previous.el;
 
-    const node = renderItem(item);
+    const node = renderItem(item, badge);
     renderedItems.set(item.id, { el: node, fingerprint });
     return node;
   });
@@ -108,7 +123,7 @@ export function renderItems(items: readonly SavedItem[]): void {
   }
 }
 
-function renderItem(item: SavedItem): HTMLElement {
+function renderItem(item: SavedItem, badge: CollectionBadge | null = null): HTMLElement {
   const node = el.template.content.cloneNode(true) as DocumentFragment;
   const article = within<HTMLElement>(node, '.item');
   article.dataset.id = item.id;
@@ -193,6 +208,22 @@ function renderItem(item: SavedItem): HTMLElement {
     loader.textContent = meta.length ? ' · complément…' : 'Lecture de la fiche…';
     loader.title = 'Lecture de la fiche article pour compléter les informations';
     metaEl.append(loader);
+  }
+
+  // Pastille de collection : elle ne s'affiche que là où elle apprend quelque
+  // chose — dans « Mes favoris », qui mélange classés et non classés. Sous
+  // l'onglet d'une collection, tout y est rangé, la répéter à chaque ligne
+  // n'ajouterait que du bruit (c'est l'appelant qui rend `null`).
+  if (badge) {
+    within<HTMLElement>(node, '.item-where').hidden = false;
+    within(node, '.item-collection-name').textContent = badge.name;
+
+    const chip = within<HTMLButtonElement>(node, '.item-collection');
+    chip.title = `Classé dans « ${badge.name} » — ouvrir cette collection`;
+    chip.setAttribute('aria-label', chip.title);
+    chip.addEventListener('click', () => {
+      hooks.openCollection(badge.id);
+    });
   }
 
   renderPriceAndStatus(node, article, item);

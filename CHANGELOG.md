@@ -5,6 +5,40 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ## [Non publié]
 
+### Modifié
+
+- **« Mes favoris » récapitule tout ce qui est enregistré**
+  (`docs/specs/favoris-recapitulatif.md`). Ranger un article dans « Jeans » ne le fait
+  plus disparaître du premier onglet : une collection est désormais une **étiquette
+  facultative** qui s'ajoute au favori, pas un tiroir qui l'emporte. Un article peut donc
+  n'être classé nulle part — c'est même son état à la capture — et les compteurs de la
+  barre se recouvrent, ce qui est le sens même d'un récapitulatif. Seuls les archivés en
+  sortent : les y laisser reparaître viderait l'archivage de son sens.
+
+  **Une pastille** sur la ligne nomme la collection d'un article classé, et l'ouvre d'un
+  clic ; son absence dit qu'il ne l'est pas. Le menu de rangement — celui du panneau
+  comme celui de la page — remplace l'entrée « Mes favoris » par « **Aucune
+  collection** », qui déclasse sans rien retirer, tout comme un dépôt sur l'onglet des
+  favoris.
+
+  **Rien à migrer pour lire.** Trois formes disent « non classé » et sont toutes
+  comprises telles quelles : champ absent, `collectionId: 'default'` (ce qu'écrivaient
+  les versions précédentes) et référence vers une collection supprimée. Un
+  `shared/migrate.ts` versionné (`settings.schemaVersion`) nettoie les deux dernières au
+  premier lancement du panneau, mais **l'affichage n'en dépend pas** : une migration dont
+  dépendrait la lecture ferait d'un échec d'écriture une extension cassée.
+
+- **Une collection se supprime même pleine.** Ses articles ne sont plus perdus — ils
+  redeviennent non classés et restent dans « Mes favoris » —, la règle « seulement si
+  vide » n'a donc plus rien à protéger. Le panneau demande confirmation en annonçant le
+  nombre d'articles concernés, et le champ est effacé sur chacun d'eux dans la même
+  écriture que la suppression.
+
+- **L'archivage note l'origine article par article.** Lancé depuis « Mes favoris », il
+  balaie les vendus de toutes les collections ; une origine unique les aurait tous rendus
+  au même endroit sur un simple « Annuler », c'est-à-dire déclassés en bloc et en
+  silence.
+
 ### Ajouté
 
 - **Appui long sur « Rafraîchir » : toutes les collections d'un coup**

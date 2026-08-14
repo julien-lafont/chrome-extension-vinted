@@ -11,10 +11,26 @@
  * importer depuis `store.ts`, il n'a pas à savoir où vit la primitive.
  */
 import { COLLECTIONS_KEY, ITEMS_KEY, read, update } from './storage.ts';
-import type { Collection, CollectionMap } from './types.ts';
+import type { Collection, CollectionMap, SavedItem } from './types.ts';
 
 export { COLLECTIONS_KEY, ITEMS_KEY };
 
+/**
+ * « Mes favoris » — **un récapitulatif, plus une destination de rangement**.
+ *
+ * Son onglet montre tout ce qui est enregistré, classé ou non, à la seule
+ * exception d'« Archives » (voir `isInTab()`). Ranger un article dans « Jeans »
+ * ne l'en fait donc plus sortir : la collection s'ajoute au favori, elle ne s'y
+ * substitue pas.
+ *
+ * L'entrée reste malgré tout dans `CollectionMap`, pour une raison unique :
+ * elle porte l'**ordre manuel de la vue globale** (`order`), qui n'aurait
+ * nulle part où vivre autrement. Rien d'autre ne s'y range — un article
+ * « non classé » est un article **sans** `collectionId`, jamais un article
+ * pointant ici. Les versions antérieures écrivaient `collectionId: 'default'`
+ * pour dire la même chose : `classifiedIn()` le lit encore comme « non classé »
+ * et `shared/migrate.ts` nettoie le résidu.
+ */
 export const DEFAULT_COLLECTION_ID = 'default';
 
 export function makeDefaultCollection(): Collection {
@@ -42,7 +58,7 @@ export function makeArchiveCollection(): Collection {
  * Vue « Sous offres » — `docs/specs/offres.md` §5.
  *
  * **Ce n'est pas une collection**, et rien dans ce module ne la traite comme
- * telle : elle n'existe pas dans `CollectionMap`, `collectionOf()` ne la rend
+ * telle : elle n'existe pas dans `CollectionMap`, `classifiedIn()` ne la rend
  * jamais, et un article sous offre reste rangé là où l'utilisateur l'a mis. Elle
  * ne vit que comme valeur de `settings.activeCollectionId`, que le panneau
  * interprète alors comme un filtre plutôt que comme un rangement.
@@ -82,10 +98,46 @@ export function sortCollections(collections: CollectionMap): Collection[] {
   );
 }
 
-/** La collection d'un article, en retombant sur la collection par défaut. */
-export function collectionOf(item: { collectionId?: string }, collections: CollectionMap): string {
+/**
+ * La collection où l'article est rangé, ou `null` s'il ne l'est nulle part.
+ *
+ * Trois formes disent « non classé », et c'est ce qui rend la bascule vers le
+ * récapitulatif rétrocompatible **sans migration** :
+ *   — `collectionId` absent : ce que le content script écrit depuis toujours ;
+ *   — `collectionId === 'default'` : ce qu'écrivaient les versions où « Mes
+ *     favoris » était une collection comme les autres ;
+ *   — `collectionId` pointant vers une collection supprimée : référence morte,
+ *     jamais réparée en storage (voir `docs/architecture.md`).
+ */
+export function classifiedIn(
+  item: { collectionId?: string },
+  collections: CollectionMap
+): Collection | null {
   const id = item.collectionId;
-  return id && collections[id] ? id : DEFAULT_COLLECTION_ID;
+  if (!id || id === DEFAULT_COLLECTION_ID) return null;
+  return collections[id] || null;
+}
+
+/**
+ * L'article apparaît-il sous cet onglet de collection ?
+ *
+ * Une seule fonction pour la liste **et** pour les compteurs de la barre : deux
+ * lectures séparées finiraient par diverger, et un compteur qui annonce 12 sur
+ * une liste qui en montre 9 est le genre d'écart qu'on ne remarque pas tout de
+ * suite.
+ *
+ * « Mes favoris » montre tout **sauf les archivés** : archiver, c'est sortir de
+ * la vue ce qui est vendu ou parti — les y laisser reparaître viderait le geste
+ * de son sens.
+ */
+export function isInTab(
+  item: { collectionId?: string },
+  tabId: string,
+  collections: CollectionMap
+): boolean {
+  const current = classifiedIn(item, collections);
+  if (tabId === DEFAULT_COLLECTION_ID) return current?.id !== ARCHIVE_COLLECTION_ID;
+  return current?.id === tabId;
 }
 
 /**
@@ -125,7 +177,15 @@ export async function createCollection(name: string): Promise<Collection> {
 
 /**
  * Les collections avec `itemId` en tête de l'ordre de `collectionId`, retiré de
- * l'ordre de toutes les autres.
+ * l'ordre des autres collections — **sauf celui de « Mes favoris »**.
+ *
+ * Cette exception est le cœur du récapitulatif : `default.order` est l'ordre
+ * manuel de la vue globale, où l'article reste affiché quoi qu'il arrive. L'en
+ * retirer à chaque rangement ferait sauter la carte en tête de « Mes favoris »
+ * pour la seule raison qu'on l'a classée ailleurs.
+ *
+ * `collectionId` à `null` (ou à « Mes favoris », qui veut dire la même chose)
+ * déclasse : l'article ne quitte que les ordres des collections réelles.
  *
  * Pur, et exporté pour ça : deux appelants rangent un article, `assignCollection()`
  * ci-dessous et le clic court quand l'onglet a une collection par défaut (voir
@@ -137,22 +197,32 @@ export async function createCollection(name: string): Promise<Collection> {
 export function placeInOrder(
   collections: CollectionMap,
   itemId: string,
-  collectionId: string
+  collectionId: string | null
 ): CollectionMap {
+  const target = collectionId === DEFAULT_COLLECTION_ID ? null : collectionId;
   const next: CollectionMap = {};
 
   for (const [id, collection] of Object.entries(collections)) {
+    if (id === DEFAULT_COLLECTION_ID) {
+      next[id] = collection;
+      continue;
+    }
+
     const order = (collection.order || []).filter((entry) => entry !== itemId);
     next[id] =
-      id === collectionId ? { ...collection, order: [itemId, ...order] } : { ...collection, order };
+      id === target ? { ...collection, order: [itemId, ...order] } : { ...collection, order };
   }
 
   return next;
 }
 
 /**
- * Range un article dans une collection : pose `collectionId` et replace l'id en
- * tête de l'ordre personnalisé de la cible, en le retirant de toutes les autres.
+ * Range un article dans une collection, ou l'en sort avec `null`.
+ *
+ * Ranger pose `collectionId` et replace l'id en tête de l'ordre personnalisé de
+ * la cible ; déclasser **efface le champ** plutôt que d'y écrire `'default'` —
+ * l'absence est la seule forme que le content script produit, et deux écritures
+ * pour un même état finissent par se lire différemment quelque part.
  *
  * Les deux clés partent dans un **seul** `set`. Deux écritures successives
  * déclencheraient deux rendus du panneau, et le premier montrerait un article
@@ -162,7 +232,7 @@ export function placeInOrder(
  * Relecture avant écriture (règle 6 du projet) : plusieurs onglets Vinted
  * écrivent sur `savedItems` en parallèle.
  */
-export async function assignCollection(itemId: string, collectionId: string): Promise<void> {
+export async function assignCollection(itemId: string, collectionId: string | null): Promise<void> {
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const items = current[ITEMS_KEY] || {};
     const item = items[itemId];
@@ -171,13 +241,17 @@ export async function assignCollection(itemId: string, collectionId: string): Pr
     if (!item) return null;
 
     const collections = withDefault(current[COLLECTIONS_KEY]);
+    const target = collectionId === DEFAULT_COLLECTION_ID ? null : collectionId;
     // Collection disparue entre l'ouverture du menu et le choix : rien à faire
     // plutôt qu'écrire une référence morte.
-    if (!collections[collectionId]) return null;
+    if (target && !collections[target]) return null;
+
+    const next: SavedItem = { ...item, collectionId: target ?? undefined };
+    if (!target) delete next.collectionId;
 
     return {
-      [ITEMS_KEY]: { ...items, [itemId]: { ...item, collectionId } },
-      [COLLECTIONS_KEY]: placeInOrder(collections, itemId, collectionId),
+      [ITEMS_KEY]: { ...items, [itemId]: next },
+      [COLLECTIONS_KEY]: placeInOrder(collections, itemId, target),
     };
   });
 }

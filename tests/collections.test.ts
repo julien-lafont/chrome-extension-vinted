@@ -1,10 +1,10 @@
 /**
- * Une collection ne se supprime que si elle est vide.
+ * Suppression d'une collection, et place d'« Archives ».
  *
- * La règle vit dans le storage, pas seulement dans l'affichage : le bouton est
- * rendu à partir d'un état qui peut dater d'avant qu'un autre onglet Vinted y
- * classe un article. Supprimer alors la collection déplacerait ces articles à
- * l'insu de l'utilisateur.
+ * La règle a changé avec le récapitulatif : une collection se supprime **même
+ * pleine**, parce que ses articles ne sont plus perdus — ils restent dans « Mes
+ * favoris », simplement déclassés. Ce que ces tests éprouvent, c'est justement
+ * qu'aucun article ne disparaît, et qu'aucune référence morte ne subsiste.
  */
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +17,7 @@ import {
   createCollection,
   deleteCollection,
   moveItemToCollection,
-  collectionOf,
+  classifiedIn,
 } from '../src/sidepanel/store.ts';
 import type { SavedItem } from '../src/shared/types.ts';
 import { makeItem } from './factories.ts';
@@ -45,30 +45,36 @@ describe('suppression d une collection', () => {
 
     const res = await deleteCollection(jeans.id);
 
-    assert.deepEqual(res, { ok: true });
+    assert.deepEqual(res, { ok: true, freed: 0 });
     const { collections } = await readAll();
     assert.deepEqual(Object.keys(collections), [DEFAULT_COLLECTION_ID]);
   });
 
-  test('une collection habitée est refusée, et ses articles ne bougent pas', async () => {
+  test('une collection habitée se supprime, et ses articles restent dans les favoris', async () => {
     fakeStorage({ savedItems: { 1: makeItem({ id: '1' }) } });
     const jeans = await createCollection('Jeans');
     await moveItemToCollection('1', jeans.id);
 
     const res = await deleteCollection(jeans.id);
 
-    assert.deepEqual(res, { ok: false, reason: 'not-empty' });
+    assert.deepEqual(res, { ok: true, freed: 1 });
 
     const { items, collections } = await readAll();
-    assert.ok(collections[jeans.id], 'la collection doit survivre');
+    assert.ok(!collections[jeans.id], 'la collection doit disparaître');
+    assert.equal(items.length, 1, "l'article est conservé");
     assert.equal(
-      collectionOf(firstItem(items), collections),
-      jeans.id,
-      "l'article ne doit pas être déplacé"
+      classifiedIn(firstItem(items), collections),
+      null,
+      "l'article n'est plus classé nulle part"
+    );
+    assert.equal(
+      firstItem(items).collectionId,
+      undefined,
+      'le champ est effacé, pas laissé sur une référence morte'
     );
   });
 
-  test('la collection par défaut ne se supprime jamais, même vide', async () => {
+  test('la collection par défaut ne se supprime jamais : ce n’est plus une collection', async () => {
     fakeStorage();
     await readAll(); // matérialise la collection par défaut
 
@@ -77,26 +83,6 @@ describe('suppression d une collection', () => {
     assert.deepEqual(res, { ok: false, reason: 'default' });
     const { collections } = await readAll();
     assert.ok(collections[DEFAULT_COLLECTION_ID]);
-  });
-
-  test('une collection vidée redevient supprimable', async () => {
-    fakeStorage({ savedItems: { 1: makeItem({ id: '1' }) } });
-    const jeans = await createCollection('Jeans');
-    await moveItemToCollection('1', jeans.id);
-
-    assert.deepEqual(await deleteCollection(jeans.id), { ok: false, reason: 'not-empty' });
-
-    // L'article repart ailleurs : la collection est de nouveau vide.
-    await moveItemToCollection('1', DEFAULT_COLLECTION_ID);
-    assert.deepEqual(await deleteCollection(jeans.id), { ok: true });
-
-    const { items, collections } = await readAll();
-    assert.ok(!collections[jeans.id]);
-    assert.equal(
-      collectionOf(firstItem(items), collections),
-      DEFAULT_COLLECTION_ID,
-      "l'article est conservé"
-    );
   });
 
   test('supprimer une collection inconnue ne casse rien', async () => {
@@ -116,6 +102,23 @@ describe('suppression d une collection', () => {
     const { collections } = await readAll();
     assert.equal(collections[cadeaux.id]?.name, 'Cadeau Julien');
     assert.ok(collections[DEFAULT_COLLECTION_ID]);
+  });
+
+  test('seuls les articles de la collection supprimée sont déclassés', async () => {
+    fakeStorage({
+      savedItems: { 1: makeItem({ id: '1' }), 2: makeItem({ id: '2' }) },
+    });
+    const jeans = await createCollection('Jeans');
+    const vestes = await createCollection('Vestes');
+    await moveItemToCollection('1', jeans.id);
+    await moveItemToCollection('2', vestes.id);
+
+    assert.deepEqual(await deleteCollection(jeans.id), { ok: true, freed: 1 });
+
+    const { items, collections } = await readAll();
+    const byId = new Map(items.map((item) => [item.id, item]));
+    assert.equal(classifiedIn(byId.get('1') as SavedItem, collections), null);
+    assert.equal(classifiedIn(byId.get('2') as SavedItem, collections)?.id, vestes.id);
   });
 });
 

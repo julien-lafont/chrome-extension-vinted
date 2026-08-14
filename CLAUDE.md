@@ -11,7 +11,7 @@ transmet à Google l'URL de la photo, à la demande, jamais en tâche de fond.
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 496 tests, ~31 s, runner Node natif via tsx
+pnpm test         # 520 tests, ~65 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-smart-bookmarks-<version>.zip
 ```
@@ -35,7 +35,8 @@ src/content/offers-scan.ts   balayage de l'inbox : les offres en cours (réseau)
 src/sidepanel/               panneau : sidepanel (orchestration) + un module par zone
                              (item-list, collections-bar, menus, gallery, filters, watch…)
 src/shared/                  storage, modèle de données, messages, prix, photos, vendeur,
-                             offres (lecture pure de l'API des conversations)
+                             offres (lecture pure de l'API des conversations),
+                             migrate.ts (nettoyages versionnés, jamais requis pour lire)
 src/background/              ouvre le panneau ; badge + pulsation à l'enregistrement
 src/manifest.ts              manifeste typé ; la version vient de package.json
 scripts/                     build, empaquetage (build-config.ts = source unique)
@@ -108,6 +109,14 @@ La règle 5 ne tient qu'à la relecture.
 | Lire un rapport de diagnostic                    | `docs/diagnostic.md`   |
 | Harness, fixtures, ce qui n'est pas couvert      | `docs/testing.md`      |
 | Limites connues (tri likes, prix, offres)        | `docs/limitations.md`  |
+
+**« Mes favoris » n'est pas une collection** mais le récapitulatif de tout ce qui est
+enregistré (hors archivés) : `item.collectionId` ne porte qu'un classement facultatif,
+et `classifiedIn()` / `isInTab()` de `shared/collections.ts` sont les deux seules
+lectures qui en décident. Trois formes disent « non classé » — champ absent,
+`'default'`, référence morte — d'où une rétrocompatibilité qui ne dépend d'aucune
+migration ; `shared/migrate.ts` ne fait que du nettoyage. Voir
+`docs/specs/favoris-recapitulatif.md`.
 
 Ne les charger qu'au besoin — le présent fichier suffit pour la plupart des tâches.
 

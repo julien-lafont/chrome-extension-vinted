@@ -145,7 +145,18 @@ export type SavedItem = {
 
   /** Posé à l'écriture en storage, pas à l'extraction. */
   savedAt?: number;
-  /** Absent = collection par défaut. Le content script ne renseigne jamais ce champ. */
+  /**
+   * Collection où l'article est **classé en plus** d'être dans « Mes favoris ».
+   *
+   * Absent = non classé, ce qui est l'état courant : le content script ne
+   * renseigne ce champ qu'à la capture avec choix de collection. Un article
+   * classé reste visible dans le récapitulatif — voir `classifiedIn()` et
+   * `isInTab()` dans `shared/collections.ts`.
+   *
+   * Deux valeurs héritées se lisent encore comme « non classé » : `'default'`
+   * (écrit quand « Mes favoris » était une collection comme les autres) et un
+   * identifiant de collection supprimée.
+   */
   collectionId?: string;
   /** `true` tant que la fiche est en cours de lecture (l'article n'a que sa carte). */
   pending?: boolean;
@@ -358,6 +369,14 @@ export type Settings = {
    * `.vf-hide-ads`.
    */
   hideAds: boolean;
+  /**
+   * Version du modèle de données déjà appliquée au storage. Absente = 1, l'état
+   * d'avant le récapitulatif « Mes favoris ». Voir `shared/migrate.ts` : elle ne
+   * conditionne qu'un **nettoyage**, jamais la lecture — un storage resté en 1
+   * s'affiche correctement, sans quoi une migration qui échoue casserait
+   * l'extension au lieu de la laisser en l'état.
+   */
+  schemaVersion?: number;
 };
 
 /** Les deux clés du storage sont indexées par id, pas stockées en tableau. */

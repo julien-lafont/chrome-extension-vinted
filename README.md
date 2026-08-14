@@ -70,18 +70,25 @@ Buttons stay in sync across every open Vinted tab.
 
 ### Collections
 
-The tabs at the top of the panel group your listings. Unless you file it with a
-long-press (above), every new listing lands in **Mes favoris**, the default collection,
-which cannot be deleted.
+**Mes favoris**, the first tab, holds **everything you saved** — filed or not. It is not
+a collection but a summary of the lot, and its counter overlaps the others on purpose.
+The only listings it leaves out are the archived ones.
+
+A collection is an optional label on top of that: file a listing into "Jeans" and it
+shows up under both tabs. A listing that is only in Mes favoris is perfectly normal —
+that is where every save starts.
 
 - `+` creates a collection ("Jeans", "Shirts", "Gift for Julien"…)
 - right-click a tab to rename it
 - to file a listing: drag its handle onto the target tab, or use the folder icon on its
-  row
-- a **cross** appears on a tab as soon as its collection is empty, and deletes it. A
-  collection that still holds listings shows no cross — you have to empty it first,
-  which keeps you from moving listings around by accident. **Mes favoris** never shows
-  one.
+  row. "Aucune collection" (no collection) in that menu — or a drop on the **Mes
+  favoris** tab — takes the label off again; the listing stays in your favourites
+- in Mes favoris, a listing already filed carries a small **folder chip** naming its
+  collection, and one click opens it. No chip means nothing has been filed yet
+- a **cross** on a tab deletes the collection, even a full one: its listings are not
+  lost, they simply go back to being unfiled. When it still holds listings, the panel
+  asks first and says how many. **Mes favoris** never shows a cross — it is not a
+  collection to delete.
 
 ### Photos
 
@@ -194,9 +201,11 @@ current collection; a **long-press** on it covers every collection at once.
   readings the price was flat, so nothing is interpolated.
 - A listing badged **"Vendu"** on its page is marked sold; two consecutive absences make
   it **"Retiré"** (gone) — never a single one.
-- As soon as a collection holds sold listings, a line under the sort bar offers to
-  **hide** them or to **archive** them into the 🗄️ **Archives** tab, always last in the
-  bar. Archiving is a move, not a delete, and an undo undoes it for 5 seconds.
+- As soon as the tab you are looking at holds sold listings, a line under the sort bar
+  offers to **hide** them or to **archive** them into the 🗄️ **Archives** tab, always
+  last in the bar. From Mes favoris this sweeps every collection at once. Archiving is a
+  move, not a delete, and an undo undoes it for 5 seconds — each listing going back to
+  its own collection.
 
 Details, rate-limiting strategy and data model: `docs/specs/suivi-prix.md`.
 

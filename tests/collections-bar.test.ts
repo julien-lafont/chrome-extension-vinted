@@ -3,9 +3,14 @@
  *
  * Trois règles y sont invisibles à la lecture du rendu final et cassent en
  * silence : « Archives » se rend en icône sans compteur et toujours en dernier,
- * la croix de suppression n'apparaît que sur une collection vide qui n'est ni
- * celle par défaut ni « Archives », et le `+` reste au bout des collections
- * ordinaires — donc *avant* « Archives », pas après.
+ * la croix de suppression n'apparaît sur aucun des deux onglets qui ne sont pas
+ * des collections (« Mes favoris », qui récapitule tout, et « Archives »), et le
+ * `+` reste au bout des collections ordinaires — donc *avant* « Archives », pas
+ * après.
+ *
+ * Le compteur de « Mes favoris » recouvre les autres : un article classé compte
+ * des deux côtés. C'est le cœur du récapitulatif, et une répartition exclusive
+ * est précisément ce qu'on ne veut plus.
  *
  * Comme `item-list.test.ts`, cette suite n'était pas écrivable tant que le rendu
  * vivait dans `sidepanel.ts`, qui exige le DOM du panneau dès son chargement.
@@ -78,7 +83,7 @@ beforeEach(() => {
 });
 
 describe('affichage de la barre', () => {
-  test('chaque collection porte son nom et son compte d articles', () => {
+  test('chaque collection porte son nom, et « Mes favoris » compte tout', () => {
     const jeans = collection('col-1', 'Jeans');
     paint({ [DEFAULT_COLLECTION_ID]: makeDefaultCollection(), [jeans.id]: jeans }, [
       makeItem({ id: '1' }),
@@ -87,8 +92,34 @@ describe('affichage de la barre', () => {
     ]);
 
     assert.deepEqual(tabNames(), ['Mes favoris', 'Jeans']);
-    assert.equal(tab(DEFAULT_COLLECTION_ID).querySelector('.tab-count')?.textContent, '1');
+    assert.equal(
+      tab(DEFAULT_COLLECTION_ID).querySelector('.tab-count')?.textContent,
+      '3',
+      'les classés comptent aussi dans le récapitulatif'
+    );
     assert.equal(tab('col-1').querySelector('.tab-count')?.textContent, '2');
+  });
+
+  test('les archivés sont les seuls à ne pas compter dans « Mes favoris »', () => {
+    paint(
+      {
+        [DEFAULT_COLLECTION_ID]: makeDefaultCollection(),
+        [ARCHIVE_COLLECTION_ID]: makeArchiveCollection(),
+      },
+      [makeItem({ id: '1' }), makeItem({ id: '2', collectionId: ARCHIVE_COLLECTION_ID })]
+    );
+
+    assert.equal(tab(DEFAULT_COLLECTION_ID).querySelector('.tab-count')?.textContent, '1');
+  });
+
+  test('une référence vers une collection supprimée compte comme non classée', () => {
+    paint({ [DEFAULT_COLLECTION_ID]: makeDefaultCollection() }, [
+      makeItem({ id: '1', collectionId: 'col-disparue' }),
+      // Ce qu'écrivaient les versions où « Mes favoris » était une collection.
+      makeItem({ id: '2', collectionId: DEFAULT_COLLECTION_ID }),
+    ]);
+
+    assert.equal(tab(DEFAULT_COLLECTION_ID).querySelector('.tab-count')?.textContent, '2');
   });
 
   test('la collection active est la seule marquée', () => {
@@ -145,16 +176,22 @@ describe('suppression d une collection', () => {
     assert.deepEqual(asked.deleted, [jeans]);
   });
 
-  test('une collection habitée n en porte pas', () => {
+  test('une collection habitée la porte aussi : ses articles restent aux favoris', () => {
     const jeans = collection('col-1', 'Jeans');
     paint({ [DEFAULT_COLLECTION_ID]: makeDefaultCollection(), [jeans.id]: jeans }, [
       makeItem({ id: '1', collectionId: jeans.id }),
     ]);
 
-    assert.equal(tab('col-1').querySelector('.tab-delete'), null);
+    const remove = tab('col-1').querySelector('.tab-delete');
+    assert.ok(remove, 'supprimer ne fait plus perdre d’article : la croix reste offerte');
+    // Le titre annonce la conséquence ; la confirmation, elle, est au panneau.
+    assert.match(remove.getAttribute('title') ?? '', /restent dans « Mes favoris »/);
+
+    click(remove);
+    assert.deepEqual(asked.deleted, [jeans]);
   });
 
-  test('ni la collection par défaut ni « Archives », même vides', () => {
+  test('ni « Mes favoris » ni « Archives », même vides', () => {
     paint({
       [DEFAULT_COLLECTION_ID]: makeDefaultCollection(),
       [ARCHIVE_COLLECTION_ID]: makeArchiveCollection(),
