@@ -41,6 +41,7 @@ import {
 } from './sorting.ts';
 
 import { enableDragAndDrop } from './dnd.ts';
+import { initDevBar } from './dev-bar.ts';
 import { required } from './dom.ts';
 import { initGallery, openGallery } from './gallery.ts';
 import { initItemList, renderEmpty, renderItems } from './item-list.ts';
@@ -49,6 +50,7 @@ import { refreshOfferAges } from './item-render.ts';
 import { maybeScanOffers, offersReport } from './offers.ts';
 import { isLiveOffer } from '../shared/offers.ts';
 import { renderCollectionsBar } from './collections-bar.ts';
+import { importFromVinted, pushToVinted } from './fav-catchup.ts';
 import { closeMenu, initMenus, menuButton, menuSeparator, menuTitle, openMenu } from './menus.ts';
 import { initWatch, maybeStartSilentSweep, resetRateLimits } from './watch.ts';
 import { initPriceHistory } from './price-history.ts';
@@ -72,6 +74,7 @@ const watchNoticeEl = required('watch-notice');
 const watchbarEl = required('watchbar');
 const hintEl = required('hint');
 const hideAdsEl = required<HTMLButtonElement>('hide-ads');
+const favSyncEl = required<HTMLButtonElement>('fav-sync');
 const menuEl = required('move-menu');
 const template = required<HTMLTemplateElement>('item-template');
 
@@ -346,6 +349,7 @@ function render(): void {
 
   renderCollections();
   hideAdsEl.setAttribute('aria-pressed', String(settings.hideAds));
+  favSyncEl.setAttribute('aria-pressed', String(settings.favSync));
 
   const inCollection = itemsOfActiveCollection();
   const isGone = (item: SavedItem) => item.status === 'sold' || item.status === 'gone';
@@ -830,6 +834,78 @@ hideAdsEl.addEventListener('click', () => {
     render();
   });
 });
+
+/**
+ * Les deux rattrapages explicites, au clic droit sur la bascule.
+ *
+ * Au clic droit et non dans le pied de page : ce sont des gestes **rares et
+ * conséquents** — l'un ajoute des articles, l'autre écrit sur le compte Vinted —
+ * qui n'ont pas à occuper une place permanente à côté d'une simple bascule. Ils
+ * vivent sur le réglage qu'ils complètent, là où on les cherchera.
+ *
+ * La synchro n'a pas besoin d'être allumée : ce sont des actions ponctuelles,
+ * pas des règles, et qui les déclenche sait ce qu'il demande.
+ */
+let catchupRunning = false;
+
+/**
+ * Lance un rattrapage et tient le bouton occupé le temps qu'il dure.
+ *
+ * Une poussée de deux cents articles prend deux minutes : sans cette garde, un
+ * second clic la relancerait en parallèle, et les deux liraient la même liste de
+ * favoris avant de basculer — les mêmes cœurs deux fois, donc aucun.
+ */
+function runCatchup(label: string, run: () => Promise<{ message: string }>): void {
+  if (catchupRunning) return;
+  catchupRunning = true;
+
+  favSyncEl.disabled = true;
+  flash(label);
+
+  void run()
+    .then((outcome) => {
+      flash(outcome.message);
+    })
+    .finally(() => {
+      catchupRunning = false;
+      favSyncEl.disabled = false;
+    });
+}
+
+favSyncEl.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+
+  openMenu(favSyncEl, (menu) => {
+    menu.append(
+      menuTitle('Rattrapage ponctuel'),
+      menuButton('Importer mes favoris Vinted', () => {
+        runCatchup('Import des favoris Vinted…', importFromVinted);
+      }),
+      menuButton('Mettre en favoris tous mes articles enregistrés', () => {
+        runCatchup('Mise en favoris sur Vinted…', pushToVinted);
+      })
+    );
+  });
+});
+
+/**
+ * Bascule de la synchro avec les favoris Vinted.
+ *
+ * Aucun rattrapage à l'activation, et c'est délibéré : les deux listes sont
+ * divergentes au moment où l'on allume, et les aligner d'office supprimerait des
+ * articles à partir d'un état qu'on n'a jamais vu changer. Seules les
+ * transitions constatées ensuite comptent — voir `shared/fav-sync.ts`.
+ */
+favSyncEl.addEventListener('click', () => {
+  void saveSettings({ favSync: !settings.favSync }).then((next) => {
+    settings = next;
+    render();
+  });
+});
+
+// Bande de développement : masquée tant que le clic droit sur l'icône de
+// l'extension ne l'a pas demandée — voir `dev-bar.ts`.
+initDevBar(required('dev-bar'), required('dev-exit'), reportEl);
 
 required('export').addEventListener('click', exportJson);
 required('diagnose').addEventListener('click', () => {

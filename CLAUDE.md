@@ -6,12 +6,16 @@ rien ne part sans un clic explicite. La recherche « ailleurs » (bouton dédié
 `docs/specs/recherche-inversee.md`) est la seule action qui sorte du site : elle
 transmet à Google l'URL de la photo, à la demande, jamais en tâche de fond.
 
+**« Sync favoris » (`docs/specs/favoris-sync.md`) est le seul réglage qui fasse _écrire_
+l'extension sur le compte Vinted** — cœur posé ou retiré, via l'API du site. Désactivé
+par défaut : tant qu'il est éteint, rien ne part.
+
 ## Commandes
 
 ```bash
 pnpm dev          # build de développement en veille sur src/
 pnpm build        # dist/ minifié
-pnpm test         # 520 tests, ~65 s, runner Node natif via tsx
+pnpm test         # 592 tests, ~35 s, runner Node natif via tsx
 pnpm check        # types + lint + formatage + tests — ce que le CI rejoue
 pnpm package      # artifacts/vinted-smart-bookmarks-<version>.zip
 ```
@@ -32,12 +36,19 @@ src/content/ui.ts            briques des surcouches : activation à deux gestes,
 src/content/noise-ui.ts      filtrage : bouton d'écart, annulation, pastille, menu
 src/content/watch-ui.ts      marque du titre de l'onglet + bandeau pendant un cycle
 src/content/offers-scan.ts   balayage de l'inbox : les offres en cours (réseau)
+src/content/fav-sync.ts      cœurs Vinted : observation des états, clic sur le leur
+src/content/fav-api.ts       transport de l'API des favoris (jeton CSRF, pagination)
+src/content/fav-drain.ts     file d'intentions vidée par l'API — la seule écriture
+                             distante automatique de l'extension
+src/content/fav-catchup.ts   les deux rattrapages du clic droit sur « Sync favoris »
 src/sidepanel/               panneau : sidepanel (orchestration) + un module par zone
                              (item-list, collections-bar, menus, gallery, filters, watch…)
 src/shared/                  storage, modèle de données, messages, prix, photos, vendeur,
                              offres (lecture pure de l'API des conversations),
+                             synchro des favoris Vinted (fav-sync),
                              migrate.ts (nettoyages versionnés, jamais requis pour lire)
-src/background/              ouvre le panneau ; badge + pulsation à l'enregistrement
+src/background/              ouvre le panneau ; badge + pulsation à l'enregistrement ;
+                             entrée « Ouvrir en mode développeur » du clic droit
 src/manifest.ts              manifeste typé ; la version vient de package.json
 scripts/                     build, empaquetage (build-config.ts = source unique)
 tests/                       jsdom + fixtures Vinted réelles
@@ -101,14 +112,15 @@ La règle 5 ne tient qu'à la relecture.
 
 ## Où chercher
 
-| Besoin                                           | Document               |
-| ------------------------------------------------ | ---------------------- |
-| Ancres DOM Vinted, que faire quand elles cassent | `docs/vinted-dom.md`   |
-| Détail des pièges ci-dessus                      | `docs/pitfalls.md`     |
-| Modèle de données, storage, responsabilités      | `docs/architecture.md` |
-| Lire un rapport de diagnostic                    | `docs/diagnostic.md`   |
-| Harness, fixtures, ce qui n'est pas couvert      | `docs/testing.md`      |
-| Limites connues (tri likes, prix, offres)        | `docs/limitations.md`  |
+| Besoin                                           | Document                     |
+| ------------------------------------------------ | ---------------------------- |
+| Ancres DOM Vinted, que faire quand elles cassent | `docs/vinted-dom.md`         |
+| Détail des pièges ci-dessus                      | `docs/pitfalls.md`           |
+| Modèle de données, storage, responsabilités      | `docs/architecture.md`       |
+| Lire un rapport de diagnostic                    | `docs/diagnostic.md`         |
+| Harness, fixtures, ce qui n'est pas couvert      | `docs/testing.md`            |
+| Limites connues (tri likes, prix, offres)        | `docs/limitations.md`        |
+| Synchro avec les favoris natifs de Vinted        | `docs/specs/favoris-sync.md` |
 
 **« Mes favoris » n'est pas une collection** mais le récapitulatif de tout ce qui est
 enregistré (hors archivés) : `item.collectionId` ne porte qu'un classement facultatif,
@@ -126,8 +138,9 @@ Le content script tourne dans un monde isolé, peu commode à inspecter. Le chem
 court n'est pas la console :
 
 1. **Bouton Diagnostic** du panneau, sur un onglet Vinted → `docs/diagnostic.md` a la
-   table de lecture. Étendre `diagnose()` dans `content.ts` coûte quelques lignes et
-   fait gagner un aller-retour.
+   table de lecture. Il vit dans la bande de développement, masquée par défaut : clic
+   droit sur l'icône de l'extension → « Ouvrir en mode développeur ». Étendre
+   `diagnose()` dans `content.ts` coûte quelques lignes et fait gagner un aller-retour.
 2. **Reproduire dans `tests/`** avant de corriger. Un test qui échoue vaut mieux qu'une
    hypothèse.
 3. **Vérifier que le test peut échouer** : neutraliser le correctif doit le faire

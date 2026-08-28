@@ -28,7 +28,10 @@ export function buildManifest(version: string): chrome.runtime.ManifestV3 {
     description:
       'Enregistre tes articles Vinted en local : collections, galerie photo, suivi des prix, offres en cours, catalogue filtré.',
 
-    permissions: ['storage', 'sidePanel'],
+    // `contextMenus` n'ajoute qu'une entrée au clic droit sur l'icône de
+    // l'extension (« Ouvrir en mode développeur ») : elle ne donne aucun accès
+    // aux pages visitées et n'apparaît pas dans les avertissements de Chrome.
+    permissions: ['storage', 'sidePanel', 'contextMenus'],
     host_permissions: [VINTED_ORIGIN],
 
     background: {

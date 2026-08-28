@@ -495,13 +495,42 @@
         </svg>
         <span>Masquer les pubs</span>
       </button>
+
+      <!-- Le seul réglage qui fasse *écrire* l'extension sur le compte Vinted :
+           tant qu'il est éteint, rien ne part vers le site. Désactivé par
+           défaut — voir shared/types.ts, Settings.favSync, et
+           docs/specs/favoris-sync.md. -->
+      <button
+        type="button"
+        id="fav-sync"
+        class="ghost ghost-auto"
+        aria-pressed="false"
+        title="Lier les favoris de l'extension au cœur de Vinted (désactivé par défaut) — clic droit : rattrapage ponctuel"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 20.3 4.6 13a4.7 4.7 0 0 1 6.6-6.7l.8.8.8-.8A4.7 4.7 0 0 1 19.4 13z" />
+          <path d="M9 12.2l2 2 4-4" />
+        </svg>
+        <span>Sync favoris</span>
+      </button>
     </footer>
 
     <!-- Bande de développement : outils de mise au point, vouée à disparaître de
-         la version publiée. Elle se retire en supprimant ce seul <footer> et son
-         bloc `.footer--dev` dans sidepanel.css — ne pas la refusionner avec la
-         bande de réglages ci-dessus, c'est tout l'intérêt de la séparation. -->
-    <footer class="footer footer--dev">
+         la version publiée. Masquée par défaut — elle ne se déplie que par le
+         clic droit sur l'icône de l'extension, « Ouvrir en mode développeur »
+         (src/background/dev-menu.ts). Elle se retire en supprimant ce seul
+         <footer> et son bloc `.footer--dev` dans sidepanel.css — ne pas la
+         refusionner avec la bande de réglages ci-dessus, c'est tout l'intérêt de
+         la séparation. -->
+    <footer class="footer footer--dev" id="dev-bar" hidden>
       <button type="button" id="export" class="ghost">Exporter en JSON</button>
       <button type="button" id="diagnose" class="ghost">Diagnostic</button>
       <button
@@ -511,6 +540,14 @@
         title="Seau à jetons, budget du jour et fenêtre de silence après un 429"
       >
         Débloquer le débit
+      </button>
+      <button
+        type="button"
+        id="dev-exit"
+        class="ghost"
+        title="Replier la bande de développement (elle revient par le clic droit sur l'icône de l'extension)"
+      >
+        Quitter
       </button>
     </footer>
 

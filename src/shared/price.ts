@@ -41,3 +41,21 @@ export function parsePriceString(raw: unknown): number | null {
 export function formatEuro(value: number): string {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(value);
 }
+
+/**
+ * Le chemin inverse : « 1 » donne « 1,00 € ».
+ *
+ * Sert partout où Vinted livre un **nombre** là où le catalogue affiche une
+ * chaîne — le JSON-LD d'une fiche, l'API des favoris — pour que les deux
+ * sources produisent la même valeur en storage.
+ */
+export function formatPrice(value: number, currency: string | undefined): string {
+  try {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: currency || 'EUR',
+    }).format(value);
+  } catch {
+    return `${String(value).replace('.', ',')} ${currency || ''}`.trim();
+  }
+}

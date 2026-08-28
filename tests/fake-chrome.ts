@@ -59,6 +59,8 @@ export type FakeTabs = {
 export type FakeChrome = {
   /** Contenu courant du storage, observable directement par le test. */
   db: FakeStore;
+  /** Contenu courant de `chrome.storage.session`. */
+  session: FakeStore;
   /** Déclenche les écoutes `onChanged`, comme Chrome le fait pour l'onglet écrivain. */
   listeners: ChangeListener[];
   action: FakeAction;
@@ -79,6 +81,8 @@ export function installFakeChrome(
     latency?: number;
     /** Onglets ouverts au départ. Sans eux, `chrome.tabs.query` ne rend rien. */
     tabs?: FakeTab[];
+    /** État initial de `chrome.storage.session` (mode développeur). */
+    session?: FakeStore;
     /** Fenêtre que `currentWindow: true` doit désigner — celle du panneau. */
     currentWindowId?: number;
     /**
@@ -121,6 +125,48 @@ export function installFakeChrome(
           db[key] = structuredClone(value);
         }
         if (options.notify) listeners.forEach((fn) => fn(changes, 'local'));
+      });
+    },
+  };
+
+  /**
+   * `chrome.storage.session` : même sémantique que `local` (clonage, réponse
+   * asynchrone), mais un magasin à part — c'est là que vit le mode développeur,
+   * qui ne doit justement pas survivre à la fermeture du navigateur.
+   */
+  const sessionDb: FakeStore = structuredClone(options.session ?? {});
+
+  const session = {
+    get(keys: string | string[]) {
+      const list = Array.isArray(keys) ? keys : [keys];
+      const out: FakeStore = {};
+      for (const key of list) if (key in sessionDb) out[key] = structuredClone(sessionDb[key]);
+      return settle(out);
+    },
+
+    set(obj: FakeStore) {
+      return settle(undefined).then(() => {
+        const changes: Record<string, { oldValue?: unknown; newValue?: unknown }> = {};
+        for (const [key, value] of Object.entries(obj)) {
+          changes[key] = { oldValue: sessionDb[key], newValue: value };
+          sessionDb[key] = structuredClone(value);
+        }
+        if (options.notify) listeners.forEach((fn) => fn(changes, 'session'));
+      });
+    },
+
+    remove(keys: string | string[]) {
+      const list = Array.isArray(keys) ? keys : [keys];
+      return settle(undefined).then(() => {
+        const changes: Record<string, { oldValue?: unknown; newValue?: unknown }> = {};
+        for (const key of list) {
+          if (!(key in sessionDb)) continue;
+          changes[key] = { oldValue: sessionDb[key], newValue: undefined };
+          delete sessionDb[key];
+        }
+        if (options.notify && Object.keys(changes).length > 0) {
+          listeners.forEach((fn) => fn(changes, 'session'));
+        }
       });
     },
   };
@@ -230,6 +276,7 @@ export function installFakeChrome(
   const fake = {
     storage: {
       local,
+      session,
       onChanged: {
         addListener(fn: ChangeListener) {
           listeners.push(fn);
@@ -248,7 +295,7 @@ export function installFakeChrome(
   // de l'API que l'extension utilise réellement.
   (globalThis as { chrome?: unknown }).chrome = fake;
 
-  return { db, listeners, action: recorded, tabs: recordedTabs };
+  return { db, session: sessionDb, listeners, action: recorded, tabs: recordedTabs };
 }
 
 /** À appeler entre deux tests : sans ça, l'état fuit d'un cas au suivant. */

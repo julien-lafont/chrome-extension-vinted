@@ -1,14 +1,16 @@
 /**
  * Vinted Smart Bookmarks — les gestes du panneau sur le stockage.
  *
- * Quatre des cinq clés passent par ici :
+ * Cinq des sept clés passent par ici :
  *   savedItems  { [id]: item }                        écrit aussi par le content script
  *   collections { [id]: { id, name, createdAt, order } }  écrit aussi par le content script
  *   settings    { activeCollectionId, sortMode, sortDir }
  *   noise       règles de filtrage du catalogue       écrit aussi par le content script
  *
- * (`watch` est la cinquième : le suivi de prix la lit et l'écrit depuis
- * `sidepanel/watch.ts` et le content script.)
+ *   favsync     intentions à porter vers les favoris Vinted    vidé par le content script
+ *
+ * (`watch` et `offers` ne passent pas par ici : le suivi de prix les lit et les
+ * écrit depuis `sidepanel/watch.ts` et le content script.)
  *
  * Les clés, leur forme et la primitive de lecture-écriture vivent dans
  * `shared/storage.ts` — ce fichier n'exprime que ce que le panneau en fait.
@@ -42,6 +44,7 @@ import {
   makeDefaultCollection,
   sortCollections,
 } from '../shared/collections.ts';
+import { queueFavIntent, queueFavIntents } from '../shared/fav-sync-storage.ts';
 import { migrateStorage } from '../shared/migrate.ts';
 import { normalizeNoise } from '../shared/noise.ts';
 import type { NoiseFilters } from '../shared/noise.ts';
@@ -65,8 +68,30 @@ export {
   sortCollections,
 };
 
-/** Le rangement d'un article est le même geste depuis le panneau et depuis une carte. */
-export const moveItemToCollection = assignCollection;
+/**
+ * Le rangement d'un article : le même geste depuis le panneau et depuis une
+ * carte, donc la même primitive — et, en plus ici, la synchro des favoris.
+ *
+ * On ne met en file que les **entrées et sorties d'« Archives »**. Un article
+ * qui passe de « Jeans » à « Vestes » ne change rien à ce que Vinted doit
+ * montrer, et l'y mettre coûterait une relecture complète de la liste des
+ * favoris pour conclure qu'il n'y a rien à faire — voir `assignCollection()`,
+ * qui rend d'où vient l'article et où il va.
+ *
+ * Le content script, lui, appelle `assignCollection()` directement : son menu de
+ * rangement écarte « Archives », le cas ne s'y présente donc pas.
+ */
+export async function moveItemToCollection(
+  itemId: string,
+  collectionId: string | null
+): Promise<void> {
+  const moved = await assignCollection(itemId, collectionId);
+  if (!moved) return;
+
+  const wasArchived = moved.from === ARCHIVE_COLLECTION_ID;
+  const isArchived = moved.to === ARCHIVE_COLLECTION_ID;
+  if (wasArchived !== isArchived) await queueFavIntent(itemId, !isArchived);
+}
 
 const DEFAULT_SETTINGS: Settings = {
   activeCollectionId: DEFAULT_COLLECTION_ID,
@@ -75,6 +100,7 @@ const DEFAULT_SETTINGS: Settings = {
   hideSold: false,
   revealHidden: false,
   hideAds: false,
+  favSync: false,
 };
 
 // --- Lecture -----------------------------------------------------------------
@@ -253,6 +279,11 @@ export async function commitCustomOrder(
  * montre une liste dont l'ordre cite encore un article qui n'existe plus.
  */
 export async function removeItem(itemId: string): Promise<void> {
+  // Un article supprimé n'est plus un favori : la synchro le retirera de Vinted.
+  // Posé avant l'écriture, pour que l'intention survive à un panneau refermé
+  // dans la foulée.
+  await queueFavIntent(itemId, false);
+
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const items = { ...(current[ITEMS_KEY] || {}) };
     delete items[itemId];
@@ -276,6 +307,11 @@ export async function removeItem(itemId: string): Promise<void> {
  */
 export async function restoreItem(item: SavedItem): Promise<void> {
   const collectionId = item.collectionId || DEFAULT_COLLECTION_ID;
+
+  // « Annuler » doit défaire le retrait du favori autant que la suppression :
+  // l'intention posée par `removeItem()` est remplacée par son inverse, la file
+  // ne gardant qu'une intention par article.
+  if (collectionId !== ARCHIVE_COLLECTION_ID) await queueFavIntent(item.id, true);
 
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const items = { ...(current[ITEMS_KEY] || {}), [item.id]: item };
@@ -363,6 +399,11 @@ export async function archiveSold(tabId: string): Promise<ArchiveResult> {
     return { [ITEMS_KEY]: nextItems, [COLLECTIONS_KEY]: nextCollections };
   });
 
+  // Archiver, c'est sortir du périmètre de la synchro : les cœurs correspondants
+  // tombent. En une seule écriture de la file plutôt qu'une par article — un
+  // archivage porte souvent sur des dizaines de pièces.
+  await queueFavIntents(result.moved.map((entry) => ({ id: entry.id, want: false })));
+
   return result;
 }
 
@@ -370,6 +411,17 @@ export async function archiveSold(tabId: string): Promise<ArchiveResult> {
 export async function restoreArchived({ moved }: ArchiveResult): Promise<void> {
   if (!moved.length) return;
   const back = new Map(moved.map((entry) => [entry.id, entry.from]));
+
+  // Symétrique de l'archivage : les articles rentrent dans le périmètre, leurs
+  // cœurs reviennent. Un article qui revenait *dans* « Archives » resterait hors
+  // périmètre — le cas n'arrive pas, puisqu'on n'archive que ce qui était
+  // ailleurs, mais la garde reste par article plutôt que pour le lot : chacun
+  // porte désormais sa propre origine.
+  await queueFavIntents(
+    moved
+      .filter((entry) => entry.from !== ARCHIVE_COLLECTION_ID)
+      .map((entry) => ({ id: entry.id, want: true }))
+  );
 
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const items = current[ITEMS_KEY] || {};

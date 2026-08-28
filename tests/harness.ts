@@ -287,6 +287,30 @@ export async function loadContentScript(
         messageListener?.({ type: 'VF_WATCH_CANCEL' }, null, resolve);
       }),
 
+    /**
+     * Envoie VF_FAV_IMPORT, comme le clic droit sur « Sync favoris ».
+     *
+     * La promesse ne se résout qu'à la fin du rattrapage : le test doit donc
+     * répondre aux requêtes (liste des favoris, puis fiches) **sans l'attendre**.
+     */
+    favImport: (): Promise<any> =>
+      new Promise((resolve) => {
+        messageListener?.({ type: 'VF_FAV_IMPORT' }, null, resolve);
+      }),
+
+    /**
+     * Pose le jeton anti-CSRF dans la page, sous la forme que Vinted sert.
+     *
+     * Les fixtures n'en portent pas — il est retiré au téléchargement — et sans
+     * lui l'API des favoris ne s'ouvre pas du tout (`openFavApi()` rend `null`).
+     */
+    installCsrfToken(token = '75f6c9fa-dc8e-4e52-a000-e09dd4084b3e') {
+      const script = window.document.createElement('script');
+      script.textContent = `self.__next_f.push([1,"…\\"CSRF_TOKEN\\":\\"${token}\\",…"])`;
+      window.document.body.appendChild(script);
+      return token;
+    },
+
     /** Rapport du bouton Diagnostic du panneau latéral. */
     diagnose: (): Promise<any> =>
       new Promise((resolve) => {

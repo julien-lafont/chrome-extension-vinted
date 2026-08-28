@@ -412,6 +412,136 @@ l'API. Quatre pièges, tous constatés :
 
 Voir `src/shared/offers.ts` et `docs/specs/offres.md`.
 
+## API des favoris : lire, et écrire
+
+Relevé le 25/08/2026 sur un compte réel. C'est le **seul endroit où l'extension écrit
+chez Vinted**, et seulement quand « Sync favoris » est allumé — voir
+`docs/specs/favoris-sync.md`.
+
+### Le cœur, dans la page
+
+Le même composant partout, avec un `aria-pressed` qui porte l'état :
+
+```html
+<button
+  aria-pressed="false"
+  aria-label="Ajouter aux favoris, ajouté aux favoris par 37 utilisateurs"
+  data-testid="feed-item--favourite"
+></button>
+```
+
+| Contexte                      | Ancre du bouton                               |
+| ----------------------------- | --------------------------------------------- |
+| Catalogue, recherche          | `product-item-id-{ID}--favourite`             |
+| Fil de la page d'accueil      | `feed-item--favourite` — **sans identifiant** |
+| Dressing, articles similaires | `{plugin}-{ID}--favourite`                    |
+| Fiche article                 | `favourite-button`                            |
+
+`aria-pressed` est la seule source d'état qui ne dépende ni de la langue (l'`aria-label`
+est traduit) ni d'une classe (la couleur de l'icône vit dans
+`web_ui__Icon__greyscale-level-2`, ce que la règle 4 interdit de lire). **Absent ≠
+`false`** : sur la fiche, le bouton arrive `disabled` et nu, Vinted l'hydrate ensuite.
+Le lire comme un « pas en favori » ferait constater le retrait de tous les favoris à
+chaque chargement de page — voir `readFavouriteState()`.
+
+Le fil d'accueil ne porte l'identifiant nulle part dans le testid, exactement comme sa
+carte : `favouriteTargetId()` remonte donc à la carte (le testid du bouton privé de
+`--favourite`) et laisse `cardId()` trancher.
+
+### Le cœur rouge : quatre différences, une seule à lire
+
+Un article en favori change bien plus que son `aria-pressed` :
+
+```html
+<button
+  aria-pressed="true"
+  aria-label="Supprimer des favoris, ajouté aux favoris par 36 utilisateurs"
+  …
+>
+  <span
+    class="web_ui__Icon__icon web_ui__Icon__warning-default"
+    data-testid="favourite-filled-icon"
+  >
+    <svg><path d="M4.74 1.25c-.766 0-1.584.21-2.402.735…" /></svg> ← cœur plein
+  </span>
+  <span data-testid="favourite-count-text">36</span>
+</button>
+<span aria-live="polite" class="u-visually-hidden">Ajouté ! </span>
+```
+
+| Vide                              | Plein                                 |
+| --------------------------------- | ------------------------------------- |
+| `aria-pressed="false"`            | `aria-pressed="true"`                 |
+| « Ajouter aux favoris, … »        | « Supprimer des favoris, … »          |
+| `data-testid="favourite-icon"`    | `data-testid="favourite-filled-icon"` |
+| `web_ui__Icon__greyscale-level-2` | `web_ui__Icon__warning-default`       |
+| tracé du cœur ouvert              | tracé du cœur plein                   |
+
+**On ne lit que le premier, et on n'écrit aucun des cinq.** Le libellé est traduit, la
+classe est interdite par la règle 4, et repeindre l'icône soi-même reviendrait à
+réimplémenter le rendu de Vinted — que son prochain rendu React écraserait. Pour faire
+rougir un cœur, on clique **son** bouton : `setHeart()` dans `content/fav-sync.ts`.
+Vinted fait alors sa requête, avec son propre jeton, et repeint les cinq. Ce n'est
+possible que là où la carte est à l'écran ; ailleurs, il faut l'API ci-dessous.
+
+Le bouton est une **bascule** : on ne le clique donc jamais sans avoir comparé
+`aria-pressed` à l'état voulu, sous peine de retirer le favori qu'on venait poser.
+
+### Les deux en-têtes obligatoires
+
+```
+x-anon-id:     0b9ffca0-…      le cookie `anon_id`, tel quel
+x-csrf-token:  75f6c9fa-…      un UUID qui n'est dans aucun cookie
+```
+
+Sans `x-csrf-token`, l'API répond **403** (vérifié). Il n'y a **pas de balise `<meta>`**
+: le token vit dans un script de la page, au milieu d'un bloc de configuration sérialisé
+en JSON dans une chaîne JavaScript — les guillemets y sont donc échappés :
+
+```js
+…\"RELEASE_VERSION\":\"4dd8bbe…\",\"NEXT_JS\":\"true\",
+  \"CSRF_TOKEN\":\"75f6c9fa-dc8e-4e52-a000-e09dd4084b3e\",\"NODE_ENV\":…
+```
+
+Le motif de lecture doit accepter les deux formes (échappée et non échappée) : rien ne
+garantit que Vinted continue de le sérialiser ainsi.
+
+### Poser ou retirer un favori : une bascule
+
+```
+POST /api/v2/user_favourites/toggle
+content-type: application/json
+{"type":"item","user_favourites":[9778177557]}
+→ {"code":0,"message":"Ok","message_code":"ok"}
+```
+
+**La requête d'ajout et celle de retrait sont identiques**, corps compris : c'est l'état
+courant du compte qui décide du sens, et la réponse ne dit pas lequel a été pris.
+Émettre cet appel sans connaître l'état réel, c'est une chance sur deux d'inverser ce
+qu'on voulait faire. D'où la lecture préalable ci-dessous, qui n'est pas un confort mais
+la condition de correction.
+
+### Lire la liste des favoris
+
+```
+GET /api/v2/users/{userId}/items/favourites?page=1&per_page=20
+{ "items": [ { "id": 9475489079, "is_favourite": true, … } ],
+  "pagination": { "current_page": 1, "total_pages": 5,
+                  "total_entries": 100, "per_page": 20 } }
+```
+
+`userId` vient de `/api/v2/users/current`, que le balayage des offres lit et met déjà en
+cache (`OffersScanState.userId`) — rien à redemander.
+
+`pagination.total_pages` fait foi : demander un `per_page` plus grand que ce que Vinted
+accepte n'échoue pas, il est simplement ramené à sa valeur, et la pagination s'ajuste
+d'elle-même.
+
+Chaque entrée porte bien plus que l'identifiant (prix, photos, vendeur, taille) — c'est
+le même objet que l'API du catalogue. On n'en lit que `id` : la liste sert à savoir **ce
+qui est en favori**, pas à enrichir des articles, dont la fiche reste la seule source de
+vérité.
+
 ## URL de recherche du catalogue
 
 `src/sidepanel/search.ts` construit deux URLs de catalogue : « article similaire »

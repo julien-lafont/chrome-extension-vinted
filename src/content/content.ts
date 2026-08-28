@@ -14,12 +14,21 @@
  *   les data-testid `item-*` servent de repli.
  */
 import {
+  ARCHIVE_COLLECTION_ID,
   COLLECTIONS_KEY,
   DEFAULT_COLLECTION_ID,
+  archiveItem,
+  assignCollection,
+  classifiedIn,
   placeInOrder,
   withDefault,
 } from '../shared/collections.ts';
 import { errorText } from '../shared/errors.ts';
+import { importFavourites, pushFavourites } from './fav-catchup.ts';
+import { drainFavourites } from './fav-drain.ts';
+import { effectOfFavourite } from '../shared/fav-sync.ts';
+import type { FavSyncState } from '../shared/fav-sync.ts';
+import { queueFavIntent } from '../shared/fav-sync-storage.ts';
 import { hydrationNumbers, hydrationSellerMap } from '../shared/hydration.ts';
 import {
   NOISE_KEY,
@@ -52,12 +61,14 @@ import { photosFromDom, photosFromHydration } from '../shared/photos.ts';
 import { ratingFromReputation, sellerCountryFrom } from '../shared/seller.ts';
 import { sizeIdFor } from '../shared/size-ids.ts';
 import {
+  FAVSYNC_KEY,
   ITEMS_KEY,
   SETTINGS_KEY,
   WATCH_KEY,
   read as readStorage,
   update as updateStorage,
 } from '../shared/storage.ts';
+import type { StoredPart } from '../shared/storage.ts';
 import {
   applyCheckResult,
   nextDelay,
@@ -83,6 +94,7 @@ import {
   openCollectionPicker,
   toast,
 } from './collection-picker.ts';
+import { createFavWatcher, setHeart } from './fav-sync.ts';
 import { readTabDefault, renderDefaultPill, writeTabDefault } from './tab-default.ts';
 import { PILLS_SELECTOR } from './ui.ts';
 import { showSweepProgress, SWEEP_BAR_SELECTOR, type SweepDisplay } from './watch-ui.ts';
@@ -140,8 +152,11 @@ import {
     sellerProfiles: 0,
     sellerProfilesEmpty: 0,
     // Ajouts depuis une carte annulés parce que la fiche s'avère vendue —
-    // voir enrichFromDetail() / discardSoldItem().
+    // voir enrichFromDetail() / discardSoldItem(). `soldKept` compte l'autre
+    // issue : les favoris importés que leur fiche dit vendus, conservés avec
+    // leur badge au lieu d'être effacés.
     soldBlocked: 0,
+    soldKept: 0,
     // Cartes écartées à la main depuis cette page, et cartes masquées par une
     // règle au dernier scan — voir docs/specs/filtrage-bruit.md.
     dismissed: 0,
@@ -153,6 +168,22 @@ import {
     offersRead: 0,
     offersWritten: 0,
     offersStopped: null as string | null,
+    // Transitions du cœur Vinted appliquées au storage, et transitions vues sans
+    // pouvoir retrouver l'article dans la page — voir applyFavTransition().
+    // Un `favUnresolved` qui monte désigne une carte dont l'extraction casse,
+    // pas une synchro éteinte : éteinte, elle n'incrémente ni l'un ni l'autre.
+    favApplied: 0,
+    favUnresolved: 0,
+    // Cœurs Vinted cliqués par l'extension, et gestes qui n'ont pas pu l'être
+    // sur place (carte hors écran, bouton pas encore hydraté) — voir
+    // syncHeart(). Ces derniers passeront par la file d'intentions.
+    favClicked: 0,
+    favDeferred: 0,
+    // Bascules émises par l'API pour vider la file d'intentions, et raison d'un
+    // vidage écourté. Un `favDeferred` qui monte sans `favToggled` désigne une
+    // file qui ne part pas — session expirée, jeton introuvable, freinage.
+    favToggled: 0,
+    favDrainStopped: null as string | null,
     lastError: null as string | null,
   };
 
@@ -210,30 +241,67 @@ import {
     await updateStorage([ITEMS_KEY, COLLECTIONS_KEY], (stored) => {
       const current = stored[ITEMS_KEY] || {};
       const previous = current[item.id];
-      const next = { ...current };
 
       if (previous) {
+        const next = { ...current };
         delete next[item.id];
         result = { action: 'removed', previous };
         return { [ITEMS_KEY]: next };
       }
 
-      // La collection épinglée a pu être supprimée depuis le panneau pendant que
-      // la page était ouverte : on enregistre alors sans elle, plutôt que
-      // d'écrire une référence morte. `syncTabDefault()` retirera l'épingle à la
-      // notification du storage.
-      const collections = withDefault(stored[COLLECTIONS_KEY]);
-      const target = into && collections[into] ? into : null;
-
-      next[item.id] = { ...item, savedAt: Date.now(), ...(target ? { collectionId: target } : {}) };
       result = { action: 'added' };
-
-      return target
-        ? { [ITEMS_KEY]: next, [COLLECTIONS_KEY]: placeInOrder(collections, item.id, target) }
-        : { [ITEMS_KEY]: next };
+      return writeAdd(stored, item, into);
     });
 
     return result;
+  }
+
+  /**
+   * La branche « ajout » de {@link toggleItem}, isolée parce qu'un second
+   * appelant en a besoin : la synchro des favoris ajoute un article **sans
+   * jamais pouvoir le retirer** — un cœur qu'on vient de poser ne doit pas
+   * déclencher une suppression parce qu'un autre onglet a enregistré l'article
+   * entre la lecture et l'écriture. Deux implémentations du même ajout auraient
+   * fini par diverger sur le rangement.
+   *
+   * @param into collection où ranger l'ajout — celle épinglée sur l'onglet, s'il
+   *   y en a une. Elle a pu être supprimée depuis le panneau pendant que la page
+   *   était ouverte : on enregistre alors sans elle plutôt que d'écrire une
+   *   référence morte, et `syncTabDefault()` retirera l'épingle à la
+   *   notification du storage.
+   */
+  function writeAdd(
+    stored: StoredPart<typeof ITEMS_KEY | typeof COLLECTIONS_KEY>,
+    item: SavedItem,
+    into: string | null
+  ): StoredPart<typeof ITEMS_KEY | typeof COLLECTIONS_KEY> {
+    const next = { ...(stored[ITEMS_KEY] || {}) };
+    const collections = withDefault(stored[COLLECTIONS_KEY]);
+    const target = into && collections[into] ? into : null;
+
+    next[item.id] = { ...item, savedAt: Date.now(), ...(target ? { collectionId: target } : {}) };
+
+    return target
+      ? { [ITEMS_KEY]: next, [COLLECTIONS_KEY]: placeInOrder(collections, item.id, target) }
+      : { [ITEMS_KEY]: next };
+  }
+
+  /**
+   * Enregistre un article **s'il ne l'est pas déjà**. Voir {@link writeAdd} pour
+   * la raison d'être de cette variante.
+   *
+   * @returns `false` si l'article était déjà là — rien n'a été écrit.
+   */
+  async function addItemIfAbsent(item: SavedItem, into: string | null): Promise<boolean> {
+    let added = false;
+
+    await updateStorage([ITEMS_KEY, COLLECTIONS_KEY], (stored) => {
+      if ((stored[ITEMS_KEY] || {})[item.id]) return null;
+      added = true;
+      return writeAdd(stored, item, into);
+    });
+
+    return added;
   }
 
   // ---------------------------------------------------------------------------
@@ -306,6 +374,198 @@ import {
     await updateItems((current) => (current[item.id] ? null : { ...current, [item.id]: item }));
   }
 
+  // ---------------------------------------------------------------------------
+  // Synchro avec les favoris natifs de Vinted (docs/specs/favoris-sync.md)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * L'article que décrit la page pour cet identifiant, au moment du geste.
+   *
+   * Un cœur qu'on vient de voir changer est forcément à l'écran : sa carte, ou
+   * la fiche elle-même. On ré-extrait plutôt que de garder l'article sous la
+   * main, pour la raison qui vaut déjà pour les boutons injectés — Vinted
+   * recycle ses cartes, et l'article affiché à l'instant du clic n'est pas
+   * toujours celui qu'elle portait au dernier scan.
+   */
+  function itemForFavourite(id: string): SavedItem | null {
+    // La fiche fait foi quand c'est d'elle qu'il s'agit : elle porte tout, là où
+    // une carte n'a que six champs.
+    if (isDetailPage() && extractIdFromUrl(location.href) === id) return extractFromDetail();
+
+    const box = cardBoxes().find((candidate) => cardId(candidate) === id);
+    return box ? extractFromCard(box) : null;
+  }
+
+  /**
+   * Ce qu'une transition constatée du cœur Vinted change côté extension.
+   *
+   * La décision vit dans `shared/fav-sync.ts`, testée sans navigateur ; il ne
+   * reste ici que l'écriture. Trois choses méritent d'être vues ensemble :
+   *
+   * - **l'ajout ne peut pas retirer.** `addItemIfAbsent()` et non `toggleItem()`
+   *   — entre la transition et l'écriture, un autre onglet a pu enregistrer
+   *   l'article, et une bascule le supprimerait alors qu'on voulait l'ajouter ;
+   * - **le retrait archive, il ne supprime pas.** L'historique de prix survit, et
+   *   « Archives » étant hors du périmètre de la synchro, l'article y reste sans
+   *   provoquer d'aller-retour — voir `wantedFavourite()` ;
+   * - **`restore` n'est pas un ajout.** Remettre le cœur sur un article archivé
+   *   le sort du dépôt sans toucher à ce qu'il porte déjà.
+   */
+  async function applyFavTransition(id: string, favourite: boolean): Promise<void> {
+    if (!favSync) return;
+
+    const effect = effectOfFavourite(favourite, saved[id], collections);
+    if (effect === 'none') return;
+
+    try {
+      if (effect === 'save') {
+        const item = itemForFavourite(id);
+        if (!item) {
+          debug.favUnresolved += 1;
+          return;
+        }
+
+        // Même protocole qu'un clic sur le marque-page : une carte n'a pas tout,
+        // on l'enregistre en attente et la fiche complétera.
+        const fromCard = item.source === 'catalog';
+        const stored = fromCard ? { ...item, pending: true } : item;
+
+        if (await addItemIfAbsent(stored, tabDefaultId())) {
+          queueEnrich(item.id, item.url, !fromCard);
+        }
+      } else if (effect === 'archive') {
+        await archiveItem(id);
+      } else {
+        await assignCollection(id, tabDefaultId() || DEFAULT_COLLECTION_ID);
+      }
+
+      debug.favApplied += 1;
+
+      // Comme après un clic : on repeint sans attendre `onChanged`, qui peut
+      // arriver plus tard ou pas du tout si le storage a échoué en silence.
+      saved = await readItems();
+      repaintAll();
+    } catch (err) {
+      debug.lastError = errorText(err);
+      console.error('[Vinted Smart Bookmarks] synchro des favoris échouée :', err);
+    }
+  }
+
+  /**
+   * Met le cœur Vinted au diapason d'un geste fait sur le marque-page.
+   *
+   * C'est la moitié « extension → Vinted » de la synchro, et sur une page où la
+   * carte est visible elle ne coûte rien : on clique le cœur de Vinted, qui fait
+   * sa requête et repeint son icône en rouge. L'utilisateur voit donc, à
+   * l'instant où il enregistre, que l'article est aussi passé en favori — ce que
+   * ni un appel d'API silencieux ni un rendu réimplémenté ne montreraient aussi
+   * bien.
+   *
+   * Quand la carte n'est pas là — un retrait depuis le panneau, un article dont
+   * on a quitté la page — il n'y a rien à cliquer : le geste part alors dans la
+   * file d'intentions, qu'un onglet Vinted videra par l'API.
+   */
+  function syncHeart(id: string, want: boolean): void {
+    if (!favSync) return;
+
+    const outcome = setHeart(id, want, document, location.href);
+
+    if (outcome === 'clicked') {
+      debug.favClicked += 1;
+      return;
+    }
+    if (outcome === 'unchanged') return;
+
+    // Rien à cliquer ici : la carte n'est pas à l'écran, ou son cœur n'est pas
+    // encore hydraté. Le geste part en file, qu'un onglet videra par l'API.
+    debug.favDeferred += 1;
+    void queueFavIntent(id, want)
+      .then(scheduleFavDrain)
+      .catch((err: unknown) => {
+        debug.lastError = errorText(err);
+      });
+  }
+
+  /**
+   * La file a-t-elle **gagné** une intention ?
+   *
+   * Une comparaison d'identifiants, et pas de longueurs : vider deux intentions
+   * pendant qu'une troisième arrive fait une file plus courte, alors qu'il reste
+   * bien du travail neuf à faire.
+   */
+  function gainedIntent(before: unknown, after: unknown): boolean {
+    const idsOf = (value: unknown): Set<string> =>
+      new Set(((value as FavSyncState | undefined)?.pending ?? []).map((entry) => entry.id));
+
+    const had = idsOf(before);
+    return [...idsOf(after)].some((id) => !had.has(id));
+  }
+
+  /**
+   * Délai avant de vider la file, après le geste qui l'a remplie.
+   *
+   * Assez long pour qu'un archivage en masse ne produise qu'un seul vidage —
+   * chacun relit la liste complète des favoris — et assez court pour que le
+   * geste isolé parte pendant que l'utilisateur est encore sur la page.
+   */
+  const FAV_DRAIN_DELAY_MS = 2000;
+
+  let favDrainTimer: number | null = null;
+  let favDraining = false;
+
+  /**
+   * Programme un vidage de la file d'intentions.
+   *
+   * Groupé plutôt qu'immédiat, et sérialisé dans l'onglet par `favDraining` :
+   * le bail protège de deux **onglets** concurrents, pas de deux vidages du
+   * même onglet, qui liraient tous deux la file avant que l'un ait écrit.
+   */
+  function scheduleFavDrain(): void {
+    if (favDrainTimer !== null) clearTimeout(favDrainTimer);
+
+    favDrainTimer = setTimeout(() => {
+      favDrainTimer = null;
+      if (favDraining) return;
+      favDraining = true;
+
+      void drainFavourites({ instanceId })
+        .then((summary) => {
+          debug.favToggled += summary.toggled;
+          debug.favDrainStopped = summary.stopped ?? null;
+        })
+        .catch((err: unknown) => {
+          debug.lastError = errorText(err);
+        })
+        .finally(() => {
+          favDraining = false;
+        });
+    }, FAV_DRAIN_DELAY_MS) as unknown as number;
+  }
+
+  /**
+   * Le relevé des cœurs tourne **que la synchro soit allumée ou non** : c'est lui
+   * qui établit la référence à laquelle une transition se compare, et sans état
+   * de référence, allumer le réglage obligerait à recharger la page avant que le
+   * premier geste ne compte.
+   */
+  const favWatcher = createFavWatcher({
+    onTransition: (id, favourite) => {
+      void applyFavTransition(id, favourite);
+    },
+  });
+
+  /**
+   * Sort un article d'« Archives » vers la collection épinglée sur l'onglet.
+   *
+   * Rend un {@link ToggleResult} pour que l'appelant n'ait pas à distinguer ce
+   * geste d'un ajout : il enclenche la même suite — repeint, cœur Vinted, et
+   * choix de collection si l'appui se prolonge.
+   */
+  async function unarchiveItem(id: string): Promise<ToggleResult> {
+    await assignCollection(id, tabDefaultId() || DEFAULT_COLLECTION_ID);
+    return { action: 'added' };
+  }
+
   /**
    * Applique les champs d'une fiche sur un article déjà enregistré.
    *
@@ -352,7 +612,7 @@ import {
    * `completeSizeId()` et `completeSellerCountry()`. Les deux passent par
    * la même file, pour que ces requêtes de fond restent sérialisées entre elles.
    */
-  type EnrichJob = { id: string; url: string; sizeOnly?: boolean };
+  type EnrichJob = { id: string; url: string; sizeOnly?: boolean; keepSold?: boolean };
 
   /** Articles en attente d'enrichissement, traités un par un. */
   const enrichQueue: EnrichJob[] = [];
@@ -364,9 +624,9 @@ import {
    *                     données de sa carte
    *   pending absent  → article complet, ou fiche définitivement illisible
    */
-  function queueEnrich(id: string, url: string, sizeOnly = false): void {
+  function queueEnrich(id: string, url: string, sizeOnly = false, keepSold = false): void {
     if (enrichQueue.some((job) => job.id === id)) return;
-    enrichQueue.push({ id, url, sizeOnly });
+    enrichQueue.push({ id, url, sizeOnly, keepSold });
     // Volontairement non attendu : le clic ne doit pas patienter sur la requête.
     if (!enrichRunning) void runEnrichQueue();
   }
@@ -382,7 +642,7 @@ import {
     let job: EnrichJob | undefined;
     while ((job = enrichQueue.shift())) {
       try {
-        if (!job.sizeOnly) await enrichFromDetail(job.id, job.url);
+        if (!job.sizeOnly) await enrichFromDetail(job.id, job.url, job.keepSold);
         await completeSizeId(job.id);
         // En dernier : c'est la seule étape qui lise une **autre** page que la
         // fiche, et la moins urgente des trois.
@@ -397,7 +657,7 @@ import {
     enrichRunning = false;
   }
 
-  async function enrichFromDetail(id: string, url: string): Promise<void> {
+  async function enrichFromDetail(id: string, url: string, keepSold = false): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ENRICH_TIMEOUT_MS);
 
@@ -411,9 +671,21 @@ import {
       // La carte ne sait pas qu'un article est vendu — Vinted continue de le
       // lister. L'ajout provisoire posé au clic est donc annulé plutôt que
       // complété, dès que la fiche le révèle.
+      //
+      // Sauf pour un import de favoris (`keepSold`) : là, l'utilisateur a
+      // demandé *ses* favoris, vendus compris, et un favori gardé après la vente
+      // l'a souvent été exprès. L'effacer le ferait disparaître sans un mot —
+      // l'import annoncerait « 3 articles importés » et le panneau en montrerait
+      // deux. On le marque donc vendu, exactement comme le fait le cycle de
+      // suivi quand un article suivi se vend.
       if (isSoldDetail(doc)) {
-        await discardSoldItem(id);
-        debug.soldBlocked += 1;
+        if (keepSold) {
+          await markSoldItem(id);
+          debug.soldKept += 1;
+        } else {
+          await discardSoldItem(id);
+          debug.soldBlocked += 1;
+        }
         return;
       }
 
@@ -469,6 +741,25 @@ import {
       const next = { ...current };
       delete next[id];
       return next;
+    });
+  }
+
+  /**
+   * Marque vendu un article importé, au lieu de l'effacer.
+   *
+   * Le patch est celui du cycle de suivi (`applyCheckResult()` sur un verdict
+   * `sold`) : même donnée, même affichage dans le panneau — badge « Vendu », et
+   * masquage si le réglage le demande. `pending` tombe, la fiche a répondu.
+   */
+  async function markSoldItem(id: string): Promise<void> {
+    await updateItems((current) => {
+      const item = current[id];
+      if (!item) return null;
+
+      const merged = { ...item, ...applyCheckResult(item, { kind: 'sold' }, Date.now()) };
+      delete merged.pending;
+
+      return { ...current, [id]: merged };
     });
   }
 
@@ -1131,6 +1422,14 @@ import {
   let revealHidden = false;
   /** Masque les encarts publicitaires du fil (Braze). Désactivé par défaut. */
   let hideAds = false;
+  /**
+   * Synchro avec les favoris natifs de Vinted. Désactivée par défaut, et lue ici
+   * pour une raison de fond : tant qu'elle est éteinte, `applyFavTransition()`
+   * n'écrit rien — le relevé des cœurs, lui, tourne quand même, de sorte
+   * qu'allumer le réglage n'oblige pas à recharger la page pour établir une
+   * référence. Voir `docs/specs/favoris-sync.md`.
+   */
+  let favSync = false;
 
   /**
    * `item_id → seller_id` du flux d'hydratation, calculé une fois par page.
@@ -1166,12 +1465,13 @@ import {
     }
   }
 
-  /** Les deux seuls réglages du panneau que le content script lise. */
+  /** Les seuls réglages du panneau que le content script lise. */
   async function loadDisplaySettings(): Promise<void> {
     try {
       const res = await readStorage(SETTINGS_KEY);
       revealHidden = Boolean(res[SETTINGS_KEY]?.revealHidden);
       hideAds = Boolean(res[SETTINGS_KEY]?.hideAds);
+      favSync = Boolean(res[SETTINGS_KEY]?.favSync);
     } catch (err) {
       debug.lastError = errorText(err);
     }
@@ -1407,6 +1707,31 @@ import {
     return collections[item.collectionId]?.name || '';
   }
 
+  /**
+   * L'article est-il dans mes favoris — c'est-à-dire enregistré **et pas
+   * archivé** ?
+   *
+   * « Archives » n'est pas une collection parmi d'autres, c'est le fond du
+   * tiroir : l'article y est conservé (son historique de prix, sa date d'ajout)
+   * mais il ne fait plus partie de ce qu'on suit. Peindre son marque-page comme
+   * « Enregistré » laissait un bouton plein en face d'un cœur Vinted éteint, et
+   * un clic dessus **supprimait** l'article au lieu de le reprendre.
+   *
+   * C'est le même prédicat que `wantedFavourite()` côté synchro, et ce n'est pas
+   * une coïncidence : ce que le bouton montre est exactement ce que Vinted doit
+   * montrer.
+   */
+  function isFavourite(id: string | undefined): boolean {
+    const item = id ? saved[id] : undefined;
+    if (!item) return false;
+    return classifiedIn(item, collections)?.id !== ARCHIVE_COLLECTION_ID;
+  }
+
+  /** Enregistré, mais au fond du tiroir : un clic le reprend au lieu de le retirer. */
+  function isArchived(id: string): boolean {
+    return Boolean(saved[id]) && !isFavourite(id);
+  }
+
   function paintButton(btn: HTMLButtonElement, isSaved: boolean): void {
     const isDetail = btn.classList.contains('vf-detail-btn');
     // Un article vendu ne peut pas être ajouté — mais s'il l'était déjà avant
@@ -1517,6 +1842,13 @@ import {
         await restoreItem(item);
         saved = await readItems();
         repaintAll();
+
+        // Le `pointerdown` de ce geste a retiré l'article, et `syncHeart()` a
+        // donc décoché le cœur : l'appui long veut dire « range », jamais
+        // « retire », il faut le remettre. Si Vinted n'a pas encore repeint son
+        // bouton, l'état lu est périmé et rien n'est cliqué — le rattrapage
+        // revient alors à la file d'intentions.
+        syncHeart(item.id, true);
       }
 
       debug.longPress += 1;
@@ -1568,7 +1900,15 @@ import {
         // affiche l'article dès le clic, pas au retour de la requête.
         const fromCard = item.source === 'catalog';
         const stored = fromCard ? { ...item, pending: true } : item;
-        const result = await toggleItem(stored, tabDefaultId());
+
+        // Un article archivé n'est pas « enregistré » : son marque-page est vide
+        // (voir `isFavourite()`), et le clic qui le remplit doit le **reprendre**
+        // — pas le supprimer, ce que ferait une bascule sur un article présent en
+        // storage. C'est le pendant exact du `restore` de la synchro : l'article
+        // ressort du dépôt avec son historique de prix et sa date d'ajout.
+        const result = isArchived(item.id)
+          ? await unarchiveItem(item.id)
+          : await toggleItem(stored, tabDefaultId());
         debug.writes += 1;
 
         // Repeint immédiatement : si le storage échoue silencieusement ou si
@@ -1580,6 +1920,10 @@ import {
         // Depuis une fiche : tout est déjà là sauf l'identifiant de taille, que
         // seule l'API du site peut donner — voir completeSizeId().
         if (result.action === 'added') queueEnrich(item.id, item.url, !fromCard);
+
+        // Le cœur de Vinted suit le marque-page, quand la synchro est allumée.
+        // Après le repeint : le geste doit d'abord se voir sur *notre* bouton.
+        syncHeart(item.id, result.action === 'added');
 
         // L'article **tel qu'il est en storage**, et non celui qu'on croyait
         // écrire : la collection épinglée sur l'onglet vient peut-être de lui
@@ -1850,7 +2194,7 @@ import {
 
     const btn = createButton('vf-card-btn', () => extractFromCard(box));
     btn.dataset.vfId = item.id;
-    paintButton(btn, Boolean(saved[item.id]));
+    paintButton(btn, isFavourite(item.id));
     host.appendChild(btn);
 
     const hide = createHideButton(box, host);
@@ -1870,7 +2214,7 @@ import {
     // Bouton déjà en place sur le même article : rien à ré-extraire.
     // Le scan tourne à chaque mutation de la SPA, donc ce raccourci compte.
     if (existing && existing.dataset.vfPath === location.pathname) {
-      paintButton(existing, Boolean(existing.dataset.vfId && saved[existing.dataset.vfId]));
+      paintButton(existing, isFavourite(existing.dataset.vfId));
       return;
     }
 
@@ -1885,7 +2229,7 @@ import {
       existing.dataset.vfPath = location.pathname;
       existing.dataset.vfSold = sold;
       existing.dataset.vfPainted = ''; // force le repeint pour le nouvel article
-      paintButton(existing, Boolean(saved[item.id]));
+      paintButton(existing, isFavourite(item.id));
       return;
     }
 
@@ -1893,7 +2237,7 @@ import {
     btn.dataset.vfId = item.id;
     btn.dataset.vfPath = location.pathname;
     btn.dataset.vfSold = sold;
-    paintButton(btn, Boolean(saved[item.id]));
+    paintButton(btn, isFavourite(item.id));
     document.body.appendChild(btn);
   }
 
@@ -1971,7 +2315,7 @@ import {
   /** Resynchronise l'état visuel de tous les boutons déjà en place. */
   function repaintAll(): void {
     document.querySelectorAll<HTMLButtonElement>('.vf-card-btn, .vf-detail-btn').forEach((btn) => {
-      paintButton(btn, Boolean(btn.dataset.vfId && saved[btn.dataset.vfId]));
+      paintButton(btn, isFavourite(btn.dataset.vfId));
     });
     document.querySelectorAll<HTMLButtonElement>('.vf-hide-btn').forEach((btn) => {
       const id = btn.dataset.vfId;
@@ -2052,6 +2396,10 @@ import {
     injectDetailButton();
     injectDetailHideButton();
     markAdBlocks();
+
+    // Après l'injection, avant le filtrage : ne lit que `aria-pressed`, n'écrit
+    // rien, et ne peut donc pas relancer de scan.
+    favWatcher.sweep();
 
     // Après l'injection : une carte tout juste apparue doit être jugée dans le
     // même passage, sinon elle clignote — visible une frame, masquée la suivante.
@@ -2348,6 +2696,34 @@ import {
       return false;
     }
 
+    // Les deux rattrapages répondent **à la fin**, pas à l'acceptation : leur
+    // résultat est un compte que le panneau affiche, et il n'existe nulle part
+    // en storage où il pourrait aller le lire ensuite.
+    if (message?.type === 'VF_FAV_IMPORT') {
+      void importFavourites({
+        // L'API des favoris ne porte ni catégorie ni fil d'Ariane : chaque
+        // article importé arrive en qualité « carte » et sa fiche le complète,
+        // exactement comme un clic sur le catalogue.
+        // `keepSold` : un favori vendu reste un favori importé. Voir
+        // `enrichFromDetail()`.
+        onImported: (item) => {
+          queueEnrich(item.id, item.url, false, true);
+        },
+      }).then(async (summary) => {
+        // Les articles importés viennent d'entrer en storage : les boutons de la
+        // page doivent le montrer sans attendre `onChanged`.
+        saved = await readItems();
+        repaintAll();
+        sendResponse(summary);
+      });
+      return true;
+    }
+
+    if (message?.type === 'VF_FAV_PUSH') {
+      void pushFavourites().then(sendResponse);
+      return true;
+    }
+
     if (message?.type === 'VF_WATCH_CANCEL') {
       cancelWatch();
       sendResponse({ accepted: true });
@@ -2395,7 +2771,8 @@ import {
 
     const settings = changes[SETTINGS_KEY];
     if (settings) {
-      const value = settings.newValue as { revealHidden?: boolean; hideAds?: boolean } | undefined;
+      const value = settings.newValue as
+        { revealHidden?: boolean; hideAds?: boolean; favSync?: boolean } | undefined;
 
       const nextReveal = Boolean(value?.revealHidden);
       if (nextReveal !== revealHidden) {
@@ -2409,7 +2786,26 @@ import {
         hideAds = nextHideAds;
         applyAdsClass();
       }
+
+      // Rien à rejouer en l'allumant : le relevé des cœurs tournait déjà, et les
+      // transitions d'avant l'activation ne comptent pas (§ « rien de
+      // rétroactif » de la spec).
+      favSync = Boolean(value?.favSync);
     }
+
+    // Une intention posée ailleurs — le panneau qui supprime ou archive, un
+    // autre onglet dont la carte n'était pas à l'écran. Tous les onglets sont
+    // notifiés, mais le bail n'en laissera qu'un vider.
+    //
+    // **Seul un ajout déclenche un vidage**, jamais une écriture quelconque de
+    // la clé. Le vidage écrit lui-même dessus — il prend puis rend le bail, il
+    // retire ce qu'il a fait — et chacune de ces écritures nous renotifie
+    // (`onChanged` notifie aussi celui qui vient d'écrire). Réagir à toutes
+    // relancerait un vidage à la fin de chaque vidage, indéfiniment, et le
+    // premier arrêt sans effet — jeton absent, freinage — tournerait en boucle
+    // serrée jusqu'à la fermeture de l'onglet.
+    const fav = changes[FAVSYNC_KEY];
+    if (fav && gainedIntent(fav.oldValue, fav.newValue)) scheduleFavDrain();
   });
 
   void Promise.all([loadSaved(), loadCollections(), loadNoise(), loadDisplaySettings()]).then(
@@ -2449,6 +2845,16 @@ import {
       });
 
       observer.observe(document.body, { childList: true, subtree: true });
+
+      // Observateur distinct : `aria-pressed` change sans mutation de structure,
+      // celui ci-dessus ne le verrait pas passer. Voir `content/fav-sync.ts`.
+      favWatcher.observe(document.body);
+
+      // Une file laissée en plan : le panneau a supprimé des articles alors
+      // qu'aucun onglet Vinted n'était ouvert. C'est ici qu'elle repart.
+      void readStorage(FAVSYNC_KEY).then((stored) => {
+        if (stored[FAVSYNC_KEY]?.pending?.length) scheduleFavDrain();
+      });
     }
   );
 })();

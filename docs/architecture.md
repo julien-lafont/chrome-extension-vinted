@@ -16,6 +16,8 @@ src/
   content/ui.ts                    activation à deux gestes, pile de pastilles
   content/noise-ui.ts              filtrage : annulation, pastille, menu de la fiche
   content/offers-scan.ts           balayage de l'inbox : offres en cours (réseau)
+  content/fav-sync.ts              cœurs Vinted : observation, et clic sur le leur
+  content/fav-drain.ts             file d'intentions vidée par l'API (écrit chez Vinted)
   sidepanel/sidepanel.ts           orchestration : état, rendu global, écouteurs
   sidepanel/dom.ts                 required() / within() — accès au DOM du panneau
   sidepanel/item-list.ts           la liste d'articles : une ligne, et leur mise à jour
@@ -38,6 +40,8 @@ src/
   shared/noise.ts                  règles de filtrage du catalogue (pur, testé)
   shared/noise-storage.ts          clé `noise` : relecture puis écriture
   shared/offers.ts                 offres lues dans l'API des conversations (pur)
+  shared/fav-sync.ts               synchro des favoris Vinted : les décisions (pur)
+  shared/fav-sync-storage.ts       clé `favsync` : relecture puis écriture
   shared/messages.ts               protocole panneau ↔ content scripts
   shared/photos.ts                 photos d'une fiche, du flux RSC ou du DOM
   shared/hydration.ts              identifiants lus dans le flux RSC (repli du DOM)
@@ -85,10 +89,11 @@ d'enregistrement et lit les métadonnées des articles.
 
 ## Stockage
 
-Six clés dans `chrome.storage.local` : `savedItems`, `collections`, `settings`, `watch`
+Sept clés dans `chrome.storage.local` : `savedItems`, `collections`, `settings`, `watch`
 (état du cycle de rafraîchissement — voir `docs/specs/suivi-prix.md`), `noise` (règles
-de filtrage du catalogue — voir `docs/specs/filtrage-bruit.md`) et `offers` (avancement
-du balayage des offres — voir `docs/specs/offres.md`).
+de filtrage du catalogue — voir `docs/specs/filtrage-bruit.md`), `offers` (avancement du
+balayage des offres — voir `docs/specs/offres.md`) et `favsync` (ce qui reste à porter
+vers les favoris Vinted — voir `docs/specs/favoris-sync.md`).
 
 ```js
 savedItems = {
@@ -181,6 +186,18 @@ settings = {
   sortDir: 'asc',
   hideSold: false,
   revealHidden: false, // mode révision du filtrage — préférence, pas une règle
+  hideAds: false,
+  favSync: false, // le seul réglage qui fasse écrire l'extension chez Vinted
+};
+
+// Ce qui reste à porter vers les favoris Vinted, et rien d'autre : l'état des
+// favoris vit chez Vinted, l'extension ne le duplique jamais. `want` est un état
+// voulu, pas une bascule — l'API n'ayant que la bascule, il faut lire avant
+// d'écrire. Voir docs/specs/favoris-sync.md.
+favsync = {
+  pending: [{ id: '9778177557', want: false, at: 1787684090000 }],
+  lastDrainAt: 1787684092000,
+  lease: { tabId: 'lq3x8f-4b2', until: 1787684150000 },
 };
 
 // État du cycle de rafraîchissement, écrit par le content script d'un onglet

@@ -3,6 +3,10 @@
 Bouton **Diagnostic** dans le pied du panneau latéral, à lancer avec un onglet Vinted
 actif. Il interroge le content script de cet onglet et affiche son rapport.
 
+La bande qui le porte est masquée par défaut : **clic droit sur l'icône de l'extension →
+« Ouvrir en mode développeur »**. Elle reste dépliée jusqu'au bouton « Quitter » ou à la
+fermeture de Chrome (le drapeau vit dans `chrome.storage.session`).
+
 C'est le premier réflexe quand quelque chose ne marche plus : il distingue en une
 lecture « Vinted a changé son DOM » de « le clic n'arrive pas jusqu'au bouton ».
 
@@ -248,31 +252,32 @@ fichier.
 
 ## Table de lecture
 
-| Symptôme                                                         | Interprétation                                                                         |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `cardsFound: 0` sur une recherche                                | Vinted a changé ses `data-testid` → [vinted-dom.md](vinted-dom.md)                     |
-| `cardsFound > cardsParsed`                                       | Des cartes ont une structure inattendue                                                |
-| `cardsParsed > cardButtons`                                      | L'injection échoue — conteneur d'image introuvable                                     |
-| `blockCardsFound: 0` alors que le dressing du membre est visible | Le préfixe de testid des cartes de bloc a changé → [vinted-dom.md](vinted-dom.md)      |
-| `blocsArticles: []` sur une fiche                                | Le conteneur `item-page-{plugin}-plugin` a changé de nom                               |
-| `missing.title > 0`                                              | Le format du libellé d'accessibilité a changé                                          |
-| `detailButton: "ABSENT"`                                         | `extractFromDetail()` renvoie `null` — voir `detailExtraction`                         |
-| `detailJsonLd: false`                                            | Le JSON-LD a disparu, on est retombé sur les replis                                    |
-| `clickablePoints` < `9/9`                                        | Un élément Vinted recouvre le bouton → voir `BLOQUÉ_PAR`                               |
-| `debug.clicks` reste à 0 après un clic                           | Le clic n'atteint pas le bouton → [pitfalls.md](pitfalls.md)                           |
-| `debug.clicks > debug.writes`                                    | Le clic arrive mais l'écriture échoue → voir `lastError`                               |
-| `debug.longPress` reste à 0 après un appui long                  | Le geste est avalé avant le seuil (glissement, `pointerup` précoce), pas un menu cassé |
-| `debug.enrichFailed` grimpe                                      | Vinted refuse la lecture des fiches → les articles restent aux données de leur carte   |
-| `enAttenteDeFiche` ne redescend pas                              | Requêtes bloquées ou très lentes ; l'article reste utilisable                          |
-| `lastError: "Extension context invalidated"`                     | Extension rechargée sans recharger l'onglet — Cmd+R sur Vinted                         |
-| `cartesMasquees` proche de `cardsFound`                          | Une règle trop large — lire `motifs` pour savoir laquelle                              |
-| `motifs.word` élevé et inattendu                                 | Un mot exclu attrape plus large que prévu → le retirer depuis « Filtres »              |
-| `vendeursSurCartes: "0/n"`                                       | Le vendeur n'est pas lisible sur une carte ; c'est un état connu, pas une panne        |
-| `vendeur.noteFlux` et `noteDom` tous deux à `null`               | Les deux ancres de la note ont sauté → [vinted-dom.md](vinted-dom.md)                  |
-| `debug.sellerProfilesEmpty` monte seul                           | Les profils sont lus mais n'ont plus de pays → l'ancre `country_code` a changé         |
-| `debug.offersRead: 0` alors qu'une offre existe                  | Le balayage ne part pas : session expirée, ou freinage → voir `offersStopped`          |
-| `debug.offersStopped: "freiné"`                                  | 429/403 sur l'API : silence de 10 min, les offres connues restent affichées            |
-| `debug.offersRead` monte, `offersWritten` reste à 0              | Les conversations sont lues mais ne concernent aucun favori — normal si l'on vend      |
+| Symptôme                                                         | Interprétation                                                                                        |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `cardsFound: 0` sur une recherche                                | Vinted a changé ses `data-testid` → [vinted-dom.md](vinted-dom.md)                                    |
+| `cardsFound > cardsParsed`                                       | Des cartes ont une structure inattendue                                                               |
+| `cardsParsed > cardButtons`                                      | L'injection échoue — conteneur d'image introuvable                                                    |
+| `blockCardsFound: 0` alors que le dressing du membre est visible | Le préfixe de testid des cartes de bloc a changé → [vinted-dom.md](vinted-dom.md)                     |
+| `blocsArticles: []` sur une fiche                                | Le conteneur `item-page-{plugin}-plugin` a changé de nom                                              |
+| `missing.title > 0`                                              | Le format du libellé d'accessibilité a changé                                                         |
+| `detailButton: "ABSENT"`                                         | `extractFromDetail()` renvoie `null` — voir `detailExtraction`                                        |
+| `detailJsonLd: false`                                            | Le JSON-LD a disparu, on est retombé sur les replis                                                   |
+| `clickablePoints` < `9/9`                                        | Un élément Vinted recouvre le bouton → voir `BLOQUÉ_PAR`                                              |
+| `debug.clicks` reste à 0 après un clic                           | Le clic n'atteint pas le bouton → [pitfalls.md](pitfalls.md)                                          |
+| `debug.clicks > debug.writes`                                    | Le clic arrive mais l'écriture échoue → voir `lastError`                                              |
+| `debug.longPress` reste à 0 après un appui long                  | Le geste est avalé avant le seuil (glissement, `pointerup` précoce), pas un menu cassé                |
+| `debug.enrichFailed` grimpe                                      | Vinted refuse la lecture des fiches → les articles restent aux données de leur carte                  |
+| `enAttenteDeFiche` ne redescend pas                              | Requêtes bloquées ou très lentes ; l'article reste utilisable                                         |
+| `lastError: "Extension context invalidated"`                     | Extension rechargée sans recharger l'onglet — Cmd+R sur Vinted                                        |
+| `cartesMasquees` proche de `cardsFound`                          | Une règle trop large — lire `motifs` pour savoir laquelle                                             |
+| `motifs.word` élevé et inattendu                                 | Un mot exclu attrape plus large que prévu → le retirer depuis « Filtres »                             |
+| `vendeursSurCartes: "0/n"`                                       | Le vendeur n'est pas lisible sur une carte ; c'est un état connu, pas une panne                       |
+| `vendeur.noteFlux` et `noteDom` tous deux à `null`               | Les deux ancres de la note ont sauté → [vinted-dom.md](vinted-dom.md)                                 |
+| `debug.sellerProfilesEmpty` monte seul                           | Les profils sont lus mais n'ont plus de pays → l'ancre `country_code` a changé                        |
+| `debug.offersRead: 0` alors qu'une offre existe                  | Le balayage ne part pas : session expirée, ou freinage → voir `offersStopped`                         |
+| `debug.offersStopped: "freiné"`                                  | 429/403 sur l'API : silence de 10 min, les offres connues restent affichées                           |
+| `debug.offersRead` monte, `offersWritten` reste à 0              | Les conversations sont lues mais ne concernent aucun favori — normal si l'on vend                     |
+| Un import de favoris en enregistre moins qu'annoncé              | `debug.soldBlocked` monte → des fiches vendues effacent l'ajout ; à l'import, ce doit être `soldKept` |
 
 ## Étendre le rapport
 

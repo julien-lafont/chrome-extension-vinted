@@ -114,6 +114,57 @@ describe('rendu d une ligne', () => {
     assert.equal(row('2').querySelector('.item-meta')?.textContent, 'Levi’s');
   });
 
+  test('la catégorie ferme la ligne, après les likes', () => {
+    renderItems([
+      makeItem({
+        id: '1',
+        brand: 'Nike',
+        favouriteCount: 12,
+        category: {
+          id: '1242',
+          name: 'Baskets',
+          path: ['Hommes', 'Chaussures', 'Baskets'],
+          url: 'https://www.vinted.fr/catalog/1242',
+          exact: true,
+        },
+      }),
+      // Fiche jamais lue : pas de catégorie, donc pas de séparateur en trop.
+      makeItem({ id: '2', brand: 'Levi’s', favouriteCount: 3 }),
+    ]);
+
+    assert.equal(row('1').querySelector('.item-meta')?.textContent, 'Nike · ♥ 12 · Baskets');
+    assert.equal(row('2').querySelector('.item-meta')?.textContent, 'Levi’s · ♥ 3');
+
+    // Le fil complet en infobulle : « Baskets » seul ne dit pas pour qui.
+    assert.equal(
+      row('1').querySelector('.item-category')?.getAttribute('title'),
+      'Hommes › Chaussures › Baskets'
+    );
+  });
+
+  test('une catégorie approchée le dit en infobulle', () => {
+    renderItems([
+      makeItem({
+        id: '1',
+        // Enregistré depuis une page de catalogue : le fil décrit la page, pas
+        // l'article (voir `categoryOf()`).
+        category: {
+          id: '5',
+          name: 'Chaussures',
+          path: ['Femmes', 'Chaussures'],
+          url: null,
+          exact: false,
+        },
+      }),
+    ]);
+
+    assert.equal(row('1').querySelector('.item-meta')?.textContent, 'Chaussures');
+    assert.equal(
+      row('1').querySelector('.item-category')?.getAttribute('title'),
+      'Femmes › Chaussures (catégorie de la page, approchée)'
+    );
+  });
+
   test('un article en attente de fiche le signale sans se rendre inutilisable', () => {
     renderItems([makeItem({ id: '1', pending: true })]);
 

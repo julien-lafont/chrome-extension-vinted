@@ -41,6 +41,56 @@ Ce projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
 ### Ajouté
 
+- **Sync favoris : le cœur de Vinted et le marque-page ne font plus qu'un**
+  (`docs/specs/favoris-sync.md`). Sans elle, les deux listes font doublon — on met un
+  article en favori chez Vinted, on l'enregistre dans l'extension, et il faut penser aux
+  deux. Quatre règles la résument : un cœur posé enregistre l'article, un enregistrement
+  pose le cœur, un cœur retiré archive, une suppression ou un archivage retire le cœur.
+  Chacune est **inerte quand l'état visé est déjà atteint**, ce qui rend les allers-
+  retours convergents.
+
+  **Désactivée par défaut, et c'est le seul réglage qui fasse _écrire_ l'extension sur le
+  compte Vinted** — la bascule est au pied du panneau, à côté de « Masquer les pubs ».
+  Tant qu'il est éteint, rien ne part vers le site.
+
+  **Rien n'est rétroactif** : la synchro n'agit que sur une transition constatée, jamais
+  sur un écart entre deux listes. Allumer le réglage ne déclenche donc aucune écriture,
+  et défiler le catalogue n'archive rien — « l'utilisateur a retiré ce favori » et « ce
+  favori n'a jamais existé » produisent les mêmes données, que rien ne distingue après
+  coup.
+
+  **« Archives » est hors du périmètre**, ce qui ferme la boucle : un article archivé est
+  un article dont l'extension et Vinted s'accordent à dire qu'il n'est plus un favori.
+  C'est aussi ce qui rend le retrait non destructif — un cœur décoché par erreur ne coûte
+  ni l'historique de prix ni la date d'ajout, et remettre le cœur ressort l'article du
+  tiroir.
+
+  **Quand la carte est à l'écran, l'extension clique le cœur de Vinted** : l'utilisateur
+  voit le site repeindre son icône, ce qu'aucun appel d'API silencieux ne montrerait.
+  Sinon le geste part dans une file d'intentions qu'un onglet Vinted vide par l'API, à
+  débit humain (600 ms), sous verrou d'onglet — deux onglets qui videraient la même
+  intention basculeraient deux fois le même article, et une bascule doublée revient à ne
+  rien faire en laissant croire que c'est fait.
+
+  **Deux rattrapages ponctuels** au clic droit sur le réglage : importer ses favoris
+  Vinted absents du panneau, ou poser les cœurs manquants sur ses articles enregistrés.
+  Tous deux **additifs des deux côtés** — aucun ne supprime, aucun n'archive, aucun ne
+  retire un cœur.
+
+- **Mode développeur** : la bande d'outils du panneau (export JSON, diagnostic, déblocage
+  du débit) ne s'adresse pas à l'utilisateur mais à qui instruit une panne. Elle est
+  désormais **masquée par défaut** et se déplie par le clic droit sur l'icône de
+  l'extension → « Ouvrir en mode développeur ». Le drapeau vit dans
+  `chrome.storage.session` : il ne survit pas à la fermeture de Chrome, ce qui est la
+  durée de vie voulue pour un mode de dépannage — personne ne le retrouve allumé des
+  semaines plus tard.
+
+- **La catégorie ferme la ligne de métadonnées** du panneau, après les likes : « Nike ·
+  42 · Très bon état · ♥ 12 · Baskets ». Le fil d'Ariane complet reste en infobulle —
+  « Baskets » seul ne dit pas s'il s'agit d'homme, de femme ou d'enfant —, et une
+  catégorie approchée (celle de la page de catalogue d'où l'article a été enregistré, qui
+  décrit la page et pas forcément l'article) le dit là plutôt que d'encombrer la ligne.
+
 - **Appui long sur « Rafraîchir » : toutes les collections d'un coup**
   (`docs/specs/suivi-prix.md` §5.1 bis). Un clic court continue de ne rafraîchir que la
   liste affichée — c'est celle qu'on regarde ; un appui maintenu une demi-seconde lance

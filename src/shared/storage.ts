@@ -40,6 +40,7 @@
  * relecture juste avant l'écriture reste ce qui s'en approche le plus, et c'est
  * précisément ce que `update()` impose par construction.
  */
+import type { FavSyncState } from './fav-sync.ts';
 import { NOISE_KEY } from './noise.ts';
 import type { NoiseFilters } from './noise.ts';
 import type { CollectionMap, ItemMap, OffersScanState, Settings, WatchState } from './types.ts';
@@ -49,14 +50,24 @@ export const COLLECTIONS_KEY = 'collections';
 export const SETTINGS_KEY = 'settings';
 export const WATCH_KEY = 'watch';
 export const OFFERS_KEY = 'offers';
+
+/**
+ * Déclarée ici et non dans `shared/fav-sync.ts`, contrairement à `NOISE_KEY` :
+ * ce module-là importe `collections.ts`, qui importe celui-ci. Y prendre la clé
+ * fermerait le cycle à l'exécution, là où l'import de type ci-dessus disparaît à
+ * la compilation.
+ */
+export const FAVSYNC_KEY = 'favsync';
+
 export { NOISE_KEY };
 
 /**
  * Le contenu de `chrome.storage.local`, clé par clé.
  *
- * `settings` et `noise` sont partiels à dessein : sur une installation neuve la
- * clé est absente, et c'est aux normaliseurs (`DEFAULT_SETTINGS`,
- * `normalizeNoise()`) de rendre un objet complet.
+ * `settings`, `noise` et `favsync` sont partiels à dessein : sur une
+ * installation neuve la clé est absente, et c'est aux normaliseurs
+ * (`DEFAULT_SETTINGS`, `normalizeNoise()`, `normalizeFavSync()`) de rendre un
+ * objet complet.
  */
 export type StorageShape = {
   [ITEMS_KEY]: ItemMap;
@@ -65,6 +76,7 @@ export type StorageShape = {
   [NOISE_KEY]: Partial<NoiseFilters>;
   [WATCH_KEY]: WatchState;
   [OFFERS_KEY]: OffersScanState;
+  [FAVSYNC_KEY]: Partial<FavSyncState>;
 };
 
 export type StorageKey = keyof StorageShape;

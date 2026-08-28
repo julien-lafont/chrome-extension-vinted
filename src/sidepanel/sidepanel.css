@@ -1160,6 +1160,14 @@ h1 {
   border-top: 1px solid var(--border);
 }
 
+/* Masquée par défaut, dépliée par « Ouvrir en mode développeur » (clic droit sur
+   l'icône). `.footer` impose `display: flex`, qui l'emporte sur le
+   `display: none` que la feuille du navigateur attache à [hidden] : sans cette
+   règle, l'attribut n'aurait aucun effet. */
+.footer--dev[hidden] {
+  display: none;
+}
+
 /* Bande de développement : en retrait, et retirable d'un bloc. Supprimer ce
    sélecteur et le <footer> correspondant suffit — rien d'autre n'en dépend. */
 .footer--dev {

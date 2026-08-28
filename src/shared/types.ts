@@ -7,8 +7,9 @@
  * là que naissent les désaccords silencieux (un champ renommé d'un côté, lu de
  * l'autre, sans erreur nulle part). Il n'existe plus qu'ici.
  *
- * Six clés dans `chrome.storage.local` : `savedItems`, `collections`,
- * `settings`, `noise`, `watch` et `offers`. Voir `docs/architecture.md`.
+ * Sept clés dans `chrome.storage.local` : `savedItems`, `collections`,
+ * `settings`, `noise`, `watch`, `offers` et `favsync`. Voir
+ * `docs/architecture.md`.
  */
 
 /**
@@ -377,6 +378,13 @@ export type Settings = {
    * l'extension au lieu de la laisser en l'état.
    */
   schemaVersion?: number;
+  /**
+   * Synchronisation avec les favoris natifs de Vinted — voir
+   * `docs/specs/favoris-sync.md`. **Désactivé par défaut**, et c'est le seul
+   * réglage de l'extension qui la fasse *écrire* sur le compte Vinted : tant
+   * qu'il est à `false`, rien ne part vers le site.
+   */
+  favSync: boolean;
 };
 
 /** Les deux clés du storage sont indexées par id, pas stockées en tableau. */

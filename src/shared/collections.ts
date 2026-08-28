@@ -217,6 +217,51 @@ export function placeInOrder(
 }
 
 /**
+ * Range **un** article dans « Archives », en créant la collection au passage si
+ * elle n'existe pas encore.
+ *
+ * `assignCollection()` ne convient pas : elle refuse une collection absente — à
+ * raison, puisqu'elle sert un menu dont les entrées existent déjà. Ici la
+ * destination est connue d'avance et créée à la demande, comme dans
+ * `archiveSold()` du panneau, dont c'est la version à un seul article. Les deux
+ * clés partent dans un `set` unique, pour la raison habituelle : en deux
+ * écritures, le rendu déclenché par la première montre un article rangé dans une
+ * collection qui n'existe pas encore.
+ *
+ * @returns `true` si l'article a bougé, `false` s'il n'existait plus ou s'il
+ *   était déjà archivé — un appelant qui synchronise a besoin de savoir qu'il
+ *   n'a rien changé.
+ */
+export async function archiveItem(itemId: string): Promise<boolean> {
+  let moved = false;
+
+  await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
+    const items = current[ITEMS_KEY] || {};
+    const item = items[itemId];
+    if (!item) return null;
+
+    const collections = withDefault(current[COLLECTIONS_KEY]);
+    // `classifiedIn()` plutôt que `item.collectionId` : une référence morte vers
+    // « Archives » supprimée veut dire non classé, et l'article doit pouvoir y
+    // retourner (voir `classifiedIn()` ci-dessus).
+    if (classifiedIn(item, collections)?.id === ARCHIVE_COLLECTION_ID) return null;
+
+    if (!collections[ARCHIVE_COLLECTION_ID]) {
+      collections[ARCHIVE_COLLECTION_ID] = makeArchiveCollection();
+    }
+
+    moved = true;
+
+    return {
+      [ITEMS_KEY]: { ...items, [itemId]: { ...item, collectionId: ARCHIVE_COLLECTION_ID } },
+      [COLLECTIONS_KEY]: placeInOrder(collections, itemId, ARCHIVE_COLLECTION_ID),
+    };
+  });
+
+  return moved;
+}
+
+/**
  * Range un article dans une collection, ou l'en sort avec `null`.
  *
  * Ranger pose `collectionId` et replace l'id en tête de l'ordre personnalisé de
@@ -231,8 +276,16 @@ export function placeInOrder(
  *
  * Relecture avant écriture (règle 6 du projet) : plusieurs onglets Vinted
  * écrivent sur `savedItems` en parallèle.
+ *
+ * @returns d'où vient l'article et où il va (`null` de part et d'autre = non
+ *   classé, c'est-à-dire « Mes favoris »), ou `null` si rien n'a bougé.
  */
-export async function assignCollection(itemId: string, collectionId: string | null): Promise<void> {
+export async function assignCollection(
+  itemId: string,
+  collectionId: string | null
+): Promise<{ from: string | null; to: string | null } | null> {
+  let moved: { from: string | null; to: string | null } | null = null;
+
   await update([ITEMS_KEY, COLLECTIONS_KEY], (current) => {
     const items = current[ITEMS_KEY] || {};
     const item = items[itemId];
@@ -249,9 +302,17 @@ export async function assignCollection(itemId: string, collectionId: string | nu
     const next: SavedItem = { ...item, collectionId: target ?? undefined };
     if (!target) delete next.collectionId;
 
+    // D'où vient l'article, et où il va. La synchro des favoris s'en sert pour
+    // ne réagir qu'aux entrées et sorties d'« Archives » : un article déplacé de
+    // « Jeans » vers « Vestes » ne change rien à ce que Vinted doit montrer, et
+    // le mettre en file coûterait une relecture complète des favoris pour rien.
+    moved = { from: classifiedIn(item, collections)?.id ?? null, to: target };
+
     return {
       [ITEMS_KEY]: { ...items, [itemId]: next },
       [COLLECTIONS_KEY]: placeInOrder(collections, itemId, target),
     };
   });
+
+  return moved;
 }

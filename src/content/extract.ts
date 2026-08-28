@@ -27,7 +27,7 @@
  */
 import { hydrationNumbers } from '../shared/hydration.ts';
 import { extractPhotos } from '../shared/photos.ts';
-import { parsePriceString } from '../shared/price.ts';
+import { formatPrice, parsePriceString } from '../shared/price.ts';
 import { ratingFromReputation, readSellerFeedback, sellerCell } from '../shared/seller.ts';
 import type { SellerFeedback } from '../shared/seller.ts';
 import { DESCRIPTION_MAX } from '../shared/types.ts';
@@ -68,6 +68,9 @@ const CONDITION_WORDS = /neuf\s+(avec|sans)|(tr[eè]s\s+)?bon\s+[ée]tat|satisfa
 /** Voir `shared/price.ts` — le parseur est commun au panneau et à l'extraction. */
 export const parsePriceValue = parsePriceString;
 
+/** Réexporté : plusieurs appelants historiques le prennent ici. */
+export { formatPrice };
+
 /**
  * Nombre de favoris affiché sur un bouton « cœur » Vinted, carte ou fiche.
  *
@@ -99,6 +102,72 @@ export function readFavouriteButton(scope: ParentNode, selector: string): number
   // Libellé présent mais sans nombre ("Ajouter aux favoris" tout court) :
   // le bouton est rendu, personne n'a mis l'article en favori.
   return label ? 0 : null;
+}
+
+/**
+ * Le cœur natif de Vinted, partout où il existe.
+ *
+ * Un seul sélecteur pour quatre contextes, parce que Vinted y met le même
+ * composant : les cartes du catalogue et des blocs d'une fiche le nomment
+ * `{carte}--favourite`, le fil de la page d'accueil `feed-item--favourite`, et
+ * la fiche article `favourite-button`.
+ *
+ * Il ne sert pas qu'au compteur : c'est aussi le seul témoin de l'état du favori
+ * chez Vinted — voir `readFavouriteState()` et `docs/specs/favoris-sync.md`.
+ */
+export const FAVOURITE_SELECTOR = '[data-testid$="--favourite"], [data-testid="favourite-button"]';
+
+/** Ancre du cœur de la fiche article, qui ne suit pas la convention des cartes. */
+const DETAIL_FAVOURITE_TESTID = 'favourite-button';
+
+const FAVOURITE_SUFFIX = '--favourite';
+
+/**
+ * L'état du favori porté par un cœur Vinted.
+ *
+ * `aria-pressed` est la seule source qui ne dépende ni de la langue ni d'une
+ * classe obfusquée — le libellé dit « Ajouter aux favoris » / « Retirer des
+ * favoris », et l'icône ne se distingue que par sa classe de couleur, ce que la
+ * règle 4 interdit.
+ *
+ * @returns `null` quand l'attribut est absent, c'est-à-dire quand le bouton
+ *   n'est **pas encore hydraté** — sur une fiche, il arrive `disabled` et nu.
+ *   Surtout pas `false`, qui se lirait comme « pas en favori » et ferait
+ *   constater un retrait à chaque chargement de page.
+ */
+export function readFavouriteState(btn: Element): boolean | null {
+  const pressed = btn.getAttribute('aria-pressed');
+  if (pressed === 'true') return true;
+  if (pressed === 'false') return false;
+  return null;
+}
+
+/**
+ * L'article que désigne un cœur Vinted.
+ *
+ * Le testid du bouton ne suffit pas : sur le fil de la page d'accueil il vaut
+ * `feed-item--favourite`, sans identifiant nulle part — même exception que pour
+ * la carte elle-même. On remonte donc à la carte, dont le testid est celui du
+ * bouton privé de son suffixe, et on laisse `cardId()` trancher. Cela a un
+ * second effet, celui qui compte vraiment : `cardId()` relit l'identifiant **à
+ * l'instant du geste**, si bien qu'une carte recyclée par Vinted pour un autre
+ * article ne fait pas attribuer le cœur à l'ancien.
+ *
+ * @param url l'URL courante, seule source pour la fiche article
+ */
+export function favouriteTargetId(btn: Element, url: string): string | null {
+  // `getAttribute` plutôt que `dataset` : la signature accepte un `Element`, et
+  // un `instanceof HTMLElement` lierait la lecture au contexte global d'une
+  // fenêtre — ce que ce module s'interdit, puisqu'il lit aussi des documents
+  // récupérés par `fetch()`.
+  const testid = btn.getAttribute('data-testid') || '';
+
+  if (testid === DETAIL_FAVOURITE_TESTID) return extractIdFromUrl(url);
+  if (!testid.endsWith(FAVOURITE_SUFFIX)) return null;
+
+  const cardTestid = testid.slice(0, -FAVOURITE_SUFFIX.length);
+  const box = btn.closest<HTMLElement>(`[data-testid="${cardTestid}"]`);
+  return box ? cardId(box) : null;
 }
 
 /**
@@ -414,18 +483,6 @@ export function extractFromCard(box: HTMLElement): SavedItem | null {
 // ---------------------------------------------------------------------------
 // Extraction — page détail
 // ---------------------------------------------------------------------------
-
-/** Formate un prix numérique à la française : 1 → "1,00 €". */
-export function formatPrice(value: number, currency: string | undefined): string {
-  try {
-    return new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: currency || 'EUR',
-    }).format(value);
-  } catch {
-    return `${String(value).replace('.', ',')} ${currency || ''}`.trim();
-  }
-}
 
 /**
  * Forme du JSON-LD de Vinted, réduite à ce qu'on en lit. Tous les champs sont

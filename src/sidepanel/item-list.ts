@@ -161,8 +161,9 @@ function renderItem(item: SavedItem, badge: CollectionBadge | null = null): HTML
   title.href = item.url;
   title.textContent = item.title || `Article ${item.id}`;
 
-  // "Nike · 42 · Neuf avec étiquette", en sautant les champs absents. La marque
-  // devient un lien vers le catalogue quand on peut la filtrer.
+  // "Nike · 42 · Neuf avec étiquette · ♥ 12 · Baskets", en sautant les champs
+  // absents. La marque devient un lien vers le catalogue quand on peut la
+  // filtrer.
   const meta: Node[] = [];
 
   if (item.brand) {
@@ -189,6 +190,25 @@ function renderItem(item: SavedItem, badge: CollectionBadge | null = null): HTML
 
   const likes = item.favouriteCount;
   if (typeof likes === 'number') meta.push(document.createTextNode(`♥ ${likes}`));
+
+  // La catégorie ferme la ligne plutôt que de l'ouvrir : c'est la plus large des
+  // informations affichées, et la mettre en tête repousserait la marque, qui est
+  // ce qu'on lit en premier. Le fil complet reste en infobulle — « Chaussures »
+  // seul ne dit pas s'il s'agit d'homme, de femme ou d'enfant.
+  const category = item.category;
+  if (category?.name) {
+    const categoryEl = document.createElement('span');
+    categoryEl.className = 'item-category';
+    categoryEl.textContent = category.name;
+
+    const trail = category.path.length ? category.path.join(' › ') : category.name;
+    // Une catégorie approchée vient de la page de catalogue d'où l'article a été
+    // enregistré : elle décrit la page, pas forcément l'article (voir
+    // `categoryOf()` dans `content/extract.ts`). L'infobulle le dit plutôt que
+    // la ligne, qui n'a pas la place de nuancer.
+    categoryEl.title = category.exact ? trail : `${trail} (catégorie de la page, approchée)`;
+    meta.push(categoryEl);
+  }
 
   const metaEl = within(node, '.item-meta');
   metaEl.textContent = '';

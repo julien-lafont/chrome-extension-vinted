@@ -63,6 +63,36 @@ export type OffersScanResponse = {
   reason?: string;
 };
 
+/**
+ * Les deux rattrapages explicites de la synchro des favoris — clic droit sur
+ * « Sync favoris », voir `docs/specs/favoris-sync.md` §5.
+ *
+ * Contrairement au cycle de suivi et au balayage des offres, le content script
+ * **répond quand c'est fini** plutôt que tout de suite : le résultat est un
+ * compte que le panneau affiche, et il n'y a rien en storage où aller le lire.
+ * Le canal reste donc ouvert le temps de l'opération — de quelques secondes pour
+ * un import à deux minutes pour une poussée de deux cents articles.
+ */
+export type FavImportRequest = { type: 'VF_FAV_IMPORT' };
+export type FavPushRequest = { type: 'VF_FAV_PUSH' };
+
+export type FavCatchupResponse = {
+  /** Articles enregistrés, ou cœurs posés. */
+  done: number;
+  /** Ce qui était déjà en place. */
+  skipped: number;
+  /** Ce qui reste, quand le plafond d'une exécution a été atteint. */
+  remaining?: number;
+  /** Raison d'un arrêt, en français : sert directement à l'affichage. */
+  stopped?: string;
+};
+
 /** Union de tout ce qu'un content script peut recevoir. */
 export type ExtensionMessage =
-  DiagnoseRequest | PingRequest | WatchStartRequest | WatchCancelRequest | OffersScanRequest;
+  | DiagnoseRequest
+  | PingRequest
+  | WatchStartRequest
+  | WatchCancelRequest
+  | OffersScanRequest
+  | FavImportRequest
+  | FavPushRequest;
