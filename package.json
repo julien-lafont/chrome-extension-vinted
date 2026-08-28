@@ -1,6 +1,6 @@
 {
   "name": "vinted-smart-bookmarks",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Chrome extension (MV3) that saves Vinted listings locally and brings them back in a side panel: collections, sorting, photo gallery, price & availability tracking, catalogue noise filtering.",
