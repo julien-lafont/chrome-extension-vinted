@@ -23,11 +23,11 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Lit .nvmrc : la version de CI suit celle du poste de travail.
           node-version-file: .nvmrc
@@ -57,11 +57,11 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -76,7 +76,7 @@ jobs:
       # l'extension se partage sans passer par le Chrome Web Store. Le
       # destinataire décompresse et charge le dossier via chrome://extensions.
       - name: Publier l'artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vinted-smart-bookmarks-${{ github.sha }}
           path: artifacts/*.zip
